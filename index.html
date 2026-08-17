@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>أكاديمية مستر محمد عبد التواب | العلوم والعلوم المتكاملة</title>
+    <!-- Single Page Apps for GitHub Pages Routing Handler -->
+    <script type="text/javascript">
+      (function(l) {
+        if (l.search[1] === '/' ) {
+          var decoded = l.search.slice(1).split('&').map(function(s) { 
+            return s.replace(/~and~/g, '&');
+          }).join('?');
+          window.history.replaceState(null, null,
+              l.pathname.slice(0, -1) + decoded + l.hash
+          );
+        } else {
+          var params = new URLSearchParams(l.search);
+          var p = params.get('p');
+          if (p) {
+            var q = params.get('q');
+            var cleanSearch = q ? '?' + q.replace(/~and~/g, '&') : '';
+            var target = p.startsWith('/') ? p : '/' + p;
+            var basePath = l.pathname.endsWith('/') ? l.pathname.slice(0, -1) : l.pathname;
+            window.history.replaceState(null, null, basePath + target + cleanSearch + l.hash);
+          }
+        }
+      }(window.location));
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
+

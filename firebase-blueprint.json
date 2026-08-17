@@ -1,0 +1,330 @@
+{
+  "entities": {
+    "WebsiteSettings": {
+      "title": "WebsiteSettings",
+      "description": "Global website configurations and content",
+      "type": "object",
+      "properties": {
+        "websiteNameAr": { "type": "string" },
+        "websiteNameEn": { "type": "string" },
+        "logoUrl": { "type": "string" },
+        "faviconUrl": { "type": "string" },
+        "whatsapp": { "type": "string" },
+        "telegram": { "type": "string" },
+        "facebook": { "type": "string" },
+        "youtube": { "type": "string" },
+        "instagram": { "type": "string" },
+        "email": { "type": "string" },
+        "footerAr": { "type": "string" },
+        "footerEn": { "type": "string" },
+        "seoDescription": { "type": "string" },
+        "seoKeywords": { "type": "string" }
+      },
+      "required": ["websiteNameAr", "websiteNameEn", "whatsapp", "telegram"]
+    },
+    "Category": {
+      "title": "Category",
+      "description": "Educational categories like primary, preparatory, secondary grades",
+      "type": "object",
+      "properties": {
+        "nameAr": { "type": "string", "maxLength": 100 },
+        "nameEn": { "type": "string", "maxLength": 100 },
+        "imageUrl": { "type": "string" },
+        "color": { "type": "string", "maxLength": 30 }
+      },
+      "required": ["nameAr", "nameEn"]
+    },
+    "Course": {
+      "title": "Course",
+      "description": "Comprehensive curriculum detail with lessons nested",
+      "type": "object",
+      "properties": {
+        "titleAr": { "type": "string", "maxLength": 150 },
+        "titleEn": { "type": "string", "maxLength": 150 },
+        "descriptionAr": { "type": "string" },
+        "descriptionEn": { "type": "string" },
+        "teacherName": { "type": "string", "maxLength": 100 },
+        "teacherId": { "type": "string" },
+        "categoryId": { "type": "string" },
+        "price": { "type": "number" },
+        "discountPrice": { "type": "number" },
+        "duration": { "type": "string", "maxLength": 50 },
+        "lessonsCount": { "type": "number" },
+        "featured": { "type": "boolean" },
+        "popular": { "type": "boolean" },
+        "published": { "type": "boolean" },
+        "thumbnailUrl": { "type": "string" },
+        "imageUrls": { "type": "array" },
+        "videoUrl": { "type": "string" },
+        "pdfUrl": { "type": "string" },
+        "attachments": { "type": "array" },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["titleAr", "titleEn", "categoryId", "price"]
+    },
+    "UserAuth": {
+      "title": "UserAuth",
+      "description": "Student, Teacher and Administrator accounts",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string", "maxLength": 100 },
+        "email": { "type": "string", "maxLength": 100 },
+        "phone": { "type": "string", "maxLength": 30 },
+        "role": { "type": "string", "enum": ["student", "teacher", "admin"] },
+        "status": { "type": "string", "enum": ["active", "suspended"] },
+        "purchasedCourseIds": { "type": "array" },
+        "watchedLessonIds": { "type": "array" },
+        "quizGrades": { "type": "object" },
+        "bio": { "type": "string", "maxLength": 500 }
+      },
+      "required": ["name", "email", "role", "status"]
+    },
+    "NewsItem": {
+      "title": "NewsItem",
+      "description": "Announcements and academic achievements",
+      "type": "object",
+      "properties": {
+        "titleAr": { "type": "string", "maxLength": 150 },
+        "titleEn": { "type": "string", "maxLength": 150 },
+        "contentAr": { "type": "string" },
+        "contentEn": { "type": "string" },
+        "imageUrl": { "type": "string" },
+        "date": { "type": "string" }
+      },
+      "required": ["titleAr", "titleEn", "contentAr"]
+    },
+    "Article": {
+      "title": "Article",
+      "description": "Scientific explainer articles",
+      "type": "object",
+      "properties": {
+        "titleAr": { "type": "string", "maxLength": 150 },
+        "titleEn": { "type": "string", "maxLength": 150 },
+        "contentAr": { "type": "string" },
+        "contentEn": { "type": "string" },
+        "authorAr": { "type": "string", "maxLength": 100 },
+        "authorEn": { "type": "string", "maxLength": 100 },
+        "imageUrl": { "type": "string" },
+        "tags": { "type": "array" },
+        "date": { "type": "string" }
+      },
+      "required": ["titleAr", "titleEn", "contentAr"]
+    },
+    "UserReview": {
+      "title": "UserReview",
+      "description": "Student course testimonials",
+      "type": "object",
+      "properties": {
+        "studentName": { "type": "string", "maxLength": 100 },
+        "studentTitleAr": { "type": "string", "maxLength": 100 },
+        "studentTitleEn": { "type": "string", "maxLength": 100 },
+        "rating": { "type": "number" },
+        "commentAr": { "type": "string" },
+        "commentEn": { "type": "string" },
+        "courseId": { "type": "string" },
+        "approved": { "type": "boolean" },
+        "date": { "type": "string" }
+      },
+      "required": ["studentName", "commentAr", "rating"]
+    },
+    "Message": {
+      "title": "Message",
+      "description": "Inquiries submitted via public contact form",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string", "maxLength": 100 },
+        "email": { "type": "string", "maxLength": 100 },
+        "phone": { "type": "string", "maxLength": 30 },
+        "subject": { "type": "string", "maxLength": 150 },
+        "message": { "type": "string" },
+        "date": { "type": "string" },
+        "read": { "type": "boolean" }
+      },
+      "required": ["name", "email", "message"]
+    },
+    "Coupon": {
+      "title": "Coupon",
+      "description": "Promo discount vouchers",
+      "type": "object",
+      "properties": {
+        "code": { "type": "string", "maxLength": 50 },
+        "discountPercent": { "type": "number" },
+        "expiresAt": { "type": "string" },
+        "active": { "type": "boolean" }
+      },
+      "required": ["code", "discountPercent", "expiresAt", "active"]
+    },
+    "Order": {
+      "title": "Order",
+      "description": "Course payment enrollments",
+      "type": "object",
+      "properties": {
+        "studentId": { "type": "string" },
+        "studentName": { "type": "string" },
+        "studentEmail": { "type": "string" },
+        "courseId": { "type": "string" },
+        "courseTitle": { "type": "string" },
+        "pricePaid": { "type": "number" },
+        "couponCode": { "type": "string" },
+        "date": { "type": "string" },
+        "status": { "type": "string", "enum": ["pending", "completed"] }
+      },
+      "required": ["studentId", "courseId", "pricePaid", "status"]
+    },
+    "Quiz": {
+      "title": "Quiz",
+      "description": "Exams containing multiple choice questions",
+      "type": "object",
+      "properties": {
+        "courseId": { "type": "string" },
+        "titleAr": { "type": "string" },
+        "titleEn": { "type": "string" },
+        "questions": { "type": "array" }
+      },
+      "required": ["courseId", "titleAr"]
+    },
+    "AssignmentSubmission": {
+      "title": "AssignmentSubmission",
+      "description": "Student homework submissions",
+      "type": "object",
+      "properties": {
+        "studentId": { "type": "string" },
+        "studentName": { "type": "string" },
+        "courseId": { "type": "string" },
+        "lessonId": { "type": "string" },
+        "homeworkAr": { "type": "string" },
+        "studentText": { "type": "string" },
+        "fileUrl": { "type": "string" },
+        "date": { "type": "string" },
+        "status": { "type": "string", "enum": ["submitted", "graded"] },
+        "grade": { "type": "string" },
+        "feedback": { "type": "string" }
+      },
+      "required": ["studentId", "courseId", "lessonId"]
+    },
+    "Certificate": {
+      "title": "Certificate",
+      "description": "Automatic course completion certificates",
+      "type": "object",
+      "properties": {
+        "studentId": { "type": "string" },
+        "studentName": { "type": "string" },
+        "courseId": { "type": "string" },
+        "courseTitleAr": { "type": "string" },
+        "courseTitleEn": { "type": "string" },
+        "issueDate": { "type": "string" },
+        "verificationCode": { "type": "string" }
+      },
+      "required": ["studentId", "courseId", "verificationCode"]
+    },
+    "ChatMessage": {
+      "title": "ChatMessage",
+      "description": "Real-time communication messages",
+      "type": "object",
+      "properties": {
+        "senderId": { "type": "string" },
+        "senderName": { "type": "string" },
+        "text": { "type": "string" },
+        "fileUrl": { "type": "string" },
+        "timestamp": { "type": "number" },
+        "isRead": { "type": "boolean" }
+      },
+      "required": ["senderId", "text", "timestamp"]
+    },
+    "LessonComment": {
+      "title": "LessonComment",
+      "description": "Questions and discussions inside lessons",
+      "type": "object",
+      "properties": {
+        "courseId": { "type": "string" },
+        "lessonId": { "type": "string" },
+        "studentId": { "type": "string" },
+        "studentName": { "type": "string" },
+        "comment": { "type": "string" },
+        "timestamp": { "type": "number" }
+      },
+      "required": ["courseId", "lessonId", "studentId", "comment", "timestamp"]
+    },
+    "Notification": {
+      "title": "Notification",
+      "description": "System or user alerts",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "titleAr": { "type": "string" },
+        "titleEn": { "type": "string" },
+        "bodyAr": { "type": "string" },
+        "bodyEn": { "type": "string" },
+        "isRead": { "type": "boolean" },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["userId", "titleAr", "bodyAr", "createdAt"]
+    }
+  },
+  "firestore": {
+    "settings/global": {
+      "schema": "WebsiteSettings",
+      "description": "Primary settings document"
+    },
+    "categories/{categoryId}": {
+      "schema": "Category",
+      "description": "Grade levels and categories"
+    },
+    "courses/{courseId}": {
+      "schema": "Course",
+      "description": "Academic courses with lessons"
+    },
+    "users/{userId}": {
+      "schema": "UserAuth",
+      "description": "Registered students and platform administrators"
+    },
+    "news/{newsId}": {
+      "schema": "NewsItem",
+      "description": "Academy news and student honors list"
+    },
+    "articles/{articleId}": {
+      "schema": "Article",
+      "description": "Public scientific explanation articles"
+    },
+    "reviews/{reviewId}": {
+      "schema": "UserReview",
+      "description": "Student platform feedback"
+    },
+    "messages/{messageId}": {
+      "schema": "Message",
+      "description": "User feedback and portal messages"
+    },
+    "coupons/{couponId}": {
+      "schema": "Coupon",
+      "description": "Promotional discount validation vouchers"
+    },
+    "orders/{orderId}": {
+      "schema": "Order",
+      "description": "Platform registration and course purchase bills"
+    },
+    "quizzes/{quizId}": {
+      "schema": "Quiz",
+      "description": "Course exams definitions"
+    },
+    "assignments/{assignmentId}": {
+      "schema": "AssignmentSubmission",
+      "description": "Homework submitted by students"
+    },
+    "certificates/{certificateId}": {
+      "schema": "Certificate",
+      "description": "Automatic completion certificates"
+    },
+    "chats/{studentId}/messages/{messageId}": {
+      "schema": "ChatMessage",
+      "description": "Bilateral real-time counseling messages"
+    },
+    "comments/{commentId}": {
+      "schema": "LessonComment",
+      "description": "Student and teacher lesson-wise comments and replies"
+    },
+    "notifications/{notificationId}": {
+      "schema": "Notification",
+      "description": "Alert notifications"
+    }
+  }
+}

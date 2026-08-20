@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { formatVideoEmbedUrl, ParsedVideoInfo } from '../utils/authAccess';
+import { formatVideoEmbedUrl, ParsedVideoInfo, buildYouTubeEmbedUrl } from '../utils/authAccess';
 import { VideoWatermark } from './VideoWatermark';
-import { Video, RefreshCw, Loader2, WifiOff, Maximize, Minimize, AlertTriangle, AlertCircle } from 'lucide-react';
+import { Video, RefreshCw, Loader2, WifiOff, Maximize, Minimize, AlertTriangle, AlertCircle, ShieldAlert, Globe, HelpCircle } from 'lucide-react';
 import { useLanguage } from './LanguageContext';
 import { getVideoFromIndexedDB } from '../utils/videoStorage';
 import { getFileFromFirestoreChunks } from '../utils/firestoreMediaStorage';
@@ -41,10 +41,17 @@ export const CustomVideoPlayer: React.FC<CustomVideoPlayerProps> = ({
   const [resolvedVideoSource, setResolvedVideoSource] = useState<string | null>(null);
   const [useIframeFallback, setUseIframeFallback] = useState(false);
   const [isLocalMissingOnDevice, setIsLocalMissingOnDevice] = useState(false);
+  const [useNoCookieMode, setUseNoCookieMode] = useState(true);
+  const [showEmbedHelp, setShowEmbedHelp] = useState(false);
 
   const formatted: ParsedVideoInfo = formatVideoEmbedUrl(src);
   const isEmbedPlayer = formatted.type === 'youtube' || formatted.type === 'vimeo' || formatted.type === 'drive' || formatted.type === 'iframe';
   const renderAsIframe = isEmbedPlayer || useIframeFallback;
+
+  // Active YouTube embed URL depending on useNoCookieMode
+  const currentEmbedUrl = formatted.type === 'youtube' && formatted.videoId
+    ? buildYouTubeEmbedUrl(formatted.videoId, useNoCookieMode)
+    : formatted.embedUrl;
 
   // Resolve IndexedDB and Firestore video sources if applicable
   useEffect(() => {
@@ -257,8 +264,31 @@ export const CustomVideoPlayer: React.FC<CustomVideoPlayerProps> = ({
       {/* Dynamic Watermark Overlay for Student Anti-Piracy */}
       {user && <VideoWatermark user={user} />}
 
-      {/* Top Controls Overlay: In-Platform Fullscreen Toggle */}
+      {/* Top Controls Overlay: In-Platform Controls */}
       <div className="absolute top-3 right-3 z-30 flex items-center gap-2 opacity-90 hover:opacity-100 transition-all pointer-events-auto">
+        {formatted.type === 'youtube' && (
+          <>
+            <button
+              type="button"
+              onClick={() => setUseNoCookieMode(prev => !prev)}
+              className="rounded-xl bg-slate-950/85 border border-slate-700/80 px-2.5 py-1.5 text-[11px] font-bold text-slate-300 hover:text-white hover:bg-slate-900 transition-all shadow-lg flex items-center gap-1.5 cursor-pointer backdrop-blur-md"
+              title={useNoCookieMode ? t('التبديل إلى خادم YouTube العادي', 'Switch to Standard YouTube server') : t('التبديل إلى خادم YouTube الخصوصي (No-Cookie)', 'Switch to No-Cookie YouTube server')}
+            >
+              <Globe className="h-3.5 w-3.5 text-brand-cyan" />
+              <span className="hidden sm:inline">{useNoCookieMode ? 'No-Cookie' : 'Standard'}</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setShowEmbedHelp(true)}
+              className="rounded-xl bg-slate-950/85 border border-slate-700/80 p-1.5 text-slate-300 hover:text-amber-400 hover:bg-slate-900 transition-all shadow-lg flex items-center justify-center cursor-pointer backdrop-blur-md"
+              title={t('حل مشكلة المحتوى محظور', 'Fix Blocked Content Error')}
+            >
+              <HelpCircle className="h-3.5 w-3.5" />
+            </button>
+          </>
+        )}
+
         <button
           type="button"
           onClick={handleToggleFullscreen}
@@ -269,6 +299,55 @@ export const CustomVideoPlayer: React.FC<CustomVideoPlayerProps> = ({
           <span>{isFullscreen ? t('تصغير الشاشة', 'Exit Fullscreen') : t('تكبير الشاشة', 'Fullscreen')}</span>
         </button>
       </div>
+
+      {/* Embed Troubleshooting Modal Overlay */}
+      {showEmbedHelp && (
+        <div className="absolute inset-0 z-40 flex flex-col items-center justify-center bg-slate-950/95 p-6 text-center text-white backdrop-blur-md animate-fadeIn">
+          <div className="max-w-md bg-slate-900 border border-slate-800 rounded-2xl p-5 shadow-2xl text-right">
+            <div className="flex items-center justify-between mb-3 border-b border-slate-800 pb-3">
+              <div className="flex items-center gap-2 text-amber-400 font-bold text-sm">
+                <ShieldAlert className="h-5 w-5" />
+                <span>{t('حل مشكلة "المحتوى محظور" من يوتيوب', 'Fix "Content Blocked" YouTube Error')}</span>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowEmbedHelp(false)}
+                className="text-slate-400 hover:text-white text-xs font-bold bg-slate-800 hover:bg-slate-700 px-2.5 py-1 rounded-lg transition-all cursor-pointer"
+              >
+                {t('إغلاق', 'Close')}
+              </button>
+            </div>
+            
+            <p className="text-xs text-slate-300 leading-relaxed mb-3">
+              {t(
+                'إذا ظهرت لك رسالة "المحتوى محظور" أو "تم تعطيل التشغيل في مواقع الويب الأخرى من قِبل مالك الفيديو"، فالسبب هو أن خيار السماح بالتضمين غير مفعل في قناة اليوتيوب.',
+                'If you see "Content blocked" or "Playback disabled on other websites by video owner", embedding is turned off on YouTube Studio.'
+              )}
+            </p>
+
+            <div className="bg-slate-950 p-3 rounded-xl border border-slate-800/80 mb-4 text-xs text-slate-300 space-y-1.5">
+              <div className="font-bold text-brand-cyan text-[11px] mb-1">{t('خطوات الحل في ثوانٍ من استوديو YouTube:', 'Steps to fix in seconds:')}</div>
+              <div>1. {t('افتح استوديو يوتيوب (YouTube Studio) وادخل على تفاصيل الفيديو.', 'Open YouTube Studio and go to Video Details.')}</div>
+              <div>2. {t('اضغط على "عرض المزيد" (Show More) في أسفل الصفحة.', 'Click "Show More" at bottom.')}</div>
+              <div>3. {t('فعّل خيار: "السماح بالتضمين" (Allow embedding).', 'Check: "Allow embedding".')}</div>
+              <div>4. {t('اضغط حفظ (Save)، وسيعمل الفيديو فوراً داخل المنصة.', 'Click Save, and video will play instantly in the platform.')}</div>
+            </div>
+
+            <div className="flex items-center justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setUseNoCookieMode(prev => !prev);
+                  setShowEmbedHelp(false);
+                }}
+                className="rounded-xl bg-brand-cyan text-brand-dark hover:bg-brand-cyan-light px-3.5 py-2 text-xs font-bold transition-all cursor-pointer"
+              >
+                {t('تجربة تبديل خادم التضمين الآن', 'Toggle Embed Server Now')}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Native HTML5 Video Player for MP4/WEBM/MOV/MKV/Firebase Storage */}
       {formatted.type === 'video' && !useIframeFallback && (
@@ -430,13 +509,14 @@ export const CustomVideoPlayer: React.FC<CustomVideoPlayerProps> = ({
       {renderAsIframe && (
         <div className="w-full h-full relative bg-black">
           <iframe
-            src={resolvedVideoSource || formatted.embedUrl}
+            key={`${currentEmbedUrl}_${useNoCookieMode ? 'nocookie' : 'standard'}`}
+            src={resolvedVideoSource || currentEmbedUrl}
             title={title || 'Course Video'}
             className="w-full h-full border-none bg-black"
             allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share; fullscreen"
             allowFullScreen
             loading="lazy"
-            referrerPolicy="strict-origin-when-cross-origin"
+            referrerPolicy="no-referrer-when-downgrade"
           />
         </div>
       )}

@@ -299,6 +299,14 @@ export const VideoHostingUploader: React.FC<VideoHostingUploaderProps> = ({
           <p className="text-[11px] text-slate-400 leading-relaxed bg-slate-950/50 p-2.5 rounded-xl border border-slate-800/80">
             💡 {t('يدعم روابط YouTube (watch, shorts, youtu.be, embed) أو Google Drive أو روابط MP4 المباشرة. يتم تشغيل الفيديو بالكامل داخل صفحة الكورس بدون فتح نوافذ خارجية.', 'Supports YouTube (watch, shorts, youtu.be, embed), Google Drive, or direct MP4 links. Video plays fully inside the course page without opening external tabs.')}
           </p>
+
+          <div className="bg-amber-950/30 border border-amber-500/20 rounded-xl p-2.5 text-[11px] text-amber-300 leading-relaxed flex items-start gap-2">
+            <span className="text-amber-400 mt-0.5">⚠️</span>
+            <div>
+              <span className="font-bold">{t('نصيحة لمنع ظهور "المحتوى محظور": ', 'Tip to prevent "Content Blocked": ')}</span>
+              <span>{t('تأكد من تفعيل خيار "السماح بالتضمين (Allow embedding)" في إعدادات الفيديو على YouTube Studio ليتمكن الطلاب من المشاهدة بسلاسة.', 'Ensure "Allow embedding" is enabled in YouTube Studio settings so students can watch seamlessly.')}</span>
+            </div>
+          </div>
         </div>
       )}
 

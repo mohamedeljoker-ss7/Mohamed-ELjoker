@@ -79,18 +79,14 @@ export function extractYouTubeVideoId(input?: string | null): string | null {
 
 /**
  * Builds a clean, standard YouTube Embed URL using supported parameters only.
- * - playsinline=1
- * - controls=1
- * - rel=0
- * - enablejsapi=1
- * Does NOT use deprecated parameters (modestbranding, showinfo, autohide).
+ * - Uses youtube-nocookie.com by default (bypasses third-party cookie restrictions and strict origin blocks).
+ * - Does NOT pass &origin=... parameter to prevent origin mismatch Error 150 / 101 ("المحتوى محظور" / "Playback on other websites has been disabled").
+ * - playsinline=1, controls=1, rel=0, enablejsapi=1.
  */
-export function buildYouTubeEmbedUrl(videoId: string): string {
-  const originParam = typeof window !== 'undefined' && window.location?.origin
-    ? `&origin=${encodeURIComponent(window.location.origin)}`
-    : '';
-
-  return `https://www.youtube.com/embed/${videoId}?playsinline=1&controls=1&rel=0&enablejsapi=1${originParam}`;
+export function buildYouTubeEmbedUrl(videoId: string, useNoCookie = true): string {
+  const cleanId = videoId.trim();
+  const domain = useNoCookie ? 'https://www.youtube-nocookie.com' : 'https://www.youtube.com';
+  return `${domain}/embed/${cleanId}?rel=0&playsinline=1&controls=1&enablejsapi=1`;
 }
 
 /**

@@ -1,4 +1,3 @@
-// Optimized YouTube and Video Player for GitHub Pages & Local Platform
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { formatVideoEmbedUrl, ParsedVideoInfo, buildYouTubeEmbedUrl } from '../utils/authAccess';
 import { VideoWatermark } from './VideoWatermark';

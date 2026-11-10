@@ -44,37 +44,37 @@ export const SubscriptionRequiredView: React.FC<SubscriptionRequiredProps> = ({
         <div className="space-y-2">
           <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-[10px] font-mono font-bold bg-amber-500/10 border border-amber-500/20 text-amber-300 uppercase tracking-wider">
             <ShieldAlert className="h-3.5 w-3.5" />
-            {isAr ? 'كورس محمي - اشتراك مدفوع (Premium)' : 'Premium Content Access Protected'}
+            {isAr ? 'مقرر جامعي محمي - يتطلب تفعيل الحساب' : 'University Course Protected'}
           </span>
           <h2 className="text-2xl sm:text-3xl font-black text-white">
             {isAr 
-              ? (isPending ? 'طلب الاشتراك قيد المراجعة.' : 'يجب الاشتراك في الكورس أولاً.')
-              : (isPending ? 'Subscription request is pending review.' : 'You must subscribe to the course first.')}
+              ? (isPending ? 'طلب تفعيل المادة قيد المراجعة الأكاديمية.' : 'تفعيل صلاحية الوصول لملفات المحاضرات والسكاشن.')
+              : (isPending ? 'Course file access activation is pending review.' : 'Activation required to access lectures and lab files.')}
           </h2>
           <p className="text-xs sm:text-sm text-slate-300 max-w-xl mx-auto leading-relaxed pt-2">
             {isAr
               ? (isPending 
-                  ? `لقد قمت بتقديم طلب اشتراك في الكورس "${course.titleAr || course.titleEn}" وهو الآن قيد المراجعة من الإدارة لتفعيله قريباً.` 
-                  : `الكورس "${course.titleAr || course.titleEn}" هو منهج محمي مخصص للمشتركين المفعلين فقط. يرجى الاشتراك في الكورس أولاً.`)
+                  ? `تم استلام طلبك لتفعيل صلاحية الوصول وتحميل ملفات المحاضرات والسكاشن لمقرر "${course.titleAr || course.titleEn}". جاري المراجعة والتفعيل قريباً.` 
+                  : `مقرر "${course.titleAr || course.titleEn}" مخصص لطلاب قسم تكنولوجيا المعلومات المفعلين. يتطلب تفعيل الحساب لتحميل وقراءة ملفات المحاضرات (PDF) وشيتات السكاشن (Word .docx) والامتحانات.`)
               : (isPending
-                  ? `Your subscription request for "${course.titleEn || course.titleAr}" is currently pending review by an administrator.`
-                  : `The course "${course.titleEn || course.titleAr}" requires an active subscription. You must subscribe to the course first.`)}
+                  ? `Your activation request for course materials in "${course.titleEn || course.titleAr}" is pending review.`
+                  : `Course "${course.titleEn || course.titleAr}" requires student activation to view and download lecture PDFs, Word lab sheets, and past exams.`)}
           </p>
         </div>
 
-        {/* Feature Highlights - Zero exposure of actual course links */}
+        {/* Feature Highlights - University Academic Materials */}
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 max-w-2xl mx-auto pt-4 border-t border-slate-900 text-xs">
-          <div className="p-3 rounded-xl bg-slate-900/60 border border-slate-800 text-slate-300">
-            <span className="block font-bold text-white mb-1">🎬 {isAr ? 'شرح تفاعلي مبسط' : 'Video Lectures'}</span>
-            <span className="text-[11px] text-slate-400">{isAr ? 'حصص مصورة وجودة عالية' : 'HD Simulated Lessons'}</span>
+          <div className="p-3.5 rounded-xl bg-slate-900/60 border border-slate-800 text-slate-300">
+            <span className="block font-bold text-white mb-1">📑 {isAr ? 'محاضرات وسلايدز PDF' : 'PDF Lectures & Slides'}</span>
+            <span className="text-[11px] text-slate-400">{isAr ? 'ملفات جاهزة للقراءة والتحميل المباشر' : 'Official Course Notes & Slides'}</span>
           </div>
-          <div className="p-3 rounded-xl bg-slate-900/60 border border-slate-800 text-slate-300">
-            <span className="block font-bold text-white mb-1">📄 {isAr ? 'مذكرات ملخصة' : 'PDF Worksheets'}</span>
-            <span className="text-[11px] text-slate-400">{isAr ? 'ملفات جاهزة للتحميل' : 'Revision Handouts'}</span>
+          <div className="p-3.5 rounded-xl bg-slate-900/60 border border-slate-800 text-slate-300">
+            <span className="block font-bold text-white mb-1">🔬 {isAr ? 'سكاشن ومعامل Word (.docx)' : 'Lab Sections (.docx)'}</span>
+            <span className="text-[11px] text-slate-400">{isAr ? 'شيتات وتجارب قابلة للحل والتعديل' : 'Editable Lab Sheets & Worksheets'}</span>
           </div>
-          <div className="p-3 rounded-xl bg-slate-900/60 border border-slate-800 text-slate-300">
-            <span className="block font-bold text-white mb-1">📝 {isAr ? 'امتحانات إلكترونية' : 'Online Exams'}</span>
-            <span className="text-[11px] text-slate-400">{isAr ? 'تقييم ذاتي وشهادات' : 'Quizzes & Certificates'}</span>
+          <div className="p-3.5 rounded-xl bg-slate-900/60 border border-slate-800 text-slate-300">
+            <span className="block font-bold text-white mb-1">🏆 {isAr ? 'قسم الامتحانات والشيتات' : 'Exams & Sheets Hub'}</span>
+            <span className="text-[11px] text-slate-400">{isAr ? 'نماذج الميدترم والفاينل للأعوام السابقة' : 'Past Midterm & Final Exam Archives'}</span>
           </div>
         </div>
 
@@ -87,7 +87,7 @@ export const SubscriptionRequiredView: React.FC<SubscriptionRequiredProps> = ({
               className="w-full sm:w-auto flex items-center justify-center gap-2 rounded-xl bg-amber-500/20 text-amber-300 border border-amber-500/30 px-8 py-3.5 text-xs font-black transition-all cursor-default shadow-lg"
             >
               <Clock className="h-4 w-4" />
-              {isAr ? 'جاري مراجعة الطلب' : 'Request Pending Review'}
+              {isAr ? 'طلب التفعيل قيد المراجعة' : 'Activation Pending Review'}
             </button>
           ) : (
             <button
@@ -95,7 +95,7 @@ export const SubscriptionRequiredView: React.FC<SubscriptionRequiredProps> = ({
               className="w-full sm:w-auto flex items-center justify-center gap-2 rounded-xl bg-brand-cyan text-brand-dark hover:bg-brand-cyan-light px-8 py-3.5 text-xs font-black transition-all cursor-pointer shadow-lg shadow-cyan-950/30"
             >
               <Sparkles className="h-4 w-4" />
-              {isAr ? 'الاشتراك وتفعيل الحساب الآن' : 'Subscribe & Activate Access'}
+              {isAr ? 'طلب تفعيل الوصول لملفات المادة الآن' : 'Request Course File Access Now'}
             </button>
           )}
 

@@ -14,7 +14,7 @@ import { CustomVideoPlayer } from './CustomVideoPlayer';
 import { 
   BookOpen, Video, Award, Send, User, ChevronRight, Download, Upload, CheckCircle2,
   Clock, Sparkles, MessageSquare, Bell, LogOut, Check, X, ShieldAlert, FileText, ChevronLeft,
-  Calendar, Star, SendHorizontal, Paperclip, Loader2, HelpCircle
+  Calendar, Star, SendHorizontal, Paperclip, Loader2, HelpCircle, BellRing, CheckCheck, Trash2, ExternalLink
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 
@@ -30,7 +30,8 @@ type StudentSubTab =
   | 'exams'
   | 'assignments'
   | 'chat'
-  | 'profile';
+  | 'profile'
+  | 'notifications';
 
 const EmbeddedPdfViewer: React.FC<{ url: string; title?: string }> = ({ url, title }) => {
   const [resolvedUrl, setResolvedUrl] = useState<string | null>(null);
@@ -127,8 +128,13 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({ onLogout, on
   const [selectedTaskForSubmission, setSelectedTaskForSubmission] = useState<Assignment | null>(null);
   const [isSubmissionModalOpen, setIsSubmissionModalOpen] = useState(false);
   const [certificates, setCertificates] = useState<Certificate[]>([]);
-  const [notifications, setNotifications] = useState<Notification[]>([]);
   const [comments, setComments] = useState<LessonComment[]>([]);
+  const [notifications, setNotifications] = useState<Notification[]>([]);
+  const [isNotificationDropdownOpen, setIsNotificationDropdownOpen] = useState(false);
+  const [notificationFilter, setNotificationFilter] = useState<'all' | 'unread' | 'activation' | 'lecture' | 'exams'>('all');
+  const [floatingToast, setFloatingToast] = useState<Notification | null>(null);
+  const prevNotifIdsRef = useRef<Set<string>>(new Set());
+  const isInitialNotifLoadRef = useRef<boolean>(true);
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
   const [quizzes, setQuizzes] = useState<Quiz[]>([]);
   const [myOrders, setMyOrders] = useState<Order[]>([]);
@@ -379,7 +385,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({ onLogout, on
             if ((globalVer > 0 && loginTime < globalVer) || (userVer > 0 && loginTime < userVer)) {
               authService.logout();
               onLogout();
-              alert('تم إنهاء جميع جلسات الدخول وتسجيل الخروج من المنصة بواسطة إدارة الأكاديمية.');
+              alert('تم إنهاء جميع جلسات الدخول وتسجيل الخروج من المنصة بواسطة إدارة المنصة وقسم IT.');
               return;
             }
             const coursesToFilter = allPublishedCoursesRef.current.length > 0 ? allPublishedCoursesRef.current : courses;
@@ -470,14 +476,58 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({ onLogout, on
     };
   }, [currentUser?.id]);
 
-  // Set up real-time notification listener
+  // Play subtle chime sound when an instant alert arrives
+  const playNotificationSound = useCallback(() => {
+    try {
+      const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
+      if (!AudioCtx) return;
+      const ctx = new AudioCtx();
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(587.33, ctx.currentTime); // D5
+      osc.frequency.exponentialRampToValueAtTime(880, ctx.currentTime + 0.15); // A5
+      gain.gain.setValueAtTime(0.12, ctx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.35);
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start();
+      osc.stop(ctx.currentTime + 0.35);
+    } catch (e) {
+      // Audio context may require prior user interaction
+    }
+  }, []);
+
+  // Set up real-time notification listener with instant floating alerts & sound chime
   useEffect(() => {
     if (!currentUser) return;
-    const unsubscribe = dbService.listenToNotifications(currentUser.id, (notifs) => {
+    const unsubscribe = dbService.listenToNotifications(currentUser.id, currentUser.email || '', (notifs) => {
       setNotifications(notifs);
+
+      // Detect brand-new unread notifications received while user is online
+      if (!isInitialNotifLoadRef.current) {
+        const brandNew = notifs.find(n => !prevNotifIdsRef.current.has(n.id) && !n.isRead);
+        if (brandNew) {
+          setFloatingToast(brandNew);
+          playNotificationSound();
+        }
+      } else {
+        isInitialNotifLoadRef.current = false;
+      }
+
+      prevNotifIdsRef.current = new Set(notifs.map(n => n.id));
     });
     return () => unsubscribe();
-  }, [currentUser]);
+  }, [currentUser, playNotificationSound]);
+
+  // Auto-dismiss floating toast after 7 seconds
+  useEffect(() => {
+    if (!floatingToast) return;
+    const timer = setTimeout(() => {
+      setFloatingToast(null);
+    }, 7000);
+    return () => clearTimeout(timer);
+  }, [floatingToast]);
 
   // Set up real-time comments listener
   useEffect(() => {
@@ -496,7 +546,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({ onLogout, on
     setSubmittingReview(true);
     setReviewError('');
     try {
-      let gradeLabelAr = 'طالب بالأكاديمية';
+      let gradeLabelAr = 'طالب قسم تكنولوجيا المعلومات (IT)';
       let gradeLabelEn = 'Academy Student';
       if (currentUser?.grade === '1sec') {
         gradeLabelAr = 'الصف الأول الثانوي (علوم متكاملة)';
@@ -513,7 +563,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({ onLogout, on
       }
 
       await dbService.addReview({
-        studentName: currentUser?.name || 'طالب الأكاديمية',
+        studentName: currentUser?.name || 'طالب تكنولوجيا المعلومات',
         studentTitleAr: gradeLabelAr,
         studentTitleEn: gradeLabelEn,
         rating: userRating,
@@ -523,7 +573,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({ onLogout, on
       });
       setReviewSubmitted(true);
       setUserComment('');
-      setSuccessMsg(t('شكراً لتقييمك! تم إرسال التقييم وسيقوم مستر محمد بمراجعته قريباً للظهور في الصفحة الرئيسية.', 'Thank you! Your review has been submitted and is pending teacher approval.'));
+      setSuccessMsg(t('شكراً لتقييمك! تم إرسال التقييم وسيقوم المهندس محمد عبد التواب بمراجعته قريباً للظهور في الصفحة الرئيسية.', 'Thank you! Your review has been submitted and is pending teacher approval.'));
     } catch (err) {
       console.error("Error submitting review:", err);
       setReviewError(t('فشل إرسال التقييم. حاول مرة أخرى.', 'Failed to submit review. Try again.'));
@@ -919,6 +969,88 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({ onLogout, on
     }
   };
 
+  const handleMarkAllNotificationsRead = async () => {
+    try {
+      if (currentUser) {
+        await dbService.markAllNotificationsAsRead(currentUser.id, currentUser.email || '');
+        setNotifications(prev => prev.map(n => ({ ...n, isRead: true })));
+      }
+    } catch (err) {
+      console.error("Failed to mark all notifications read:", err);
+    }
+  };
+
+  const handleDeleteNotification = async (id: string, e?: React.MouseEvent) => {
+    if (e) e.stopPropagation();
+    try {
+      await dbService.deleteNotification(id);
+      setNotifications(prev => prev.filter(n => n.id !== id));
+      if (floatingToast?.id === id) setFloatingToast(null);
+    } catch (err) {
+      console.error("Failed to delete notification:", err);
+    }
+  };
+
+  const handleNotificationClick = async (notif: Notification) => {
+    if (!notif.isRead) {
+      await handleNotificationRead(notif.id);
+    }
+    if (notif.courseId) {
+      const targetCourse = courses.find(c => c.id === notif.courseId) || myCourses.find(c => c.id === notif.courseId);
+      if (targetCourse) {
+        handleSelectCourse(targetCourse);
+        setActiveTab('player');
+        setIsNotificationDropdownOpen(false);
+        return;
+      }
+    }
+    if (notif.type === 'assignment' || notif.titleAr?.includes('واجب') || notif.titleAr?.includes('شيت')) {
+      setActiveTab('assignments');
+      setIsNotificationDropdownOpen(false);
+      return;
+    }
+    if (notif.type === 'exam' || notif.titleAr?.includes('امتحان') || notif.titleAr?.includes('اختبار')) {
+      setActiveTab('exams');
+      setIsNotificationDropdownOpen(false);
+      return;
+    }
+  };
+
+  const formatTimeAgo = (dateStr?: string) => {
+    if (!dateStr) return '';
+    try {
+      const d = new Date(dateStr);
+      const now = new Date();
+      const diffSec = Math.floor((now.getTime() - d.getTime()) / 1000);
+      if (diffSec < 60) return language === 'ar' ? 'منذ لحظات' : 'Just now';
+      if (diffSec < 3600) {
+        const mins = Math.floor(diffSec / 60);
+        return language === 'ar' ? `منذ ${mins} دقيقة` : `${mins}m ago`;
+      }
+      if (diffSec < 86400) {
+        const hours = Math.floor(diffSec / 3600);
+        return language === 'ar' ? `منذ ${hours} ساعة` : `${hours}h ago`;
+      }
+      return d.toLocaleDateString(language === 'ar' ? 'ar-EG' : 'en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+    } catch (e) {
+      return dateStr;
+    }
+  };
+
+  const unreadNotificationsCount = useMemo(() => {
+    return notifications.filter(n => !n.isRead).length;
+  }, [notifications]);
+
+  const filteredNotifications = useMemo(() => {
+    return notifications.filter(notif => {
+      if (notificationFilter === 'unread') return !notif.isRead;
+      if (notificationFilter === 'activation') return notif.type === 'course_activated' || notif.titleAr?.includes('تفعيل');
+      if (notificationFilter === 'lecture') return notif.type === 'lecture_added' || notif.titleAr?.includes('محاضر') || notif.titleAr?.includes('سكشن');
+      if (notificationFilter === 'exams') return notif.type === 'assignment' || notif.type === 'exam' || notif.titleAr?.includes('امتحان') || notif.titleAr?.includes('واجب') || notif.titleAr?.includes('شيت');
+      return true;
+    });
+  }, [notifications, notificationFilter]);
+
   const handleOpenProtectedLink = (
     url: string | undefined | null,
     course: Course | null | undefined,
@@ -1068,7 +1200,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({ onLogout, on
                 <h2 className="text-xl font-black text-white flex items-center gap-2 justify-center md:justify-start">
                   {currentUser.name}
                   <span className="rounded-lg bg-cyan-500/10 border border-cyan-500/20 text-brand-cyan-light px-2.5 py-0.5 text-[10px] font-bold font-mono uppercase tracking-wider">
-                    {t('طالب الأكاديمية', 'Academy Student')}
+                    {t('طالب تكنولوجيا المعلومات', 'Academy Student')}
                   </span>
                 </h2>
                 <p className="text-xs text-slate-400 mt-1 font-mono">{currentUser.email} • {currentUser.phone || t('لا يوجد هاتف', 'No mobile number')}</p>
@@ -1076,7 +1208,110 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({ onLogout, on
               </div>
             </div>
 
-            <div className="flex flex-wrap gap-2 justify-center">
+            <div className="flex flex-wrap gap-2 justify-center items-center">
+              {/* Notification Quick Bell Dropdown */}
+              <div className="relative">
+                <button
+                  type="button"
+                  onClick={() => setIsNotificationDropdownOpen(prev => !prev)}
+                  className={`relative rounded-xl border px-3.5 py-2.5 text-xs font-bold transition-all flex items-center gap-2 cursor-pointer shadow-md ${
+                    unreadNotificationsCount > 0
+                      ? 'border-amber-500/40 bg-amber-500/10 text-amber-300 hover:bg-amber-500/20'
+                      : 'border-slate-800 bg-slate-900/50 hover:bg-slate-800 text-slate-300'
+                  }`}
+                  title={t('إشعارات الأكاديمية الفورية', 'Academy Alerts')}
+                >
+                  <Bell className={`h-4 w-4 ${unreadNotificationsCount > 0 ? 'text-amber-400 animate-bounce' : 'text-slate-400'}`} />
+                  <span className="hidden sm:inline">{t('الإشعارات', 'Notifications')}</span>
+                  {unreadNotificationsCount > 0 && (
+                    <span className="h-5 min-w-5 px-1.5 rounded-full bg-amber-500 text-slate-950 text-[10px] font-black flex items-center justify-center font-mono">
+                      {unreadNotificationsCount}
+                    </span>
+                  )}
+                </button>
+
+                {/* Dropdown Popover */}
+                <AnimatePresence>
+                  {isNotificationDropdownOpen && (
+                    <motion.div
+                      initial={{ opacity: 0, y: 10, scale: 0.95 }}
+                      animate={{ opacity: 1, y: 0, scale: 1 }}
+                      exit={{ opacity: 0, y: 10, scale: 0.95 }}
+                      className="absolute left-0 rtl:left-auto rtl:right-0 mt-2 w-80 sm:w-96 rounded-2xl glass bg-slate-950/95 border border-slate-800 p-4 shadow-2xl z-50 text-right space-y-3"
+                      style={{ direction }}
+                    >
+                      <div className="flex items-center justify-between border-b border-slate-800/80 pb-2.5">
+                        <span className="text-xs font-bold text-white flex items-center gap-1.5">
+                          <BellRing className="h-4 w-4 text-brand-cyan" />
+                          {t('إشعارات الأكاديمية الفورية', 'Academy Alerts')}
+                        </span>
+                        <div className="flex items-center gap-2">
+                          {unreadNotificationsCount > 0 && (
+                            <button
+                              type="button"
+                              onClick={handleMarkAllNotificationsRead}
+                              className="text-[10px] text-brand-cyan hover:underline cursor-pointer"
+                            >
+                              {t('تحديد الكل كمقروء', 'Mark all read')}
+                            </button>
+                          )}
+                          <button
+                            type="button"
+                            onClick={() => setIsNotificationDropdownOpen(false)}
+                            className="text-slate-400 hover:text-white p-1 rounded-lg hover:bg-slate-900 cursor-pointer"
+                          >
+                            <X className="h-3.5 w-3.5" />
+                          </button>
+                        </div>
+                      </div>
+
+                      <div className="max-h-72 overflow-y-auto space-y-2 pr-1 text-xs">
+                        {notifications.length === 0 ? (
+                          <div className="p-6 text-center text-slate-500 text-xs">
+                            {t('لا توجد إشعارات جديدة حالياً.', 'No notifications available.')}
+                          </div>
+                        ) : (
+                          notifications.slice(0, 6).map(notif => (
+                            <div
+                              key={notif.id}
+                              onClick={() => handleNotificationClick(notif)}
+                              className={`p-3 rounded-xl border transition-all cursor-pointer ${
+                                notif.isRead
+                                  ? 'bg-slate-900/30 border-slate-800/60 text-slate-400'
+                                  : 'bg-cyan-950/30 border-cyan-500/30 text-white shadow-sm'
+                              }`}
+                            >
+                              <div className="flex items-center justify-between gap-1 mb-1">
+                                <span className="font-bold text-xs truncate flex items-center gap-1">
+                                  <span>{notif.type === 'course_activated' ? '🎓' : notif.type === 'lecture_added' ? '📚' : '📢'}</span>
+                                  <span>{t(notif.titleAr, notif.titleEn)}</span>
+                                </span>
+                                <span className="text-[9px] text-slate-500 font-mono shrink-0">{formatTimeAgo(notif.createdAt)}</span>
+                              </div>
+                              <p className="text-[11px] text-slate-300 line-clamp-2">{t(notif.bodyAr, notif.bodyEn)}</p>
+                            </div>
+                          ))
+                        )}
+                      </div>
+
+                      <div className="border-t border-slate-800/80 pt-2 text-center">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setActiveTab('notifications');
+                            setIsNotificationDropdownOpen(false);
+                          }}
+                          className="text-xs text-brand-cyan hover:text-brand-cyan-light font-bold flex items-center justify-center gap-1 w-full py-1 cursor-pointer"
+                        >
+                          <span>{t('عرض جميع الإشعارات بالتفصيل', 'View All Notifications Center')}</span>
+                          <ChevronRight className="h-3.5 w-3.5 rtl:rotate-180" />
+                        </button>
+                      </div>
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+              </div>
+
               <button
                 onClick={() => onNavigateHome()}
                 className="rounded-xl border border-slate-800 bg-slate-900/50 hover:bg-slate-800 px-4 py-2.5 text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer"
@@ -1128,6 +1363,23 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({ onLogout, on
               </button>
 
               <button
+                onClick={() => setActiveTab('notifications')}
+                className={`w-full rounded-xl px-4 py-3 text-xs font-bold flex items-center gap-3 transition-all cursor-pointer relative ${
+                  activeTab === 'notifications' ? 'bg-brand-cyan text-brand-dark shadow-lg shadow-cyan-950/30' : 'text-slate-300 hover:bg-slate-900'
+                }`}
+              >
+                <Bell className={`h-4.5 w-4.5 ${unreadNotificationsCount > 0 ? (activeTab === 'notifications' ? 'text-brand-dark' : 'text-amber-400 animate-bounce') : ''}`} />
+                <span>{t('إشعارات الأكاديمية', 'Academy Notifications')}</span>
+                {unreadNotificationsCount > 0 && (
+                  <span className={`mr-auto rtl:mr-auto ltr:ml-auto text-[10px] font-bold px-2 py-0.5 rounded-full ${
+                    activeTab === 'notifications' ? 'bg-brand-dark text-amber-300' : 'bg-amber-500/20 text-amber-300 border border-amber-500/30 font-mono'
+                  }`}>
+                    {unreadNotificationsCount} {t('جديد', 'New')}
+                  </span>
+                )}
+              </button>
+
+              <button
                 onClick={() => setActiveTab('exams')}
                 className={`w-full rounded-xl px-4 py-3 text-xs font-bold flex items-center gap-3 transition-all cursor-pointer ${
                   activeTab === 'exams' ? 'bg-brand-cyan text-brand-dark shadow-lg shadow-cyan-950/30' : 'text-slate-300 hover:bg-slate-900'
@@ -1164,7 +1416,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({ onLogout, on
                 }`}
               >
                 <MessageSquare className="h-4.5 w-4.5" />
-                <span>{t('استشارة مستر والمساعدين', 'Live Support Chat')}</span>
+                <span>{t('استشارة المهندس والمساعدين', 'Live Support Chat')}</span>
                 <span className="inline-block h-2 w-2 rounded-full bg-brand-cyan animate-pulse ml-auto" />
               </button>
 
@@ -1185,10 +1437,10 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({ onLogout, on
                 <div className="flex items-center justify-between border-b border-slate-900 pb-2">
                   <span className="text-xs font-bold flex items-center gap-1.5">
                     <Bell className="h-4 w-4 text-brand-cyan animate-bounce" />
-                    {t('آخر التنبيهات المدرسية', 'Academic Alerts')}
+                    {t('إشعارات الأكاديمية الفورية', 'Academic Alerts')}
                   </span>
                   <span className="rounded bg-brand-cyan/10 border border-brand-cyan/20 text-brand-cyan-light px-1.5 py-0.5 text-[9px] font-mono">
-                    {notifications.filter(n => !n.isRead).length} New
+                    {unreadNotificationsCount} {t('جديد', 'New')}
                   </span>
                 </div>
 
@@ -1196,15 +1448,28 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({ onLogout, on
                   {notifications.slice(0, 3).map((notif) => (
                     <div 
                       key={notif.id} 
-                      onClick={() => handleNotificationRead(notif.id)}
+                      onClick={() => handleNotificationClick(notif)}
                       className={`p-2 rounded-lg transition-all cursor-pointer border ${
                         notif.isRead ? 'bg-slate-900/20 border-transparent text-slate-400' : 'bg-brand-cyan/5 border-cyan-500/20 text-slate-200'
                       }`}
                     >
-                      <p className="font-bold">{t(notif.titleAr, notif.titleEn)}</p>
+                      <div className="flex items-center justify-between gap-1">
+                        <p className="font-bold truncate">{t(notif.titleAr, notif.titleEn)}</p>
+                        <span className="text-[9px] text-slate-500 font-mono shrink-0">{formatTimeAgo(notif.createdAt)}</span>
+                      </div>
                       <p className="text-[10px] mt-0.5 line-clamp-2">{t(notif.bodyAr, notif.bodyEn)}</p>
                     </div>
                   ))}
+                </div>
+
+                <div className="pt-1 text-center border-t border-slate-900">
+                  <button
+                    type="button"
+                    onClick={() => setActiveTab('notifications')}
+                    className="text-[11px] text-brand-cyan hover:underline font-bold cursor-pointer"
+                  >
+                    {t('عرض كل الإشعارات والتنبيهات 🔔', 'View All Notifications 🔔')}
+                  </button>
                 </div>
               </div>
             )}
@@ -1271,7 +1536,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({ onLogout, on
                         <span className="absolute -top-3 -right-3 text-6xl text-slate-800 opacity-20 select-none">🏆</span>
                         <p className="text-slate-400 text-[11px] font-bold uppercase tracking-wider">{t('شهادات التخرج المعتمدة', 'Certificates Earned')}</p>
                         <h4 className="text-3xl font-black text-white mt-2 font-mono">{certificates.length}</h4>
-                        <p className="text-[10px] text-brand-cyan-light mt-4 font-mono">{t('بإمضاء مستر محمد عبد التواب', 'Signed by Mr. Mohamed')}</p>
+                        <p className="text-[10px] text-brand-cyan-light mt-4 font-mono">{t('بإمضاء م. محمد عبد التواب', 'Signed by Eng/Mohamed abdal tawab')}</p>
                       </div>
 
                     </div>
@@ -1311,18 +1576,18 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({ onLogout, on
                     {/* Unenrolled Promo banner if none */}
                     {myCourses.length === 0 && (
                       <div className="rounded-2xl border border-cyan-500/20 bg-cyan-500/5 p-6 space-y-4 text-center">
-                        <h3 className="text-lg font-black text-white">{t('لم تشترك بأي مناهج دراسية بعد!', 'No active curricula subscriptions found!')}</h3>
+                        <h3 className="text-lg font-black text-white">{t('لم يتم تفعيل أي مقررات دراسية بحسابك بعد!', 'No active courses activated yet!')}</h3>
                         <p className="text-xs text-slate-300 max-w-lg mx-auto leading-relaxed">
                           {t(
-                            'تصفح كورسات مستر محمد عبد التواب للعلوم والعلوم المتكاملة واختر الكورس المناسب لصفك الدراسي لتفعيل الحساب ومتابعة المذاكرة والتجارب العلمية الرائعة.',
-                            'Explore Mr. Mohamed Abdel Tawab science courses and select the term syllabus suitable for your academic grade.'
+                            'تصفح مقررات قسم تكنولوجيا المعلومات (IT) بالجامعة التكنولوجية بإشراف Eng/Mohamed abdal tawab، واختر المقرر لطلب التفعيل والوصول الفوري لملفات المحاضرات (PDF) والسكاشن (Word) وبنك الامتحانات والشيتات.',
+                            'Explore accredited IT courses at the Technological University supervised by Eng/Mohamed abdal tawab. Choose your course to request activation for immediate access to lectures, Word lab sheets, and exam archives.'
                           )}
                         </p>
                         <button
                           onClick={() => onNavigateHome()}
                           className="rounded-xl bg-brand-cyan text-brand-dark hover:bg-brand-cyan-light px-6 py-3 font-bold text-xs transition-all cursor-pointer shadow-lg shadow-cyan-950/20"
                         >
-                          {t('تصفح الكورسات والمناهج الآن', 'Browse Science Curriculums Now')}
+                          {t('تصفح المقررات الأكاديمية الآن', 'Browse IT Courses Now')}
                         </button>
                       </div>
                     )}
@@ -1356,7 +1621,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({ onLogout, on
                                     <span className="text-brand-cyan font-black font-mono text-sm">{assign.grade}</span>
                                   </div>
                                   <p className="text-[10px] text-slate-300 italic leading-normal">
-                                    <strong>{t('ملاحظة مستر:', 'Teacher feedback:')}</strong> {assign.feedback || t('ممتاز واصل المذاكرة والدراسة!', 'Excellent!')}
+                                    <strong>{t('ملاحظة المهندس:', 'Teacher feedback:')}</strong> {assign.feedback || t('ممتاز واصل المذاكرة والدراسة!', 'Excellent!')}
                                   </p>
                                 </div>
                               )}
@@ -1526,51 +1791,136 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({ onLogout, on
 
                     <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
                       
-                      {/* Video Player Column */}
+                      {/* University Document & Lab Hub Column */}
                       <div className="lg:col-span-2 space-y-6">
                         {activeLesson ? (
-                          <div className="space-y-4">
-                            {/* Embedded Player */}
-                            <CustomVideoPlayer
-                              src={activeLesson.videoUrl}
-                              title={activeLesson.titleAr}
-                              user={currentUser}
-                            />
+                          <div className="space-y-5">
+                            {/* Academic Item Header Card */}
+                            <div className="rounded-2xl glass bg-gradient-to-br from-slate-900/90 to-slate-950 border border-slate-800 p-6 space-y-4">
+                              <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-800/80 pb-4">
+                                <div className="space-y-1">
+                                  <div className="flex items-center gap-2">
+                                    <span className="text-[10px] font-bold uppercase tracking-wider font-mono text-brand-cyan px-2.5 py-0.5 rounded-full bg-brand-cyan/10 border border-brand-cyan/20">
+                                      {activeLesson.isSection || activeLesson.wordUrl ? t("🔬 سكشن عملي / معمل", "Lab Section") : t("📖 محاضرة جامعية معتمدة", "Accredited Lecture")}
+                                    </span>
+                                    <span className="text-[10px] font-bold text-slate-400 font-mono">
+                                      Eng/Mohamed abdal tawab
+                                    </span>
+                                  </div>
+                                  <h3 className="text-lg sm:text-xl font-black text-white">{t(activeLesson.titleAr, activeLesson.titleEn)}</h3>
+                                </div>
 
-                            <div className="flex flex-wrap items-center justify-between gap-4 bg-slate-950/40 border border-slate-800/80 rounded-2xl p-5 glass">
-                              <div>
-                                <h3 className="text-base font-black text-white">{t(activeLesson.titleAr, activeLesson.titleEn)}</h3>
-                                <p className="text-xs text-slate-400 mt-1 font-mono">{t('مدة الحصة الدراسية:', 'Lesson duration:')} {activeLesson.duration}</p>
+                                <div className="flex items-center gap-2">
+                                  <button
+                                    onClick={() => handleToggleLessonComplete(activeLesson.id)}
+                                    className={`rounded-xl px-4 py-2 text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer border ${
+                                      currentUser?.watchedLessonIds?.includes(activeLesson.id)
+                                        ? "bg-emerald-500/10 border-emerald-500/30 text-emerald-400"
+                                        : "bg-slate-900 hover:bg-slate-800 border-slate-800 text-slate-300"
+                                    }`}
+                                  >
+                                    <Check className="h-4 w-4" />
+                                    <span>{currentUser?.watchedLessonIds?.includes(activeLesson.id) ? t("تمت المذاكرة ✅", "Completed") : t("تحديد كمكتمل", "Mark as Done")}</span>
+                                  </button>
+                                </div>
                               </div>
 
-                              <button
-                                onClick={() => handleToggleLessonComplete(activeLesson.id)}
-                                className={`rounded-xl px-4 py-2.5 text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer border ${
-                                  currentUser?.watchedLessonIds?.includes(activeLesson.id)
-                                    ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400'
-                                    : 'bg-brand-cyan border-brand-cyan text-brand-dark hover:bg-brand-cyan-light'
-                                }`}
-                              >
-                                {currentUser?.watchedLessonIds?.includes(activeLesson.id) ? (
-                                  <>
-                                    <Check className="h-4.5 w-4.5" />
-                                    {t('أكملت الحصة بنجاح!', 'Completed!')}
-                                  </>
-                                ) : (
-                                  <>
-                                    <Check className="h-4.5 w-4.5" />
-                                    {t('تحديد كحصة مكتملة المذاكرة', 'Mark Completed')}
-                                  </>
+                              {/* Quick Action Download Buttons Bar */}
+                              <div className="flex flex-wrap items-center gap-3">
+                                {activeLesson.pdfUrl && (
+                                  <button
+                                    type="button"
+                                    onClick={() => handleOpenProtectedLink(activeLesson.pdfUrl!, selectedCourse, "pdf")}
+                                    className="flex-1 min-w-[200px] flex items-center justify-center gap-2 rounded-xl bg-red-600/20 hover:bg-red-600/30 border border-red-500/40 text-red-300 px-4 py-3 text-xs font-bold transition-all cursor-pointer shadow-md"
+                                  >
+                                    <Download className="h-4 w-4" />
+                                    <span>{t("تحميل ملف المحاضرة (PDF)", "Download Lecture PDF")}</span>
+                                  </button>
                                 )}
-                              </button>
+
+                                {activeLesson.wordUrl && (
+                                  <button
+                                    type="button"
+                                    onClick={() => handleOpenProtectedLink(activeLesson.wordUrl!, selectedCourse, "file")}
+                                    className="flex-1 min-w-[200px] flex items-center justify-center gap-2 rounded-xl bg-blue-600/20 hover:bg-blue-600/30 border border-blue-500/40 text-blue-300 px-4 py-3 text-xs font-bold transition-all cursor-pointer shadow-md"
+                                  >
+                                    <Download className="h-4 w-4" />
+                                    <span>{t("تحميل شيت السكشن العملي (Word .docx)", "Download Lab Sheet (Word)")}</span>
+                                  </button>
+                                )}
+                              </div>
                             </div>
 
-                            {/* Attachments / Worksheets / PDF viewer */}
+                            {/* Optional Explanatory Video Accordion */}
+                            {activeLesson.videoUrl && (
+                              <details className="rounded-2xl border border-slate-800 bg-slate-950/40 p-4 transition-all">
+                                <summary className="cursor-pointer text-xs font-bold text-slate-400 hover:text-brand-cyan flex items-center justify-between">
+                                  <span className="flex items-center gap-2">
+                                    <span>▶️</span>
+                                    <span>{t("عرض تسجيل الشرح التوضيحي للمحاضرة / السكشن (اختياري)", "Watch Video Explanation (Optional)")}</span>
+                                  </span>
+                                  <span className="text-[10px] text-slate-500 font-mono">{t("انقر للفتح / الإغلاق", "Toggle")}</span>
+                                </summary>
+                                <div className="mt-4">
+                                  <CustomVideoPlayer
+                                    src={activeLesson.videoUrl}
+                                    title={activeLesson.titleAr}
+                                    user={currentUser}
+                                  />
+                                </div>
+                              </details>
+                            )}
+
+                            {/* Attachments / Worksheets / Word & PDF viewer */}
                             <div className="rounded-2xl glass bg-slate-950/40 border border-slate-800/80 p-6 space-y-4">
-                              <h4 className="font-bold text-white text-sm flex items-center gap-2">
-                                <Paperclip className="h-4.5 w-4.5 text-brand-cyan" />
-                                {t('الملفات ومذكرة واجب الشرح الحالية', 'Worksheets & Documents Booklet')}
-                              </h4>
+                              <div className="flex items-center justify-between border-b border-slate-800/80 pb-3">
+                                <h4 className="font-bold text-white text-sm flex items-center gap-2">
+                                  <Paperclip className="h-4.5 w-4.5 text-brand-cyan" />
+                                  {t("ملفات المحاضرة والسكاشن العملية (Word & PDF)", "Lecture & Lab Materials (Word & PDF)")}
+                                </h4>
+                                {activeLesson?.isSection && (
+                                  <span className="px-2.5 py-0.5 rounded-full bg-amber-500/20 border border-amber-500/40 text-amber-300 text-[10px] font-bold">
+                                    🔬 {t("سكشن عملي / معمل", "Lab Section")}
+                                  </span>
+                                )}
+                              </div>
+
+                              {/* Word Document (.docx / .doc) Dedicated Card */}
+                              {activeLesson?.wordUrl && (
+                                <div className="bg-gradient-to-r from-blue-950/50 to-slate-900 border border-blue-600/30 rounded-2xl p-4 space-y-3">
+                                  <div className="flex items-center justify-between">
+                                    <div className="flex items-center gap-2.5">
+                                      <div className="w-10 h-10 rounded-xl bg-blue-600/20 border border-blue-500/40 text-blue-400 flex items-center justify-center font-black text-lg shrink-0">
+                                        📝
+                                      </div>
+                                      <div>
+                                        <span className="text-[10px] font-bold text-blue-400 uppercase tracking-wider font-mono">Word Document / Lab Sheet</span>
+                                        <h5 className="font-bold text-white text-xs">{t("شيت السكشن العملي / التقرير المطلوب (.docx / .doc)", "Lab Sheet & Assignment Doc")}</h5>
+                                      </div>
+                                    </div>
+                                    <span className="px-2 py-0.5 rounded bg-blue-500/20 border border-blue-500/30 text-blue-300 text-[10px] font-mono font-bold">DOCX</span>
+                                  </div>
+                                  <div className="flex flex-wrap gap-2 pt-1">
+                                    <button
+                                      type="button"
+                                      onClick={() => handleOpenProtectedLink(activeLesson.wordUrl!, selectedCourse, "file")}
+                                      className="flex-1 rounded-xl bg-blue-600 hover:bg-blue-500 text-white px-4 py-2.5 text-xs font-bold flex items-center justify-center gap-2 cursor-pointer shadow transition-all"
+                                    >
+                                      <Download className="h-4 w-4" />
+                                      <span>{t("تحميل ملف الوورد (.docx) للسكشن", "Download Word (.docx)")}</span>
+                                    </button>
+                                    <a
+                                      href={`https://docs.google.com/viewer?url=${encodeURIComponent(activeLesson.wordUrl)}&embedded=true`}
+                                      target="_blank"
+                                      rel="noopener noreferrer"
+                                      className="rounded-xl border border-blue-500/40 bg-blue-950/40 hover:bg-blue-900/60 text-blue-300 px-3.5 py-2.5 text-xs font-bold flex items-center justify-center gap-1.5 cursor-pointer transition-all"
+                                    >
+                                      <span>👁️</span>
+                                      <span>{t("معاينة أونلاين", "Preview Online")}</span>
+                                    </a>
+                                  </div>
+                                </div>
+                              )}
 
                               {activeLesson.pdfUrl ? (
                                 <div className="space-y-4">
@@ -1622,7 +1972,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({ onLogout, on
                                 <div className="rounded-2xl glass bg-slate-950/40 border border-slate-800/80 p-6 space-y-4">
                                   <div className="border-l-4 border-brand-cyan pl-4 text-xs">
                                     <span className="text-[10px] font-mono text-brand-cyan font-bold uppercase tracking-wider">Required Homework</span>
-                                    <h4 className="font-black text-white text-sm mt-1">{t('مهمة الواجب والشيتات المطلوبة للحصة والكورس:', 'Homework & Assignment Sheets:')}</h4>
+                                    <h4 className="font-black text-white text-sm mt-1">{t('📝 قسم الشيتات والتكليفات الأسبوعية لمقرر المادة:', 'Weekly Problem Sheets & Lab Assignments:')}</h4>
                                     
                                     {activeLesson.homework && (
                                       <p className="text-slate-300 mt-2 leading-relaxed bg-slate-900/60 p-3 rounded-xl border border-slate-800/50 font-bold">{activeLesson.homework}</p>
@@ -1674,7 +2024,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({ onLogout, on
                                       disabled={actionLoading}
                                       className="rounded-xl bg-brand-cyan text-brand-dark hover:bg-brand-cyan-light px-6 py-3 font-bold transition-all disabled:opacity-50 cursor-pointer shadow-lg shadow-cyan-950/20"
                                     >
-                                      {actionLoading ? t('جاري تسليم الواجب...', 'Submitting Homework...') : t('تسليم حل الواجب لمستر والتقييم', 'Submit Assignment')}
+                                      {actionLoading ? t('جاري تسليم الواجب...', 'Submitting Homework...') : t('تسليم حل الواجب لالمهندس والتقييم', 'Submit Assignment')}
                                     </button>
                                   </form>
                                 </div>
@@ -1695,7 +2045,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({ onLogout, on
                                   required
                                   value={newCommentText}
                                   onChange={e => setNewCommentText(e.target.value)}
-                                  placeholder={t('اطرح سؤالاً على مستر أو اكتب تعليقك...', 'Ask Mr. Mohamed or drop a query...')}
+                                  placeholder={t('اطرح سؤالاً على المهندس أو اكتب تعليقك...', 'Ask Eng/Mohamed abdal tawab or drop a query...')}
                                   className="flex-grow rounded-xl bg-slate-900 border border-slate-800 px-4 py-3 text-white focus:outline-none focus:border-brand-cyan"
                                 />
                                 <button
@@ -1721,7 +2071,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({ onLogout, on
                                           <div className="flex justify-between items-center mb-1">
                                             <span className="font-black text-brand-cyan text-[11px] flex items-center gap-1.5">
                                               <span className="w-1.5 h-1.5 rounded-full bg-brand-cyan animate-pulse"></span>
-                                              {t('رد الأستاذ / محمد عبد التواب', 'Instructor Reply - Mr. Mohamed')}
+                                              {t('رد الأستاذ / محمد عبد التواب', 'Instructor Reply - Eng/Mohamed abdal tawab')}
                                             </span>
                                             {comm.replyTimestamp && (
                                               <span className="text-[9px] text-slate-500 font-mono">{new Date(comm.replyTimestamp).toLocaleString('ar-EG')}</span>
@@ -1757,7 +2107,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({ onLogout, on
                             <div className="rounded-2xl border border-brand-cyan/20 bg-brand-cyan/5 p-4 space-y-3">
                               <h4 className="font-black text-white text-xs flex items-center gap-1.5">
                                 <Award className="h-4.5 w-4.5 text-brand-cyan animate-pulse" />
-                                {t('الامتحانات الإلكترونية المتاحة للكورس', 'Available Course Quizzes')}
+                                {t('🏆 قسم الامتحانات وبنك الأسئلة (Exams & Test Archive)', 'University Exams & Test Archive')}
                               </h4>
                               <p className="text-[11px] text-slate-400">
                                 {t('اختبارات فورية للمذاكرة والتقييم الذاتي والحصول على شهادة التخرج.', 'Take these online exams to test your concepts and unlock graduation certificate.')}
@@ -1809,7 +2159,18 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({ onLogout, on
                                 >
                                   <span className="font-mono text-[10px] text-slate-500">#{idx + 1}</span>
                                   <div className="text-right flex-grow truncate">
-                                    <p className="truncate font-black">{t(lesson.titleAr, lesson.titleEn)}</p>
+                                    <div className="flex items-center gap-1.5">
+                                      <p className="truncate font-black">{t(lesson.titleAr, lesson.titleEn)}</p>
+                                      {lesson.wordUrl && (
+                                        <span className="px-1.5 py-0.2 rounded bg-blue-500/20 text-blue-400 text-[9px] font-bold shrink-0">DOCX</span>
+                                      )}
+                                      {lesson.pdfUrl && (
+                                        <span className="px-1.5 py-0.2 rounded bg-red-500/20 text-red-400 text-[9px] font-bold shrink-0">PDF</span>
+                                      )}
+                                      {lesson.isSection && (
+                                        <span className="px-1.5 py-0.2 rounded bg-amber-500/20 text-amber-300 text-[9px] font-bold shrink-0">معمل</span>
+                                      )}
+                                    </div>
                                     <p className="text-[10px] text-slate-500 mt-0.5 font-mono">{lesson.duration}</p>
                                   </div>
                                   {isCompleted && (
@@ -2302,7 +2663,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({ onLogout, on
                                       <span className="text-brand-cyan font-black text-sm font-mono">{assign.grade}</span>
                                     </div>
                                     <p className="text-[11px] text-slate-300 italic">
-                                      <strong>{t('ملاحظة مستر المساعد:', 'Teacher Feedback:')}</strong> {assign.feedback || t('ممتاز استمر بالمجهود المتميز!', 'Well done, keep up!')}
+                                      <strong>{t('ملاحظة المهندس المساعد:', 'Teacher Feedback:')}</strong> {assign.feedback || t('ممتاز استمر بالمجهود المتميز!', 'Well done, keep up!')}
                                     </p>
                                   </div>
                                 )}
@@ -2337,7 +2698,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({ onLogout, on
                           </div>
                           <div>
                             <h4 className="text-xs sm:text-sm font-black text-white">{t('الاستشارات المباشرة والمساعدين المخصصين', 'Live Counselor Support')}</h4>
-                            <p className="text-[10px] text-slate-400 mt-0.5">{t('رد فوري خلال اليوم مع مستر محمد عبد التواب ومساعديه للعلوم', 'Direct chat with Mr. Mohamed and his assistants')}</p>
+                            <p className="text-[10px] text-slate-400 mt-0.5">{t('رد فوري خلال اليوم مع م. محمد عبد التواب ومساعديه للعلوم', 'Direct chat with Eng/Mohamed abdal tawab and his assistants')}</p>
                           </div>
                         </div>
 
@@ -2474,6 +2835,218 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({ onLogout, on
                   </motion.div>
                 )}
 
+                {/* SUBTAB: ACADEMY NOTIFICATIONS SYSTEM */}
+                {activeTab === 'notifications' && (
+                  <motion.div
+                    key="notifications"
+                    initial={{ opacity: 0, y: 10 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0 }}
+                    className="space-y-6"
+                  >
+                    {/* Header bar */}
+                    <div className="rounded-2xl glass bg-slate-950/40 border border-slate-800/80 p-6 flex flex-col md:flex-row md:items-center justify-between gap-4">
+                      <div className="flex items-center gap-3">
+                        <div className="h-12 w-12 rounded-2xl bg-cyan-500/10 border border-cyan-500/20 text-brand-cyan flex items-center justify-center shrink-0">
+                          <BellRing className="h-6 w-6 animate-pulse" />
+                        </div>
+                        <div>
+                          <h3 className="text-base sm:text-lg font-black text-white flex items-center gap-2">
+                            {t('نظام إشعارات الأكاديمية', 'Academy Notifications System')}
+                            {unreadNotificationsCount > 0 && (
+                              <span className="rounded-full bg-amber-500/20 border border-amber-500/40 text-amber-300 px-2.5 py-0.5 text-xs font-mono font-bold">
+                                {unreadNotificationsCount} {t('جديد', 'New')}
+                              </span>
+                            )}
+                          </h3>
+                          <p className="text-xs text-slate-400 mt-0.5">
+                            {t('تنبيهات فورية عند رفع محاضرات وسكاشن جديدة، أو اعتماد طلبات تفعيل المقررات الأكاديمية.', 'Instant notifications for new lectures, lab sections, and course activation approvals.')}
+                          </p>
+                        </div>
+                      </div>
+
+                      {/* Action buttons */}
+                      <div className="flex items-center gap-2 flex-wrap">
+                        {unreadNotificationsCount > 0 && (
+                          <button
+                            type="button"
+                            onClick={handleMarkAllNotificationsRead}
+                            className="flex items-center gap-1.5 rounded-xl bg-slate-900 hover:bg-slate-800 border border-slate-800 text-brand-cyan-light px-3.5 py-2 text-xs font-bold transition-all cursor-pointer shadow-md"
+                          >
+                            <CheckCheck className="h-4 w-4" />
+                            <span>{t('تحديد الكل كمقروء', 'Mark All Read')}</span>
+                          </button>
+                        )}
+                        <button
+                          type="button"
+                          onClick={() => {
+                            playNotificationSound();
+                          }}
+                          title={t('اختبار نغمة التنبيه', 'Test chime sound')}
+                          className="rounded-xl border border-slate-800 bg-slate-900/60 hover:bg-slate-800 p-2 text-slate-400 hover:text-white transition-all cursor-pointer flex items-center gap-1.5 text-xs font-bold"
+                        >
+                          <Sparkles className="h-4 w-4 text-brand-cyan" />
+                          <span className="hidden sm:inline">{t('صوت التنبيه', 'Chime')}</span>
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Filter Pills */}
+                    <div className="flex items-center gap-2 overflow-x-auto pb-1 text-xs">
+                      {[
+                        { id: 'all', label: t('جميع التنبيهات', 'All'), count: notifications.length },
+                        { id: 'unread', label: t('غير مقروءة 🔔', 'Unread'), count: unreadNotificationsCount },
+                        { id: 'activation', label: t('اعتماد وتفعيل المقررات 🎓', 'Course Activations'), count: notifications.filter(n => n.type === 'course_activated' || n.titleAr?.includes('تفعيل')).length },
+                        { id: 'lecture', label: t('المحاضرات والسكاشن 📚', 'Lectures & Labs'), count: notifications.filter(n => n.type === 'lecture_added' || n.titleAr?.includes('محاضر') || n.titleAr?.includes('سكشن')).length },
+                        { id: 'exams', label: t('الشيتات والامتحانات 📝', 'Sheets & Exams'), count: notifications.filter(n => n.type === 'assignment' || n.type === 'exam' || n.titleAr?.includes('امتحان') || n.titleAr?.includes('واجب') || n.titleAr?.includes('شيت')).length },
+                      ].map(pill => (
+                        <button
+                          key={pill.id}
+                          type="button"
+                          onClick={() => setNotificationFilter(pill.id as any)}
+                          className={`flex items-center gap-1.5 rounded-xl px-4 py-2 font-bold transition-all cursor-pointer whitespace-nowrap ${
+                            notificationFilter === pill.id
+                              ? 'bg-brand-cyan text-brand-dark shadow-md shadow-cyan-950/40'
+                              : 'bg-slate-950/80 text-slate-400 border border-slate-800 hover:text-white'
+                          }`}
+                        >
+                          <span>{pill.label}</span>
+                          <span className="rounded-full bg-slate-800/80 px-2 py-0.5 text-[10px] font-mono font-bold">
+                            {pill.count}
+                          </span>
+                        </button>
+                      ))}
+                    </div>
+
+                    {/* Notification Cards List */}
+                    <div className="space-y-3">
+                      {filteredNotifications.length === 0 ? (
+                        <div className="rounded-2xl border border-slate-800/80 bg-slate-950/40 p-12 text-center space-y-3">
+                          <Bell className="mx-auto h-12 w-12 text-slate-700" />
+                          <h4 className="font-bold text-white text-sm">{t('لا توجد إشعارات مطابقة حالياً', 'No notifications matching filter')}</h4>
+                          <p className="text-xs text-slate-400 max-w-sm mx-auto">
+                            {t('ستصلك تنبيهات فورية هنا عند رفع محاضرات جديدة، أو عند اعتماد طلب تفعيل مادة أكاديمية من قبل الإدارة.', 'You will receive real-time alerts here when new lectures are uploaded or when your course activations are approved.')}
+                          </p>
+                        </div>
+                      ) : (
+                        filteredNotifications.map((notif) => {
+                          const isActivation = notif.type === 'course_activated' || notif.titleAr?.includes('تفعيل');
+                          const isLecture = notif.type === 'lecture_added' || notif.titleAr?.includes('محاضر') || notif.titleAr?.includes('سكشن');
+                          const isExam = notif.type === 'exam' || notif.type === 'assignment' || notif.titleAr?.includes('امتحان') || notif.titleAr?.includes('واجب') || notif.titleAr?.includes('شيت');
+
+                          return (
+                            <div
+                              key={notif.id}
+                              onClick={() => handleNotificationClick(notif)}
+                              className={`rounded-2xl border p-5 transition-all cursor-pointer relative group overflow-hidden ${
+                                notif.isRead
+                                  ? 'bg-slate-950/40 border-slate-800/70 text-slate-300 hover:border-slate-700'
+                                  : 'bg-gradient-to-r from-cyan-950/25 via-slate-900/70 to-slate-950/90 border-cyan-500/40 text-white shadow-lg shadow-cyan-950/20'
+                              }`}
+                            >
+                              {!notif.isRead && (
+                                <span className="absolute top-3 left-3 rtl:left-auto rtl:right-3 h-2.5 w-2.5 rounded-full bg-cyan-400 animate-pulse shadow-sm shadow-cyan-400/80" />
+                              )}
+
+                              <div className="flex items-start gap-4">
+                                {/* Icon badge */}
+                                <div className={`h-11 w-11 rounded-2xl shrink-0 flex items-center justify-center text-xl border ${
+                                  isActivation
+                                    ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400'
+                                    : isLecture
+                                    ? 'bg-cyan-500/10 border-cyan-500/30 text-brand-cyan'
+                                    : isExam
+                                    ? 'bg-amber-500/10 border-amber-500/30 text-amber-400'
+                                    : 'bg-slate-900 border-slate-800 text-slate-300'
+                                }`}>
+                                  {isActivation ? '🎓' : isLecture ? '📚' : isExam ? '🏆' : '📢'}
+                                </div>
+
+                                {/* Content */}
+                                <div className="flex-1 min-w-0 space-y-1.5">
+                                  <div className="flex flex-wrap items-center justify-between gap-2">
+                                    <div className="flex items-center gap-2">
+                                      <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wider font-mono border ${
+                                        isActivation
+                                          ? 'bg-emerald-500/10 text-emerald-300 border-emerald-500/30'
+                                          : isLecture
+                                          ? 'bg-cyan-500/10 text-brand-cyan-light border-cyan-500/30'
+                                          : isExam
+                                          ? 'bg-amber-500/10 text-amber-300 border-amber-500/30'
+                                          : 'bg-slate-800 text-slate-300 border-slate-700'
+                                      }`}>
+                                        {isActivation ? t('اعتماد مقرر', 'Activation') : isLecture ? t('محاضرة / سكشن', 'Lecture/Lab') : isExam ? t('امتحان / تكليف', 'Exam/Sheet') : t('إشعار أكاديمي', 'Academic Alert')}
+                                      </span>
+                                      <h4 className="text-sm font-bold text-white truncate">{t(notif.titleAr, notif.titleEn)}</h4>
+                                    </div>
+
+                                    <span className="text-[10px] text-slate-400 font-mono">
+                                      {formatTimeAgo(notif.createdAt)}
+                                    </span>
+                                  </div>
+
+                                  <p className="text-xs text-slate-300 leading-relaxed font-normal">
+                                    {t(notif.bodyAr, notif.bodyEn)}
+                                  </p>
+
+                                  {/* Buttons on card */}
+                                  <div className="pt-2 flex flex-wrap items-center justify-between gap-2 border-t border-slate-900/80">
+                                    <div className="flex items-center gap-2">
+                                      {notif.courseId && (
+                                        <button
+                                          type="button"
+                                          onClick={(e) => {
+                                            e.stopPropagation();
+                                            handleNotificationClick(notif);
+                                          }}
+                                          className="flex items-center gap-1.5 rounded-lg bg-brand-cyan/15 hover:bg-brand-cyan text-brand-cyan hover:text-brand-dark border border-brand-cyan/30 px-3 py-1.5 text-[11px] font-bold transition-all cursor-pointer"
+                                        >
+                                          <BookOpen className="h-3.5 w-3.5" />
+                                          <span>{t('فتح المقرر الدراسي الآن 🚀', 'Open Course Now')}</span>
+                                        </button>
+                                      )}
+                                    </div>
+
+                                    <div className="flex items-center gap-1.5">
+                                      {!notif.isRead ? (
+                                        <button
+                                          type="button"
+                                          onClick={(e) => {
+                                            e.stopPropagation();
+                                            handleNotificationRead(notif.id);
+                                          }}
+                                          className="text-[11px] text-slate-400 hover:text-white px-2 py-1 rounded hover:bg-slate-900 transition-colors flex items-center gap-1 cursor-pointer"
+                                        >
+                                          <Check className="h-3.5 w-3.5" />
+                                          <span>{t('تحديد كمقروء', 'Mark Read')}</span>
+                                        </button>
+                                      ) : (
+                                        <span className="text-[10px] text-slate-500 flex items-center gap-1">
+                                          <CheckCheck className="h-3 w-3 text-cyan-400" />
+                                          <span>{t('مقروء', 'Read')}</span>
+                                        </span>
+                                      )}
+
+                                      <button
+                                        type="button"
+                                        onClick={(e) => handleDeleteNotification(notif.id, e)}
+                                        className="text-slate-500 hover:text-red-400 p-1.5 rounded-lg hover:bg-red-500/10 transition-colors cursor-pointer"
+                                        title={t('حذف الإشعار', 'Delete Notification')}
+                                      >
+                                        <Trash2 className="h-3.5 w-3.5" />
+                                      </button>
+                                    </div>
+                                  </div>
+                                </div>
+                              </div>
+                            </div>
+                          );
+                        })
+                      )}
+                    </div>
+                  </motion.div>
+                )}
+
               </AnimatePresence>
             )}
 
@@ -2482,6 +3055,64 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({ onLogout, on
         </div>
 
       </div>
+
+      {/* Real-time Floating Notification Alert Toast */}
+      <AnimatePresence>
+        {floatingToast && (
+          <motion.div
+            initial={{ opacity: 0, y: -50, scale: 0.9 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: -20, scale: 0.9 }}
+            className="fixed top-6 left-6 rtl:left-auto rtl:right-6 z-50 max-w-sm sm:max-w-md w-full rounded-2xl glass bg-slate-950/95 border-2 border-brand-cyan/60 p-4 shadow-2xl shadow-cyan-950/50"
+            style={{ direction }}
+          >
+            <div className="flex items-start gap-3">
+              <div className="h-10 w-10 rounded-xl bg-brand-cyan/20 border border-brand-cyan/40 text-brand-cyan flex items-center justify-center text-xl shrink-0">
+                {floatingToast.type === 'course_activated' ? '🎓' : floatingToast.type === 'lecture_added' ? '📚' : '🔔'}
+              </div>
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center justify-between">
+                  <span className="text-[10px] font-bold text-brand-cyan uppercase tracking-wider font-mono">
+                    {t('تنبيه أكاديمي فوري 🔔', 'Live Academy Alert 🔔')}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setFloatingToast(null)}
+                    className="text-slate-400 hover:text-white p-0.5 cursor-pointer"
+                  >
+                    <X className="h-3.5 w-3.5" />
+                  </button>
+                </div>
+                <h4 className="text-xs font-bold text-white mt-0.5 truncate">
+                  {t(floatingToast.titleAr, floatingToast.titleEn)}
+                </h4>
+                <p className="text-[11px] text-slate-300 mt-1 line-clamp-2">
+                  {t(floatingToast.bodyAr, floatingToast.bodyEn)}
+                </p>
+                <div className="mt-2.5 flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      handleNotificationClick(floatingToast);
+                      setFloatingToast(null);
+                    }}
+                    className="rounded-lg bg-brand-cyan text-brand-dark px-3 py-1 text-[11px] font-bold hover:bg-brand-cyan-light transition-all cursor-pointer"
+                  >
+                    {floatingToast.courseId ? t('فتح المقرر الآن 🚀', 'Open Course Now') : t('عرض التفاصيل', 'View Details')}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setFloatingToast(null)}
+                    className="rounded-lg border border-slate-800 text-slate-400 hover:text-white px-2.5 py-1 text-[11px] font-medium transition-all cursor-pointer"
+                  >
+                    {t('إغلاق', 'Dismiss')}
+                  </button>
+                </div>
+              </div>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       {/* MODAL VIEW FOR AUTOMATIC CERTIFICATE DISPLAY */}
       {selectedCertificate && (
@@ -2501,16 +3132,16 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({ onLogout, on
               <div className="absolute bottom-0 left-0 h-24 w-24 bg-cyan-500/5 rounded-tr-full pointer-events-none" />
 
               <div className="flex justify-between items-center px-4 mb-2">
-                <span className="text-[10px] text-slate-500 font-mono font-bold tracking-widest uppercase">MOHAMED ABDEL TAWAB ACADEMY</span>
+                <span className="text-[10px] text-slate-500 font-mono font-bold tracking-widest uppercase">ENG/MOHAMED ABDAL TAWAB - IT UNIVERSITY PLATFORM</span>
                 <span className="text-xl">🏆</span>
               </div>
 
               <h1 className="text-2xl font-black text-amber-500/90 font-arabic tracking-wide">
-                {t('شهادة تقدير وإتمام كورس تفوق', 'Certificate of Completion & Merit')}
+                {t('شهادة إتمام واجتياز المقرر الأكاديمي', 'Certificate of Course Completion & Academic Merit')}
               </h1>
               
               <p className="text-xs text-slate-400 italic">
-                {t('نشهد نحن أكاديمية العلوم المعتمدة بأن الطالب الكفء:', 'We proudly recognize that the student:')}
+                {t('تشهد منصة Eng/Mohamed abdal tawab الأكاديمية بالجامعة التكنولوجية لقسم تكنولوجيا المعلومات IT بأن الطالب:', 'Eng/Mohamed abdal tawab IT University Platform certifies that student:')}
               </p>
 
               <h2 className="text-xl sm:text-2xl font-black text-white py-1 underline decoration-amber-500/40 font-arabic">
@@ -2519,15 +3150,15 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({ onLogout, on
 
               <p className="text-xs text-slate-300 max-w-lg mx-auto leading-relaxed">
                 {t(
-                  `قد اجتاز بنجاح وتفوق تام اختبارات وحصص المنهج المتكامل لـ: \n "${selectedCertificate.courseTitleAr}"\n بمعدل دراسي وحضور ممتاز ومستمر.`,
-                  `has successfully completed and mastered the comprehensive syllabus: \n "${selectedCertificate.courseTitleEn}"\n demonstrating exceptional dedication, attendance, and scientific concepts competency.`
+                  `قد استوفى بنجاح متطلبات دراسة المقرر الأكاديمي واجتياز كافة شيتات السكاشن المعملية والامتحانات لـ: \n "${selectedCertificate.courseTitleAr}"\n وحصل على تقدير امتياز في التكليفات العملية والنظرية.`,
+                  `has successfully fulfilled all course requirements, laboratory sheets, and examination papers for: \n "${selectedCertificate.courseTitleEn}"\n with demonstrated excellence in practical and theoretical assignments.`
                 )}
               </p>
 
               <div className="pt-8 grid grid-cols-2 gap-4 border-t border-slate-900 text-[10px] sm:text-xs">
                 <div className="text-right space-y-1">
                   <p className="text-slate-500">{t('إمضاء موجه ومعلم المادة:', 'Senior Science Educator:')}</p>
-                  <p className="text-brand-cyan-light font-black text-sm italic font-arabic">{t('مستر محمد عبد التواب', 'Mohamed Abdel Tawab')}</p>
+                  <p className="text-brand-cyan-light font-black text-sm italic font-arabic">{t('م. محمد عبد التواب', 'Eng/Mohamed abdal tawab')}</p>
                 </div>
 
                 <div className="text-left space-y-1">

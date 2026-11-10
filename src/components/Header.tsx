@@ -40,8 +40,8 @@ export const Header: React.FC<HeaderProps> = ({
 
   const navItems = [
     { view: 'home', ar: 'الرئيسية', en: 'Home' },
-    { view: 'courses', ar: 'الكورسات والمناهج', en: 'Courses' },
-    { view: 'teacher', ar: 'عن مستر', en: 'About Mr. Mohamed' },
+    { view: 'courses', ar: 'المحاضرات والسكاشن', en: 'Lectures & Labs' },
+    { view: 'teacher', ar: 'عن المنصة', en: 'About Platform' },
     { view: 'contact', ar: 'اتصل بنا', en: 'Contact' },
     ...(isAdminLoggedIn ? [{ view: 'admin-panel', ar: 'لوحة التحكم', en: 'Admin Panel' }] : [])
   ];
@@ -54,17 +54,17 @@ export const Header: React.FC<HeaderProps> = ({
           {/* Logo */}
           <div 
             onClick={() => { onNavigate('home'); setMobileMenuOpen(false); }}
-            className="flex cursor-pointer items-center gap-2"
+            className="flex cursor-pointer items-center gap-2.5"
           >
-            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-brand-cyan/10 border border-brand-cyan/30 text-xl shadow-lg shadow-cyan-950/25">
-              🧪
+            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-br from-brand-cyan/20 to-blue-600/20 border border-brand-cyan/40 text-xl shadow-lg shadow-cyan-950/25">
+              🎓
             </div>
             <div className="flex flex-col">
               <span className="text-sm font-black tracking-tight text-white md:text-base leading-tight">
-                {t('أكاديمية العلوم', 'Science Academy')}
+                {t('الجامعة التكنولوجية', 'Technological University')}
               </span>
-              <span className="text-[10px] font-medium text-brand-cyan-light font-arabic">
-                {t('مستر محمد عبد التواب', 'Mr. Mohamed Abdel Tawab')}
+              <span className="text-[11px] font-bold text-brand-cyan-light font-arabic">
+                {t('منصة محمد عبد التواب - قسم IT', 'Eng/Mohamed abdal tawab – IT Dept')}
               </span>
             </div>
           </div>
@@ -78,7 +78,7 @@ export const Header: React.FC<HeaderProps> = ({
               type="text"
               value={searchVal}
               onChange={handleSearchChange}
-              placeholder={t('ابحث عن كورس أو صف دراسي...', 'Search science courses...')}
+              placeholder={t('ابحث عن محاضرة، سكشن، ملف PDF أو Word...', 'Search lectures, labs, PDF, Word...')}
               className="w-full rounded-xl bg-slate-900/60 border border-slate-800 py-1.5 pl-9 pr-4 text-xs text-white focus:border-brand-cyan focus:outline-none focus:ring-1 focus:ring-brand-cyan/20 placeholder-slate-500"
             />
           </div>

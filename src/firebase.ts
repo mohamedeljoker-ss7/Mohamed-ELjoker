@@ -7,52 +7,669 @@ import { normalizeCourseLessons } from './utils/authAccess';
 import { saveVideoToIndexedDB } from './utils/videoStorage';
 import { uploadFileToFirebaseStorage } from './utils/firebaseUploadService';
 
-// Pre-seeded Science Data
+// Pre-seeded Technological University IT Categories
 const defaultCategories: Category[] = [
   {
-    id: 'prep1',
-    nameAr: 'الصف الأول الإعدادي',
-    nameEn: '1st Prep Grade',
-    imageUrl: 'https://images.unsplash.com/photo-1507679799987-c73779587ccf?auto=format&fit=crop&w=600&q=80',
+    id: 'year1',
+    nameAr: 'الفرقة الأولى - تكنولوجيا المعلومات',
+    nameEn: '1st Year - IT Department',
+    imageUrl: 'https://images.unsplash.com/photo-1517694712202-14dd9538aa97?auto=format&fit=crop&w=600&q=80',
     color: 'cyan'
   },
   {
-    id: 'prep2',
-    nameAr: 'الصف الثاني الإعدادي',
-    nameEn: '2nd Prep Grade',
-    imageUrl: 'https://images.unsplash.com/photo-1507679799987-c73779587ccf?auto=format&fit=crop&w=600&q=80',
+    id: 'year2',
+    nameAr: 'الفرقة الثانية - تكنولوجيا المعلومات',
+    nameEn: '2nd Year - IT Department',
+    imageUrl: 'https://images.unsplash.com/photo-1526374965328-7f61d4dc18c5?auto=format&fit=crop&w=600&q=80',
     color: 'blue'
   },
   {
-    id: 'prep3',
-    nameAr: 'الصف الثالث الإعدادي',
-    nameEn: '3rd Prep Grade',
-    imageUrl: 'https://images.unsplash.com/photo-1507679799987-c73779587ccf?auto=format&fit=crop&w=600&q=80',
+    id: 'year3',
+    nameAr: 'الفرقة الثالثة - تكنولوجيا المعلومات',
+    nameEn: '3rd Year - IT Department',
+    imageUrl: 'https://images.unsplash.com/photo-1550751827-4bd374c3f58b?auto=format&fit=crop&w=600&q=80',
     color: 'emerald'
   },
   {
-    id: 'sec1',
-    nameAr: 'الصف الأول الثانوي',
-    nameEn: '1st Secondary Grade',
-    imageUrl: 'https://images.unsplash.com/photo-1507679799987-c73779587ccf?auto=format&fit=crop&w=600&q=80',
+    id: 'year4',
+    nameAr: 'الفرقة الرابعة - تكنولوجيا المعلومات',
+    nameEn: '4th Year - IT Department',
+    imageUrl: 'https://images.unsplash.com/photo-1504384308090-c894fdcc538d?auto=format&fit=crop&w=600&q=80',
     color: 'purple'
   },
   {
-    id: 'sec2',
-    nameAr: 'الصف الثاني الثانوي',
-    nameEn: '2nd Secondary Grade',
-    imageUrl: 'https://images.unsplash.com/photo-1507679799987-c73779587ccf?auto=format&fit=crop&w=600&q=80',
+    id: 'it_sections',
+    nameAr: 'السكاشن والمعامل العملية (Word & Lab Sheets)',
+    nameEn: 'Practical Sections & Lab Sheets',
+    imageUrl: 'https://images.unsplash.com/photo-1581092160607-ee22621dd758?auto=format&fit=crop&w=600&q=80',
     color: 'amber'
   },
   {
-    id: 'sec3',
-    nameAr: 'الصف الثالث الثانوي',
-    nameEn: '3rd Secondary Grade',
-    imageUrl: 'https://images.unsplash.com/photo-1507679799987-c73779587ccf?auto=format&fit=crop&w=600&q=80',
+    id: 'it_lectures',
+    nameAr: 'المحاضرات الجامعية المعتمدة (PDF & Slides)',
+    nameEn: 'Accredited Lectures & PDFs',
+    imageUrl: 'https://images.unsplash.com/photo-1434030216411-0b793f4b4173?auto=format&fit=crop&w=600&q=80',
     color: 'rose'
   }
 ];
-const defaultCourses: Course[] = [];
+
+// Pre-seeded 6 IT Department University Courses
+export const IT_UNIVERSITY_COURSES: Course[] = [
+  {
+    id: 'course_physics_it',
+    titleAr: 'Physics – الفيزياء',
+    titleEn: 'Physics – General & Applied Physics for IT',
+    descriptionAr: 'مقرر مادة الفيزياء العامة والتطبيقية لطلاب قسم تكنولوجيا المعلومات (IT) بالجامعة التكنولوجية. يشمل المحاضرات النظرية كاملة بصيغ PDF وسلايدز، وسكاشن المعامل والكهربية وشيتات المسائل والتقارير المعملية بصيغ Word (.docx) و PDF.',
+    descriptionEn: 'General & Applied Physics course for Information Technology department at the Technological University. Includes lectures (PDF) and practical sections (Word/PDF).',
+    teacherName: 'م. محمد عبد التواب',
+    categoryId: 'year1',
+    grade: 'year1',
+    subject: 'Physics',
+    subjectAr: 'الفيزياء',
+    subjectEn: 'Physics',
+    department: 'IT',
+    price: 0,
+    isFree: true,
+    isPremium: false,
+    duration: '24 ساعة معتمدة',
+    lessonsCount: 6,
+    featured: true,
+    popular: true,
+    published: true,
+    status: 'published',
+    thumbnailUrl: 'https://images.unsplash.com/photo-1636466497217-26a8cbeaf0aa?auto=format&fit=crop&w=800&q=80',
+    imageUrls: ['https://images.unsplash.com/photo-1636466497217-26a8cbeaf0aa?auto=format&fit=crop&w=800&q=80'],
+    pdfUrl: 'https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf',
+    units: [
+      {
+        id: 'unit_phys_lec',
+        title: 'المحاضرات النظرية (Theoretical Lectures - PDF)',
+        description: 'سلايدز ومذكرات محاضرات الفيزياء للجامعة التكنولوجية بصيغة PDF',
+        order: 1,
+        lessons: [
+          {
+            id: 'phys_lec_1',
+            title: 'المحاضرة 1: الكهربية الساكنة والشحنات وقانون كولوم (PDF)',
+            duration: '50:00',
+            type: 'pdf',
+            pdfUrl: 'https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf',
+            isSection: false,
+            order: 1
+          },
+          {
+            id: 'phys_lec_2',
+            title: 'المحاضرة 2: التيار الكهربي والمقاومة وقانون أوم وقوانين كيرشوف (PDF)',
+            duration: '45:00',
+            type: 'pdf',
+            pdfUrl: 'https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf',
+            isSection: false,
+            order: 2
+          },
+          {
+            id: 'phys_lec_3',
+            title: 'المحاضرة 3: أشباه الموصلات والدايود والترانزستور في عتاد الحاسب (PDF)',
+            duration: '55:00',
+            type: 'pdf',
+            pdfUrl: 'https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf',
+            isSection: false,
+            order: 3
+          }
+        ]
+      },
+      {
+        id: 'unit_phys_sec',
+        title: 'السكاشن العملية والمعامل (Lab Sections & Word Sheets)',
+        description: 'شيتات وتجارب معمل الفيزياء بصيغة Word (.docx) و PDF',
+        order: 2,
+        lessons: [
+          {
+            id: 'phys_sec_1',
+            title: 'سكشن عملي 1: تجربة تحقيق قانون أوم وتعيين المقاومة النوعية (Word DOCX)',
+            duration: '40:00',
+            type: 'word',
+            wordUrl: 'https://calibre-ebook.com/downloads/demos/demo.docx',
+            pdfUrl: 'https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf',
+            isSection: true,
+            order: 1
+          },
+          {
+            id: 'phys_sec_2',
+            title: 'سكشن عملي 2: توصيل المقاومات على التوالي والتوازي وشيت الحل (Word DOCX)',
+            duration: '45:00',
+            type: 'word',
+            wordUrl: 'https://calibre-ebook.com/downloads/demos/demo.docx',
+            pdfUrl: 'https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf',
+            isSection: true,
+            order: 2
+          },
+          {
+            id: 'phys_sec_3',
+            title: 'شيت مسائل الفيزياء الشامل ونماذج امتحانات الميدترم والفاينل (Word + PDF)',
+            duration: '35:00',
+            type: 'word',
+            wordUrl: 'https://calibre-ebook.com/downloads/demos/demo.docx',
+            pdfUrl: 'https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf',
+            isSection: true,
+            order: 3
+          }
+        ]
+      }
+    ],
+    createdAt: '2026-09-01'
+  },
+  {
+    id: 'course_python_it',
+    titleAr: 'Python Programming – برمجة بايثون',
+    titleEn: 'Python Programming – Core & Practical IT Programming',
+    descriptionAr: 'كورس برمجة بايثون الشامل لطلاب قسم تكنولوجيا المعلومات بالجامعة التكنولوجية. يغطي أساسيات البرمجة، هياكل البيانات، البرمجة كائنية التوجه OOP، وتطبيقات الخوارزميات. يشمل محاضرات PDF وسكاشن تطبيقية وشيتات تمارين Word مع أكواد بايثون كاملة.',
+    descriptionEn: 'Complete Python Programming course for IT students. Includes lectures, lab exercises, and assignment sheets in Word and PDF.',
+    teacherName: 'م. محمد عبد التواب',
+    categoryId: 'year1',
+    grade: 'year1',
+    subject: 'Python Programming',
+    subjectAr: 'برمجة بايثون',
+    subjectEn: 'Python Programming',
+    department: 'IT',
+    price: 0,
+    isFree: true,
+    isPremium: false,
+    duration: '32 ساعة معتمدة',
+    lessonsCount: 6,
+    featured: true,
+    popular: true,
+    published: true,
+    status: 'published',
+    thumbnailUrl: 'https://images.unsplash.com/photo-1526374965328-7f61d4dc18c5?auto=format&fit=crop&w=800&q=80',
+    imageUrls: ['https://images.unsplash.com/photo-1526374965328-7f61d4dc18c5?auto=format&fit=crop&w=800&q=80'],
+    pdfUrl: 'https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf',
+    units: [
+      {
+        id: 'unit_py_lec',
+        title: 'محاضرات بايثون النظرية (Python Lectures - PDF)',
+        description: 'مذكرات وسلايدز محاضرات بايثون بصيغة PDF',
+        order: 1,
+        lessons: [
+          {
+            id: 'py_lec_1',
+            title: 'المحاضرة 1: مقدمة في بايثون، بيئة التشغيل، والمتغيرات Variables (PDF)',
+            duration: '45:00',
+            type: 'pdf',
+            pdfUrl: 'https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf',
+            isSection: false,
+            order: 1
+          },
+          {
+            id: 'py_lec_2',
+            title: 'المحاضرة 2: الشروط والتحكم وسلاسل التكرار Loops & Conditionals (PDF)',
+            duration: '50:00',
+            type: 'pdf',
+            pdfUrl: 'https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf',
+            isSection: false,
+            order: 2
+          },
+          {
+            id: 'py_lec_3',
+            title: 'المحاضرة 3: هياكل البيانات والقوائم والقواميس Lists, Tuples & Dictionaries (PDF)',
+            duration: '60:00',
+            type: 'pdf',
+            pdfUrl: 'https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf',
+            isSection: false,
+            order: 3
+          }
+        ]
+      },
+      {
+        id: 'unit_py_sec',
+        title: 'سكاشن العملي والتطبيقات البرمجية (Lab Sections & Word Sheets)',
+        description: 'شيتات التمارين والتكليفات والأكواد المعملية بصيغة Word (.docx)',
+        order: 2,
+        lessons: [
+          {
+            id: 'py_sec_1',
+            title: 'سكشن عملي 1: إعداد VS Code وحل شيت البرامج الحسابية (Word DOCX)',
+            duration: '45:00',
+            type: 'word',
+            wordUrl: 'https://calibre-ebook.com/downloads/demos/demo.docx',
+            pdfUrl: 'https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf',
+            isSection: true,
+            order: 1
+          },
+          {
+            id: 'py_sec_2',
+            title: 'سكشن عملي 2: تدريبات معملية على بناء الدوال Functions وكتابة الكود (Word DOCX)',
+            duration: '50:00',
+            type: 'word',
+            wordUrl: 'https://calibre-ebook.com/downloads/demos/demo.docx',
+            pdfUrl: 'https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf',
+            isSection: true,
+            order: 2
+          },
+          {
+            id: 'py_sec_3',
+            title: 'شيت مشروع التيرم العملي لبايثون ونماذج امتحانات اللاب (Word DOCX)',
+            duration: '40:00',
+            type: 'word',
+            wordUrl: 'https://calibre-ebook.com/downloads/demos/demo.docx',
+            pdfUrl: 'https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf',
+            isSection: true,
+            order: 3
+          }
+        ]
+      }
+    ],
+    createdAt: '2026-09-01'
+  },
+  {
+    id: 'course_it_essentials',
+    titleAr: 'IT Essentials – أساسيات تكنولوجيا المعلومات',
+    titleEn: 'IT Essentials – Hardware, Systems & Networking',
+    descriptionAr: 'مقرر أساسيات تكنولوجيا المعلومات وعمارة الحاسب لطلاب قسم IT بالجامعة التكنولوجية. يشمل محاضرات PDF عن المكونات المادية والعتاد وأنظمة التشغيل، وسكاشن عملية لتجميع الحواسيب وتثبيت البرمجيات وشيتات التقارير الفنية بصيغة Word.',
+    descriptionEn: 'IT Essentials course covering computer architecture, hardware components, operating systems, and troubleshooting. Lectures in PDF and practical labs in Word.',
+    teacherName: 'م. محمد عبد التواب',
+    categoryId: 'year1',
+    grade: 'year1',
+    subject: 'IT Essentials',
+    subjectAr: 'أساسيات تكنولوجيا المعلومات',
+    subjectEn: 'IT Essentials',
+    department: 'IT',
+    price: 0,
+    isFree: true,
+    isPremium: false,
+    duration: '28 ساعة معتمدة',
+    lessonsCount: 6,
+    featured: true,
+    popular: true,
+    published: true,
+    status: 'published',
+    thumbnailUrl: 'https://images.unsplash.com/photo-1518770660439-4636190af475?auto=format&fit=crop&w=800&q=80',
+    imageUrls: ['https://images.unsplash.com/photo-1518770660439-4636190af475?auto=format&fit=crop&w=800&q=80'],
+    pdfUrl: 'https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf',
+    units: [
+      {
+        id: 'unit_it_lec',
+        title: 'محاضرات عتاد ونظم تكنولوجيا المعلومات (Lectures - PDF)',
+        description: 'المحاضرات المعتمدة لمكونات ونظم الحاسب بصيغة PDF',
+        order: 1,
+        lessons: [
+          {
+            id: 'it_lec_1',
+            title: 'المحاضرة 1: المعالجات واللوحة الأم ووحدات الذاكرة CPU & RAM (PDF)',
+            duration: '50:00',
+            type: 'pdf',
+            pdfUrl: 'https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf',
+            isSection: false,
+            order: 1
+          },
+          {
+            id: 'it_lec_2',
+            title: 'المحاضرة 2: أنظمة التخزين، وحدات الإمداد بالطاقة، ومنافذ الإدخال/الإخراج (PDF)',
+            duration: '45:00',
+            type: 'pdf',
+            pdfUrl: 'https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf',
+            isSection: false,
+            order: 2
+          },
+          {
+            id: 'it_lec_3',
+            title: 'المحاضرة 3: تثبيت أنظمة التشغيل Windows/Linux وإدارة الـ BIOS/UEFI (PDF)',
+            duration: '55:00',
+            type: 'pdf',
+            pdfUrl: 'https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf',
+            isSection: false,
+            order: 3
+          }
+        ]
+      },
+      {
+        id: 'unit_it_sec',
+        title: 'سكاشن المعامل والتدريب العملي (Lab Sections & Word Reports)',
+        description: 'شيتات تقارير معمل الحاسب وتثبيت الأنظمة بصيغة Word (.docx)',
+        order: 2,
+        lessons: [
+          {
+            id: 'it_sec_1',
+            title: 'سكشن عملي 1: التجميع اليدوي لمكونات الكيسة وفحص التوافق (Word DOCX)',
+            duration: '45:00',
+            type: 'word',
+            wordUrl: 'https://calibre-ebook.com/downloads/demos/demo.docx',
+            pdfUrl: 'https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf',
+            isSection: true,
+            order: 1
+          },
+          {
+            id: 'it_sec_2',
+            title: 'سكشن عملي 2: إعداد الشبكة السلكية وكابلات UTP وإعداد الآي بي IP (Word DOCX)',
+            duration: '50:00',
+            type: 'word',
+            wordUrl: 'https://calibre-ebook.com/downloads/demos/demo.docx',
+            pdfUrl: 'https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf',
+            isSection: true,
+            order: 2
+          },
+          {
+            id: 'it_sec_3',
+            title: 'شيت صيانة الأعطال واستكشاف الأخطاء Troubleshooting Sheet (Word DOCX)',
+            duration: '40:00',
+            type: 'word',
+            wordUrl: 'https://calibre-ebook.com/downloads/demos/demo.docx',
+            pdfUrl: 'https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf',
+            isSection: true,
+            order: 3
+          }
+        ]
+      }
+    ],
+    createdAt: '2026-09-01'
+  },
+  {
+    id: 'course_mathematics_it',
+    titleAr: 'Mathematics – الرياضيات',
+    titleEn: 'Mathematics – Calculus & Discrete Math for IT',
+    descriptionAr: 'مقرر الرياضيات لطلاب قسم تكنولوجيا المعلومات بالجامعة التكنولوجية. يشمل الجبر الخطي والمصفوفات، التفاضل والتكامل، والرياضيات المتقطعة لعلوم الحاسب. يتضمن مذكرات محاضرات PDF وسكاشن مسائل وتطبيقات محلولة بصيغ Word و PDF.',
+    descriptionEn: 'Applied Mathematics and Discrete Mathematics for Computer Science & IT students. Comprehensive lectures in PDF and solved problem sheets in Word.',
+    teacherName: 'م. محمد عبد التواب',
+    categoryId: 'year1',
+    grade: 'year1',
+    subject: 'Mathematics',
+    subjectAr: 'الرياضيات',
+    subjectEn: 'Mathematics',
+    department: 'IT',
+    price: 0,
+    isFree: true,
+    isPremium: false,
+    duration: '30 ساعة معتمدة',
+    lessonsCount: 6,
+    featured: true,
+    popular: true,
+    published: true,
+    status: 'published',
+    thumbnailUrl: 'https://images.unsplash.com/photo-1509228468518-180dd4864904?auto=format&fit=crop&w=800&q=80',
+    imageUrls: ['https://images.unsplash.com/photo-1509228468518-180dd4864904?auto=format&fit=crop&w=800&q=80'],
+    pdfUrl: 'https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf',
+    units: [
+      {
+        id: 'unit_math_lec',
+        title: 'محاضرات الرياضيات والتفاضل والمصفوفات (Lectures - PDF)',
+        description: 'المحاضرات النظرية للرياضيات بصيغة PDF',
+        order: 1,
+        lessons: [
+          {
+            id: 'math_lec_1',
+            title: 'المحاضرة 1: المصفوفات والمحددات وحل المعادلات الخطية Matrices (PDF)',
+            duration: '50:00',
+            type: 'pdf',
+            pdfUrl: 'https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf',
+            isSection: false,
+            order: 1
+          },
+          {
+            id: 'math_lec_2',
+            title: 'المحاضرة 2: النهايات والاشتقاق وتطبيقات التفاضل Calculus (PDF)',
+            duration: '55:00',
+            type: 'pdf',
+            pdfUrl: 'https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf',
+            isSection: false,
+            order: 2
+          },
+          {
+            id: 'math_lec_3',
+            title: 'المحاضرة 3: الرياضيات المتقطعة ونظرية المجموعات والمنطق Discrete Math (PDF)',
+            duration: '50:00',
+            type: 'pdf',
+            pdfUrl: 'https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf',
+            isSection: false,
+            order: 3
+          }
+        ]
+      },
+      {
+        id: 'unit_math_sec',
+        title: 'سكاشن التمارين وشيتات المسائل المحلولة (Math Sections & Word Sheets)',
+        description: 'شيتات التمارين والواجبات بصيغة Word (.docx) و PDF',
+        order: 2,
+        lessons: [
+          {
+            id: 'math_sec_1',
+            title: 'سكشن 1: تمارين محلولة على ضرب وتدوير ومعكوس المصفوفات (Word DOCX)',
+            duration: '45:00',
+            type: 'word',
+            wordUrl: 'https://calibre-ebook.com/downloads/demos/demo.docx',
+            pdfUrl: 'https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf',
+            isSection: true,
+            order: 1
+          },
+          {
+            id: 'math_sec_2',
+            title: 'سكشن 2: شيت تدريبات قواعد الاشتقاق وقاعدة السلسلة (Word DOCX)',
+            duration: '40:00',
+            type: 'word',
+            wordUrl: 'https://calibre-ebook.com/downloads/demos/demo.docx',
+            pdfUrl: 'https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf',
+            isSection: true,
+            order: 2
+          },
+          {
+            id: 'math_sec_3',
+            title: 'شيت بنك أسئلة الرياضيات وامتحانات السنوات السابقة (Word DOCX)',
+            duration: '45:00',
+            type: 'word',
+            wordUrl: 'https://calibre-ebook.com/downloads/demos/demo.docx',
+            pdfUrl: 'https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf',
+            isSection: true,
+            order: 3
+          }
+        ]
+      }
+    ],
+    createdAt: '2026-09-01'
+  },
+  {
+    id: 'course_cyber_security',
+    titleAr: 'Cyber Security – الأمن السيبراني',
+    titleEn: 'Cyber Security – Defense, Cryptography & Systems Security',
+    descriptionAr: 'مقرر الأمن السيبراني وحماية الشبكات لطلاب قسم تكنولوجيا المعلومات. يتناول أسس أمن المعلومات CIA، التشفير، الجدران النارية، تحليل الثغرات، واختبار الاختراق الأخلاقي. يشمل سلايدز ومحاضرات PDF وسكاشن معامل أمنية وشيتات تقارير Word.',
+    descriptionEn: 'Cyber Security and network defense course for IT students. Covers encryption, vulnerabilities, and practical security labs with Word and PDF files.',
+    teacherName: 'م. محمد عبد التواب',
+    categoryId: 'year2',
+    grade: 'year2',
+    subject: 'Cyber Security',
+    subjectAr: 'الأمن السيبراني',
+    subjectEn: 'Cyber Security',
+    department: 'IT',
+    price: 0,
+    isFree: true,
+    isPremium: false,
+    duration: '26 ساعة معتمدة',
+    lessonsCount: 6,
+    featured: true,
+    popular: true,
+    published: true,
+    status: 'published',
+    thumbnailUrl: 'https://images.unsplash.com/photo-1550751827-4bd374c3f58b?auto=format&fit=crop&w=800&q=80',
+    imageUrls: ['https://images.unsplash.com/photo-1550751827-4bd374c3f58b?auto=format&fit=crop&w=800&q=80'],
+    pdfUrl: 'https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf',
+    units: [
+      {
+        id: 'unit_cyber_lec',
+        title: 'محاضرات الأمن السيبراني والتشفير (Lectures - PDF)',
+        description: 'المحاضرات المعتمدة لمقرر الأمن السيبراني بصيغة PDF',
+        order: 1,
+        lessons: [
+          {
+            id: 'cyber_lec_1',
+            title: 'المحاضرة 1: مدخل إلى الأمن السيبراني وثالوث الأمان CIA Triad (PDF)',
+            duration: '45:00',
+            type: 'pdf',
+            pdfUrl: 'https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf',
+            isSection: false,
+            order: 1
+          },
+          {
+            id: 'cyber_lec_2',
+            title: 'المحاضرة 2: أنواع الهجمات السيبرانية، الفيروسات والهندسة الاجتماعية (PDF)',
+            duration: '50:00',
+            type: 'pdf',
+            pdfUrl: 'https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf',
+            isSection: false,
+            order: 2
+          },
+          {
+            id: 'cyber_lec_3',
+            title: 'المحاضرة 3: أسس التشفير Symmetric & Asymmetric Cryptography (PDF)',
+            duration: '55:00',
+            type: 'pdf',
+            pdfUrl: 'https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf',
+            isSection: false,
+            order: 3
+          }
+        ]
+      },
+      {
+        id: 'unit_cyber_sec',
+        title: 'سكاشن المعامل الأمنية واختبار الاختراق (Cyber Labs & Word Sheets)',
+        description: 'شيتات وتجارب معمل أمن المعلومات بصيغة Word (.docx) و PDF',
+        order: 2,
+        lessons: [
+          {
+            id: 'cyber_sec_1',
+            title: 'سكشن عملي 1: إعداد بيئة Kali Linux وفحص المنافذ باستخدام Nmap (Word DOCX)',
+            duration: '45:00',
+            type: 'word',
+            wordUrl: 'https://calibre-ebook.com/downloads/demos/demo.docx',
+            pdfUrl: 'https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf',
+            isSection: true,
+            order: 1
+          },
+          {
+            id: 'cyber_sec_2',
+            title: 'سكشن عملي 2: التقاط وتحليل حزم الشبكة باستخدام Wireshark (Word DOCX)',
+            duration: '50:00',
+            type: 'word',
+            wordUrl: 'https://calibre-ebook.com/downloads/demos/demo.docx',
+            pdfUrl: 'https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf',
+            isSection: true,
+            order: 2
+          },
+          {
+            id: 'cyber_sec_3',
+            title: 'شيت إعداد تقرير الثغرات الأمنية Vulnerability Assessment Report (Word DOCX)',
+            duration: '40:00',
+            type: 'word',
+            wordUrl: 'https://calibre-ebook.com/downloads/demos/demo.docx',
+            pdfUrl: 'https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf',
+            isSection: true,
+            order: 3
+          }
+        ]
+      }
+    ],
+    createdAt: '2026-09-01'
+  },
+  {
+    id: 'course_english_it',
+    titleAr: 'English – اللغة الإنجليزية',
+    titleEn: 'English – Technical English for Information Technology',
+    descriptionAr: 'مقرر اللغة الإنجليزية التقنية التخصصية لطلاب قسم تكنولوجيا المعلومات بالجامعة التكنولوجية. يركز على مصطلحات تكنولوجيا المعلومات، قراءة المستندات الفنية، كتابة التقارير البرمجية، والتواصل المهني في بيئة العمل التقني. يشمل محاضرات PDF وسكاشن تمارين Word.',
+    descriptionEn: 'Technical English course tailored for IT students. Focuses on technical terminology, IT documentation, and professional communication with PDF and Word files.',
+    teacherName: 'م. محمد عبد التواب',
+    categoryId: 'year1',
+    grade: 'year1',
+    subject: 'English',
+    subjectAr: 'اللغة الإنجليزية',
+    subjectEn: 'English',
+    department: 'IT',
+    price: 0,
+    isFree: true,
+    isPremium: false,
+    duration: '20 ساعة معتمدة',
+    lessonsCount: 6,
+    featured: true,
+    popular: true,
+    published: true,
+    status: 'published',
+    thumbnailUrl: 'https://images.unsplash.com/photo-1456513080510-7bf3a84b82f8?auto=format&fit=crop&w=800&q=80',
+    imageUrls: ['https://images.unsplash.com/photo-1456513080510-7bf3a84b82f8?auto=format&fit=crop&w=800&q=80'],
+    pdfUrl: 'https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf',
+    units: [
+      {
+        id: 'unit_eng_lec',
+        title: 'محاضرات اللغة الإنجليزية التقنية (Lectures - PDF)',
+        description: 'سلايدز ومذكرات محاضرات اللغة الإنجليزية بصيغة PDF',
+        order: 1,
+        lessons: [
+          {
+            id: 'eng_lec_1',
+            title: 'المحاضرة 1: المصطلحات التقنية الأساسية للحاسب والشبكات Essential IT Vocab (PDF)',
+            duration: '40:00',
+            type: 'pdf',
+            pdfUrl: 'https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf',
+            isSection: false,
+            order: 1
+          },
+          {
+            id: 'eng_lec_2',
+            title: 'المحاضرة 2: قراءة وتفسير الوثائق البرمجية Reading Documentation (PDF)',
+            duration: '45:00',
+            type: 'pdf',
+            pdfUrl: 'https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf',
+            isSection: false,
+            order: 2
+          },
+          {
+            id: 'eng_lec_3',
+            title: 'المحاضرة 3: كتابة الإيميلات والتقارير الفنية Professional Email & Tech Writing (PDF)',
+            duration: '40:00',
+            type: 'pdf',
+            pdfUrl: 'https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf',
+            isSection: false,
+            order: 3
+          }
+        ]
+      },
+      {
+        id: 'unit_eng_sec',
+        title: 'سكاشن التدريبات وورش العمل (Worksheets & Word Sheets)',
+        description: 'شيتات تمارين وتطبيقات اللغة الإنجليزية التقنية بصيغة Word (.docx)',
+        order: 2,
+        lessons: [
+          {
+            id: 'eng_sec_1',
+            title: 'سكشن 1: ورقة عمل ترجمة وتطبيق المصطلحات التقنية (Word DOCX)',
+            duration: '35:00',
+            type: 'word',
+            wordUrl: 'https://calibre-ebook.com/downloads/demos/demo.docx',
+            pdfUrl: 'https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf',
+            isSection: true,
+            order: 1
+          },
+          {
+            id: 'eng_sec_2',
+            title: 'سكشن 2: تدريب كتابة تقرير فني عن مشكلة تقنية Technical Report Template (Word DOCX)',
+            duration: '40:00',
+            type: 'word',
+            wordUrl: 'https://calibre-ebook.com/downloads/demos/demo.docx',
+            pdfUrl: 'https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf',
+            isSection: true,
+            order: 2
+          },
+          {
+            id: 'eng_sec_3',
+            title: 'شيت معجم مصطلحات IT ونماذج امتحانات الميدترم والفاينل (Word DOCX)',
+            duration: '35:00',
+            type: 'word',
+            wordUrl: 'https://calibre-ebook.com/downloads/demos/demo.docx',
+            pdfUrl: 'https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf',
+            isSection: true,
+            order: 3
+          }
+        ]
+      }
+    ],
+    createdAt: '2026-09-01'
+  }
+];
+
+const defaultCourses: Course[] = IT_UNIVERSITY_COURSES;
 
 const defaultStudents: Student[] = [];
 
@@ -64,17 +681,16 @@ const defaultReviews: UserReview[] = [];
 
 // One-time migration to clear out old demo/sample local storage data
 try {
-  const clearedKey = 'academy_demo_data_cleared_v5';
+  const clearedKey = 'tech_university_it_v1';
   if (typeof window !== 'undefined' && window.localStorage && localStorage.getItem(clearedKey) !== 'true') {
     localStorage.removeItem('academy_courses');
+    localStorage.removeItem('courses');
     localStorage.removeItem('academy_categories');
-    localStorage.removeItem('academy_reviews');
-    localStorage.removeItem('academy_news');
-    localStorage.removeItem('academy_articles');
-    localStorage.removeItem('academy_quizzes');
-    localStorage.removeItem('academy_orders');
+    localStorage.removeItem('categories');
+    localStorage.removeItem('academy_settings');
+    localStorage.removeItem('settings');
     localStorage.setItem(clearedKey, 'true');
-    console.log("Successfully wiped all old demo/sample local storage data.");
+    console.log("Successfully wiped previous local storage data to load IT University Platform.");
   }
 } catch (e) {
   console.error("Failed to execute one-time local storage demo data purge:", e);
@@ -83,20 +699,20 @@ try {
 const defaultMessages: Message[] = [];
 
 const defaultSettings: WebsiteSettings = {
-  websiteNameAr: 'أكاديمية مستر محمد عبد التواب للعلوم',
-  websiteNameEn: 'Mohamed Abdel Tawab Academy',
-  logoUrl: '🧪', // Text logo or modern SVG icon inside React
-  faviconUrl: '🧪',
+  websiteNameAr: 'منصة محمد عبد التواب | الجامعة التكنولوجية - قسم IT',
+  websiteNameEn: 'Eng/Mohamed abdal tawab | Technological University - IT Dept',
+  logoUrl: '🎓',
+  faviconUrl: '🎓',
   whatsapp: 'https://wa.me/201010298878',
-  telegram: 'https://t.me/Mo7amedEL_JOKER',
+  telegram: 'https://t.me/mohamed_abdal_tawab',
   facebook: '',
   youtube: '',
   instagram: '',
-  email: '',
-  footerAr: 'جميع الحقوق محفوظة © ٢٠٢٦ أكاديمية مستر محمد عبد التواب للعلوم والعلوم المتكاملة.',
-  footerEn: 'All Rights Reserved © 2026 Mohamed Abdel Tawab Academy.',
-  seoDescription: 'المنصة التعليمية الأولى لتبسيط مادة العلوم للمرحلة الإعدادية والعلوم المتكاملة للمرحلة الثانوية مع مستر محمد عبد التواب.',
-  seoKeywords: 'علوم، علوم متكاملة، مستر محمد عبد التواب، الصف الأول الإعدادي، الصف الثاني الإعدادي، الصف الثالث الإعدادي، الصف الأول الثانوي، كيمياء، فيزياء، أحياء، تجارب عملية',
+  email: 'eng.mohamed.abdaltawab@gmail.com',
+  footerAr: 'جميع الحقوق محفوظة © ٢٠٢٦ منصة Eng/Mohamed abdal tawab - الجامعة التكنولوجية (قسم تكنولوجيا المعلومات IT).',
+  footerEn: 'All Rights Reserved © 2026 Eng/Mohamed abdal tawab - Technological University (IT Department).',
+  seoDescription: 'منصة الجامعة التكنولوجية الرسمية لقسم تكنولوجيا المعلومات IT بإشراف Eng/Mohamed abdal tawab لنزول المحاضرات والسكاشن بصيغ PDF والوورد وملفات الشرح.',
+  seoKeywords: 'جامعة تكنولوجية, محمد عبد التواب, قسم IT, تكنولوجيا المعلومات, Physics, Python Programming, IT Essentials, Mathematics, Cyber Security, English, محاضرات, سكاشن, ملفات PDF, ملفات Word',
   forceLogoutVersion: 0
 };
 
@@ -158,12 +774,12 @@ if (firebaseConfig.apiKey && firebaseConfig.projectId) {
     }
     firebaseAuth = getAuth(app);
     isFirebaseConfigured = true;
-    console.log("Firebase initialized successfully inside Mohamed Abdel Tawab Academy with database ID:", dbId || "(default)");
+    console.log("Firebase initialized successfully inside Eng/Mohamed abdal tawab Academy with database ID:", dbId || "(default)");
   } catch (error) {
     console.warn("Firebase initialization failed, falling back to local simulation:", error);
   }
 } else {
-  console.log("No Firebase config variables found. Running Mohamed Abdel Tawab Academy in offline-first localStorage simulated database.");
+  console.log("No Firebase config variables found. Running Eng/Mohamed abdal tawab Academy in offline-first localStorage simulated database.");
 }
 
 export enum OperationType {
@@ -356,18 +972,18 @@ const getStorageItem = <T>(key: string, defaultValue: T): T => {
       let changed = false;
       if (parsed.websiteNameAr && (parsed.websiteNameAr.includes('الأستاذ') || parsed.websiteNameAr.includes('الاستاذ') || parsed.websiteNameAr.includes('أستاذ') || parsed.websiteNameAr.includes('استاذ'))) {
         parsed.websiteNameAr = parsed.websiteNameAr
-          .replace(/الأستاذ/g, 'مستر')
-          .replace(/الاستاذ/g, 'مستر')
-          .replace(/أستاذ/g, 'مستر')
-          .replace(/استاذ/g, 'مستر');
+          .replace(/الأستاذ/g, 'المهندس')
+          .replace(/الاستاذ/g, 'المهندس')
+          .replace(/أستاذ/g, 'المهندس')
+          .replace(/استاذ/g, 'المهندس');
         changed = true;
       }
       if (parsed.footerAr && (parsed.footerAr.includes('الأستاذ') || parsed.footerAr.includes('الاستاذ') || parsed.footerAr.includes('أستاذ') || parsed.footerAr.includes('استاذ'))) {
         parsed.footerAr = parsed.footerAr
-          .replace(/الأستاذ/g, 'مستر')
-          .replace(/الاستاذ/g, 'مستر')
-          .replace(/أستاذ/g, 'مستر')
-          .replace(/استاذ/g, 'مستر');
+          .replace(/الأستاذ/g, 'المهندس')
+          .replace(/الاستاذ/g, 'المهندس')
+          .replace(/أستاذ/g, 'المهندس')
+          .replace(/استاذ/g, 'المهندس');
         changed = true;
       }
       if (changed) {
@@ -605,18 +1221,18 @@ export const dbService = {
       let changed = false;
       if (settings.websiteNameAr && (settings.websiteNameAr.includes('الأستاذ') || settings.websiteNameAr.includes('الاستاذ') || settings.websiteNameAr.includes('أستاذ') || settings.websiteNameAr.includes('استاذ'))) {
         settings.websiteNameAr = settings.websiteNameAr
-          .replace(/الأستاذ/g, 'مستر')
-          .replace(/الاستاذ/g, 'مستر')
-          .replace(/أستاذ/g, 'مستر')
-          .replace(/استاذ/g, 'مستر');
+          .replace(/الأستاذ/g, 'المهندس')
+          .replace(/الاستاذ/g, 'المهندس')
+          .replace(/أستاذ/g, 'المهندس')
+          .replace(/استاذ/g, 'المهندس');
         changed = true;
       }
       if (settings.footerAr && (settings.footerAr.includes('الأستاذ') || settings.footerAr.includes('الاستاذ') || settings.footerAr.includes('أستاذ') || settings.footerAr.includes('استاذ'))) {
         settings.footerAr = settings.footerAr
-          .replace(/الأستاذ/g, 'مستر')
-          .replace(/الاستاذ/g, 'مستر')
-          .replace(/أستاذ/g, 'مستر')
-          .replace(/استاذ/g, 'مستر');
+          .replace(/الأستاذ/g, 'المهندس')
+          .replace(/الاستاذ/g, 'المهندس')
+          .replace(/أستاذ/g, 'المهندس')
+          .replace(/استاذ/g, 'المهندس');
         changed = true;
       }
       if (changed) {
@@ -751,50 +1367,43 @@ export const dbService = {
         snap.forEach(d => list.push({ id: d.id, ...d.data() } as Course));
 
         if (list.length > 0) {
-          const localList = getStorageItem<Course[]>('courses', defaultCourses);
-          const map = new Map<string, Course>();
-          localList.forEach(c => map.set(c.id, c));
-          list.forEach(c => map.set(c.id, c));
-          const merged = Array.from(map.values()).map(c => normalizeCourseLessons(c));
-          setStorageItem('courses', merged);
-          return merged;
+          const normalized = list.map(c => normalizeCourseLessons(c));
+          setStorageItem('courses', normalized);
+          return normalized;
         }
       } catch (err: any) {
         console.warn("Firestore getCourses notice:", err);
       }
     }
     const localCourses = getStorageItem<Course[]>('courses', defaultCourses).map(c => normalizeCourseLessons(c));
-    return localCourses;
+    return (localCourses && localCourses.length > 0) ? localCourses : defaultCourses;
   },
 
   listenToCourses: (onUpdate: (courses: Course[]) => void) => {
     // Immediate initial local emit
     const initial = getStorageItem<Course[]>('courses', defaultCourses).map(c => normalizeCourseLessons(c));
-    onUpdate(initial);
+    onUpdate(initial.length > 0 ? initial : defaultCourses);
 
     if (isFirebaseConfigured) {
-      let coursesList: Course[] = [];
-
       const unsubCourses = onSnapshot(collection(firestoreDb, 'courses'), (snap) => {
-        coursesList = [];
+        const coursesList: Course[] = [];
         snap.forEach(d => {
           const item = { id: d.id, ...d.data() } as Course;
           coursesList.push(item);
         });
 
-        // Merge snapshot with local storage so no recently added local course is lost
-        const localList = getStorageItem<Course[]>('courses', defaultCourses);
-        const map = new Map<string, Course>();
-        localList.forEach(c => map.set(c.id, c));
-        coursesList.forEach(c => map.set(c.id, c));
-        const merged = Array.from(map.values()).map(c => normalizeCourseLessons(c));
-        
-        setStorageItem('courses', merged);
-        onUpdate(merged);
+        if (coursesList.length > 0) {
+          const normalized = coursesList.map(c => normalizeCourseLessons(c));
+          setStorageItem('courses', normalized);
+          onUpdate(normalized);
+        } else {
+          const local = getStorageItem<Course[]>('courses', defaultCourses).map(c => normalizeCourseLessons(c));
+          onUpdate(local.length > 0 ? local : defaultCourses);
+        }
       }, (err) => {
         console.warn("Courses Firestore listener notice:", err);
         const local = getStorageItem<Course[]>('courses', defaultCourses).map(c => normalizeCourseLessons(c));
-        onUpdate(local);
+        onUpdate(local.length > 0 ? local : defaultCourses);
       });
 
       return () => {
@@ -803,7 +1412,7 @@ export const dbService = {
     } else {
       const loadLocal = () => {
         const localCourses = getStorageItem<Course[]>('courses', defaultCourses).map(c => normalizeCourseLessons(c));
-        onUpdate(localCourses);
+        onUpdate(localCourses.length > 0 ? localCourses : defaultCourses);
       };
       loadLocal();
       const interval = setInterval(loadLocal, 1500);
@@ -970,6 +1579,39 @@ export const dbService = {
 
     const currentAssign = getStorageItem<AssignmentSubmission[]>('assignments', []);
     setStorageItem('assignments', currentAssign.filter(a => a.courseId !== id));
+  },
+
+  deleteAllCourses: async (): Promise<void> => {
+    checkAdminWrite('delete_all_courses', {});
+    if (isFirebaseConfigured) {
+      try {
+        const snap = await getDocs(collection(firestoreDb, 'courses'));
+        for (const d of snap.docs) {
+          try {
+            await deleteDoc(d.ref);
+          } catch (e) {}
+        }
+      } catch (err: any) {
+        console.error("Firestore deleteAllCourses error:", err);
+      }
+    }
+    setStorageItem('courses', []);
+  },
+
+  seedITUniversityCourses: async (): Promise<Course[]> => {
+    checkAdminWrite('seed_it_courses', {});
+    setStorageItem('courses', IT_UNIVERSITY_COURSES);
+    if (isFirebaseConfigured) {
+      try {
+        for (const c of IT_UNIVERSITY_COURSES) {
+          const sanitized = sanitizeForFirestore(c);
+          await setDoc(doc(firestoreDb, 'courses', c.id), sanitized);
+        }
+      } catch (err: any) {
+        console.warn("Firestore seedITUniversityCourses notice:", err);
+      }
+    }
+    return IT_UNIVERSITY_COURSES;
   },
 
   // --- Students ---
@@ -2816,14 +3458,28 @@ export const dbService = {
   },
 
   // --- Notifications ---
-  listenToNotifications: (userId: string, onUpdate: (notifs: Notification[]) => void) => {
+  listenToNotifications: (userId: string, userEmailOrOnUpdate: string | ((notifs: Notification[]) => void), maybeOnUpdate?: (notifs: Notification[]) => void) => {
+    const userEmail = typeof userEmailOrOnUpdate === 'string' ? userEmailOrOnUpdate : '';
+    const onUpdate = typeof userEmailOrOnUpdate === 'function' ? userEmailOrOnUpdate : (maybeOnUpdate || (() => {}));
+
+    const cleanUser = (userId || '').trim().toLowerCase();
+    const cleanEmail = (userEmail || '').trim().toLowerCase();
+
+    const matchesTarget = (item: Notification) => {
+      const target = (item.userId || '').trim().toLowerCase();
+      if (!target || target === 'global') return true;
+      if (cleanUser && target === cleanUser) return true;
+      if (cleanEmail && (target === cleanEmail || (item as any).studentEmail?.toLowerCase() === cleanEmail)) return true;
+      return false;
+    };
+
     if (isFirebaseConfigured) {
       const q = collection(firestoreDb, 'notifications');
       return onSnapshot(q, (snap) => {
         const list: Notification[] = [];
         snap.forEach(d => {
           const item = { id: d.id, ...d.data() } as Notification;
-          if (item.userId === userId || item.userId === 'global') {
+          if (matchesTarget(item)) {
             list.push(item);
           }
         });
@@ -2836,17 +3492,18 @@ export const dbService = {
       const loadLocal = () => {
         const list = getStorageItem<Notification[]>('notifications', [
           {
-            id: 'notif_1',
+            id: 'notif_welcome',
             userId: 'global',
-            titleAr: 'أهلاً بك في أكاديمية مستر محمد عبد التواب',
-            titleEn: 'Welcome to Mr. Mohamed Academy',
-            bodyAr: 'يسعدنا انضمامك إلينا. تصفح المناهج وتواصل مع المساعدين لتفعيل حسابك ومتابعة الشروحات المتميزة.',
-            bodyEn: 'We are glad you joined us. Explore the curriculum and contact assistants to activate your subscription.',
+            titleAr: 'أهلاً بك في منصة Eng/Mohamed abdal tawab الأكاديمية 🎓',
+            titleEn: 'Welcome to Eng/Mohamed abdal tawab IT Academic Platform 🎓',
+            bodyAr: 'يسعدنا انضمامك لقسم تكنولوجيا المعلومات (IT) بالجامعة التكنولوجية. يمكنك تصفح المحاضرات والسكاشن وطلب تفعيل المقررات لمتابعة المذاكرة وتحميل ملفات PDF و Word.',
+            bodyEn: 'Welcome to Technological University - IT Department. Explore lectures, labs, and request course activation to download PDF and Word files.',
             isRead: false,
+            type: 'general',
             createdAt: new Date().toISOString()
           }
         ]);
-        onUpdate(list.filter(n => n.userId === userId || n.userId === 'global'));
+        onUpdate(list.filter(matchesTarget));
       };
       loadLocal();
       const interval = setInterval(loadLocal, 3000);
@@ -2855,11 +3512,11 @@ export const dbService = {
   },
 
   addNotification: async (notif: Omit<Notification, 'id'>): Promise<Notification> => {
-    const newId = 'notif_' + Date.now();
+    const newId = 'notif_' + Date.now() + '_' + Math.random().toString(36).substring(2, 6);
     const newNotif: Notification = { id: newId, ...notif };
     if (isFirebaseConfigured) {
       try {
-        await setDoc(doc(firestoreDb, 'notifications', newId), notif);
+        await setDoc(doc(firestoreDb, 'notifications', newId), newNotif);
         return newNotif;
       } catch (err) {
         console.error("Firebase notification add failed:", err);
@@ -2875,13 +3532,57 @@ export const dbService = {
     if (isFirebaseConfigured) {
       try {
         await updateDoc(doc(firestoreDb, 'notifications', id), { isRead: true });
-        return;
       } catch (err) {
         console.error("Firebase notification mark read failed:", err);
       }
     }
     const current = getStorageItem<Notification[]>('notifications', []);
     const updated = current.map(item => item.id === id ? { ...item, isRead: true } : item);
+    setStorageItem('notifications', updated);
+  },
+
+  markAllNotificationsAsRead: async (userId: string, userEmail: string = ''): Promise<void> => {
+    const cleanUser = (userId || '').trim().toLowerCase();
+    const cleanEmail = (userEmail || '').trim().toLowerCase();
+
+    const matchesTarget = (item: Notification) => {
+      const target = (item.userId || '').trim().toLowerCase();
+      if (!target || target === 'global') return true;
+      if (cleanUser && target === cleanUser) return true;
+      if (cleanEmail && (target === cleanEmail || (item as any).studentEmail?.toLowerCase() === cleanEmail)) return true;
+      return false;
+    };
+
+    if (isFirebaseConfigured) {
+      try {
+        const snap = await getDocs(collection(firestoreDb, 'notifications'));
+        const batchUpdates: Promise<void>[] = [];
+        snap.forEach(d => {
+          const item = { id: d.id, ...d.data() } as Notification;
+          if (matchesTarget(item) && !item.isRead) {
+            batchUpdates.push(updateDoc(doc(firestoreDb, 'notifications', d.id), { isRead: true }));
+          }
+        });
+        await Promise.all(batchUpdates);
+      } catch (err) {
+        console.error("Firebase markAllNotificationsAsRead failed:", err);
+      }
+    }
+    const current = getStorageItem<Notification[]>('notifications', []);
+    const updated = current.map(item => matchesTarget(item) ? { ...item, isRead: true } : item);
+    setStorageItem('notifications', updated);
+  },
+
+  deleteNotification: async (id: string): Promise<void> => {
+    if (isFirebaseConfigured) {
+      try {
+        await deleteDoc(doc(firestoreDb, 'notifications', id));
+      } catch (err) {
+        console.error("Firebase deleteNotification failed:", err);
+      }
+    }
+    const current = getStorageItem<Notification[]>('notifications', []);
+    const updated = current.filter(item => item.id !== id);
     setStorageItem('notifications', updated);
   }
 };
@@ -2931,7 +3632,7 @@ export const authService = {
 
     const defaultAdminUser: UserAuth = {
       id: 'admin_' + Date.now(),
-      name: 'Mr. Mohamed Abdel Tawab',
+      name: 'Eng/Mohamed abdal tawab',
       email: cleanEmail,
       phone: '201010298878',
       role: 'admin',
@@ -2988,7 +3689,7 @@ export const authService = {
         recordLoginAttempt(cleanEmail, true);
         secureLog('auth_success_admin', { email: cleanEmail });
         saveActiveUserSession(userData);
-        return { success: true, admin: { id: userData.id, name: userData.name || 'Mr. Mohamed Abdel Tawab', email: userData.email, role: 'super' } };
+        return { success: true, admin: { id: userData.id, name: userData.name || 'Eng/Mohamed abdal tawab', email: userData.email, role: 'super' } };
       } catch (err: any) {
         // Fallback to local admin
         recordLoginAttempt(cleanEmail, true);
@@ -3011,21 +3712,21 @@ export const authService = {
       recordLoginAttempt(cleanEmail, true);
       secureLog('auth_success_admin_simulation', { email: cleanEmail });
       saveActiveUserSession(found);
-      return { success: true, admin: { id: found.id, name: found.name || 'Mr. Mohamed Abdel Tawab', email: found.email, role: 'super' } };
+      return { success: true, admin: { id: found.id, name: found.name || 'Eng/Mohamed abdal tawab', email: found.email, role: 'super' } };
     }
   },
 
   getCurrentAdmin: (): Admin | null => {
     const u = authService.getCurrentUser();
     if (u && (u.role === 'admin' || u.email === 'mhmdbdaltwabalsdawy7@gmail.com')) {
-      return { id: u.id, name: u.name || 'Mr. Mohamed Abdel Tawab', email: u.email, role: 'super' };
+      return { id: u.id, name: u.name || 'Eng/Mohamed abdal tawab', email: u.email, role: 'super' };
     }
     const activeUserStr = typeof localStorage !== 'undefined' ? localStorage.getItem('academy_active_user') : null;
     if (activeUserStr) {
       try {
         const activeUser = JSON.parse(activeUserStr);
         if (activeUser && (activeUser.role === 'admin' || activeUser.email === 'mhmdbdaltwabalsdawy7@gmail.com')) {
-          return { id: activeUser.id || 'admin_1', name: activeUser.name || 'Mr. Mohamed Abdel Tawab', email: activeUser.email, role: 'super' };
+          return { id: activeUser.id || 'admin_1', name: activeUser.name || 'Eng/Mohamed abdal tawab', email: activeUser.email, role: 'super' };
         }
       } catch (e) {}
     }
@@ -3086,7 +3787,7 @@ export const authService = {
           finalUser = {
             id: firebaseUid,
             uid: firebaseUid,
-            name: userRole === 'admin' ? 'Mr. Mohamed Abdel Tawab' : 'طالب الأكاديمية',
+            name: userRole === 'admin' ? 'Eng/Mohamed abdal tawab' : 'طالب الأكاديمية',
             email: normalizedEmail,
             phone: '',
             role: userRole,
@@ -3165,7 +3866,7 @@ export const authService = {
           const adminUser: UserAuth = {
             id: 'admin_' + Date.now(),
             uid: 'admin_' + Date.now(),
-            name: 'Mr. Mohamed Abdel Tawab',
+            name: 'Eng/Mohamed abdal tawab',
             email: normalizedEmail,
             phone: '201010298878',
             role: 'admin',
@@ -3288,7 +3989,7 @@ export const authService = {
     const newUser: UserAuth = {
       id: 'usr_' + Date.now(),
       uid: 'usr_' + Date.now(),
-      name: name.trim() || (userRole === 'admin' ? 'Mr. Mohamed Abdel Tawab' : 'طالب الأكاديمية'),
+      name: name.trim() || (userRole === 'admin' ? 'Eng/Mohamed abdal tawab' : 'طالب الأكاديمية'),
       email: normalizedEmail,
       phone: phone.trim(),
       role: userRole,
@@ -3554,7 +4255,7 @@ export const authService = {
               userData = {
                 id: uid,
                 uid,
-                name: fbUser.displayName || (role === 'admin' ? 'Mr. Mohamed Abdel Tawab' : 'طالب الأكاديمية'),
+                name: fbUser.displayName || (role === 'admin' ? 'Eng/Mohamed abdal tawab' : 'طالب الأكاديمية'),
                 email: cleanEmail,
                 phone: '',
                 role,

@@ -1,9 +1,10 @@
+// Optimized YouTube and Video Player for GitHub Pages & Local Platform
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { formatVideoEmbedUrl, ParsedVideoInfo, buildYouTubeEmbedUrl } from '../utils/authAccess';
 import { VideoWatermark } from './VideoWatermark';
 import { Video, RefreshCw, Loader2, WifiOff, Maximize, Minimize, AlertTriangle, AlertCircle, ShieldAlert, Globe, HelpCircle } from 'lucide-react';
 import { useLanguage } from './LanguageContext';
-import { getVideoFromIndexedDB } from '../utils/videoStorage';
+import { getVideoFromIndexedDB, getVideoFromMemoryCache } from '../utils/videoStorage';
 import { getFileFromFirestoreChunks } from '../utils/firestoreMediaStorage';
 
 interface CustomVideoPlayerProps {
@@ -45,6 +46,7 @@ export const CustomVideoPlayer: React.FC<CustomVideoPlayerProps> = ({
   const [showEmbedHelp, setShowEmbedHelp] = useState(false);
 
   const formatted: ParsedVideoInfo = formatVideoEmbedUrl(src);
+  const isCustomScheme = formatted.embedUrl.startsWith('firestore://') || formatted.embedUrl.startsWith('indexeddb://');
   const isEmbedPlayer = formatted.type === 'youtube' || formatted.type === 'vimeo' || formatted.type === 'drive' || formatted.type === 'iframe';
   const renderAsIframe = isEmbedPlayer || useIframeFallback;
 
@@ -53,30 +55,72 @@ export const CustomVideoPlayer: React.FC<CustomVideoPlayerProps> = ({
     ? buildYouTubeEmbedUrl(formatted.videoId, useNoCookieMode)
     : formatted.embedUrl;
 
-  // Resolve IndexedDB and Firestore video sources if applicable
+  // Resolve IndexedDB, Firestore, or memory video sources if applicable
   useEffect(() => {
     let createdObjectUrl: string | null = null;
     let isSubscribed = true;
     setIsLocalMissingOnDevice(false);
     setErrorMessage(null);
 
+    const sourceStr = (src || '').trim();
+    if (!sourceStr) {
+      setResolvedVideoSource(null);
+      setIsLoading(false);
+      return;
+    }
+
+    // 0. Instant in-memory blob check for any source string or key
+    const inMemBlob = getVideoFromMemoryCache(sourceStr) || getVideoFromMemoryCache(formatted.embedUrl);
+    if (inMemBlob) {
+      createdObjectUrl = URL.createObjectURL(inMemBlob);
+      setResolvedVideoSource(createdObjectUrl);
+      setHasError(false);
+      setIsLocalMissingOnDevice(false);
+      setIsLoading(false);
+      return () => {
+        if (createdObjectUrl) {
+          try { URL.revokeObjectURL(createdObjectUrl); } catch (e) {}
+        }
+      };
+    }
+
     if (formatted.type === 'video' && formatted.embedUrl.startsWith('firestore://')) {
       setIsLoading(true);
       const key = formatted.embedUrl.replace('firestore://', '');
-      getFileFromFirestoreChunks(key).then((blob) => {
+      
+      // 1. Try Memory & IndexedDB first
+      getVideoFromIndexedDB(key).then((blob) => {
         if (!isSubscribed) return;
         if (blob) {
           createdObjectUrl = URL.createObjectURL(blob);
           setResolvedVideoSource(createdObjectUrl);
           setHasError(false);
           setIsLocalMissingOnDevice(false);
-        } else {
-          setHasError(true);
-          setErrorMessage(t('فشل تحميل الفيديو السحابي من قاعدة البيانات.', 'Failed to load cloud video from database.'));
+          setIsLoading(false);
+          return;
         }
-        setIsLoading(false);
-      }).catch((err) => {
-        console.error("Error retrieving video from Firestore:", err);
+
+        // 2. Fetch from Firestore chunks if not locally cached
+        getFileFromFirestoreChunks(key).then((cloudBlob) => {
+          if (!isSubscribed) return;
+          if (cloudBlob) {
+            createdObjectUrl = URL.createObjectURL(cloudBlob);
+            setResolvedVideoSource(createdObjectUrl);
+            setHasError(false);
+            setIsLocalMissingOnDevice(false);
+          } else {
+            setHasError(true);
+            setErrorMessage(t('فشل تحميل الفيديو السحابي من قاعدة البيانات.', 'Failed to load cloud video from database.'));
+          }
+          setIsLoading(false);
+        }).catch((err) => {
+          console.error("Error retrieving video from Firestore:", err);
+          if (isSubscribed) {
+            setHasError(true);
+            setIsLoading(false);
+          }
+        });
+      }).catch(() => {
         if (isSubscribed) {
           setHasError(true);
           setIsLoading(false);
@@ -97,8 +141,8 @@ export const CustomVideoPlayer: React.FC<CustomVideoPlayerProps> = ({
           setIsLocalMissingOnDevice(true);
           setHasError(true);
           setErrorMessage(t(
-            'هذا الفيديو مخزن على متصفح المعلم المحلي فقط. ليعمل للجميع وعلى الموقع المنشور، يرجى إعادة رفع الفيديو إلى التخزين السحابي من لوحة التحكم أو إضافة رابط YouTube/Drive.',
-            'This video is stored in teacher local browser. To work globally, please re-upload to Cloud Storage in Admin Panel or add a YouTube/Drive link.'
+            'هذا الفيديو مخزن على متصفح الجهاز المحلي. لكي يظهر لجميع الطلاب، يرجى رفع الفيديو أو وضع رابط YouTube أو Drive.',
+            'This video is stored in local browser. To work globally, please upload video or attach a YouTube/Drive link.'
           ));
         }
         setIsLoading(false);
@@ -110,8 +154,28 @@ export const CustomVideoPlayer: React.FC<CustomVideoPlayerProps> = ({
           setIsLoading(false);
         }
       });
+    } else if (formatted.type === 'video' && (formatted.embedUrl.startsWith('http://') || formatted.embedUrl.startsWith('https://'))) {
+      // Check if this URL is also stored in local IndexedDB
+      getVideoFromIndexedDB(formatted.embedUrl).then((cachedBlob) => {
+        if (!isSubscribed) return;
+        if (cachedBlob) {
+          createdObjectUrl = URL.createObjectURL(cachedBlob);
+          setResolvedVideoSource(createdObjectUrl);
+          setHasError(false);
+          setIsLoading(false);
+        } else {
+          setResolvedVideoSource(null);
+          setIsLoading(false);
+        }
+      }).catch(() => {
+        if (isSubscribed) {
+          setResolvedVideoSource(null);
+          setIsLoading(false);
+        }
+      });
     } else {
       setResolvedVideoSource(null);
+      setIsLoading(false);
     }
 
     return () => {
@@ -120,7 +184,7 @@ export const CustomVideoPlayer: React.FC<CustomVideoPlayerProps> = ({
         URL.revokeObjectURL(createdObjectUrl);
       }
     };
-  }, [src, formatted.type, formatted.embedUrl, t]);
+  }, [src, formatted.type, formatted.embedUrl, retryCount, t]);
 
   // Track Fullscreen state
   useEffect(() => {
@@ -352,10 +416,10 @@ export const CustomVideoPlayer: React.FC<CustomVideoPlayerProps> = ({
       {/* Native HTML5 Video Player for MP4/WEBM/MOV/MKV/Firebase Storage */}
       {formatted.type === 'video' && !useIframeFallback && (
         <div className="w-full h-full relative">
-          {(isLoading || (formatted.embedUrl.startsWith('indexeddb://') && !resolvedVideoSource)) && !hasError && !isOffline && (
+          {(isLoading || (isCustomScheme && !resolvedVideoSource)) && !hasError && !isOffline && (
             <div className="absolute inset-0 z-10 flex flex-col items-center justify-center bg-black/60 backdrop-blur-xs text-white pointer-events-none">
               <Loader2 className="h-10 w-10 text-brand-cyan animate-spin mb-2" />
-              <span className="text-xs font-bold text-slate-300">{t('جاري تحميل الفيديو...', 'Loading video...')}</span>
+              <span className="text-xs font-bold text-slate-300">{t('جاري تحميل وتشغيل الفيديو...', 'Loading video stream...')}</span>
             </div>
           )}
 
@@ -368,12 +432,12 @@ export const CustomVideoPlayer: React.FC<CustomVideoPlayerProps> = ({
                     <AlertTriangle className="h-6 w-6" />
                   </div>
                   <h4 className="font-black text-sm md:text-base text-amber-300 mb-1">
-                    {t('فيديو مرفوع محلياً عبر جهاز المعلم (IndexedDB)', 'Local Browser Stored Video (IndexedDB)')}
+                    {t('فيديو مخزن محلياً', 'Local Browser Stored Video')}
                   </h4>
                   <p className="text-xs text-slate-300 mb-4 leading-relaxed bg-slate-900/80 p-3 rounded-xl border border-slate-800">
                     {errorMessage || t(
-                      'الملف تم حفظه على متصفح المعلم المحلي. لكي يظهر لجميع الطلاب، يرجى رفع الفيديو سحابياً أو وضع رابط YouTube أو Drive.',
-                      'This file is stored in teacher local browser. To work globally, please upload to Cloud Storage or attach a YouTube/Drive link.'
+                      'الملف تم حفظه على متصفح الجهاز. لكي يظهر لجميع الطلاب، يرجى رفع الفيديو سحابياً أو وضع رابط YouTube أو Drive.',
+                      'This file is stored in browser cache. To work globally, please upload to Cloud Storage or attach a YouTube/Drive link.'
                     )}
                   </p>
                   <button
@@ -389,33 +453,22 @@ export const CustomVideoPlayer: React.FC<CustomVideoPlayerProps> = ({
                 <>
                   <WifiOff className="h-12 w-12 text-rose-500 mb-3 animate-bounce" />
                   <h4 className="font-black text-sm md:text-base text-white mb-1">
-                    {isOffline ? t('انقطع الاتصال بالإنترنت', 'Internet Connection Disconnected') : t('تعذر تشغيل الفيديو في المشغل المباشر', 'Failed to play video directly')}
+                    {isOffline ? t('انقطع الاتصال بالإنترنت', 'Internet Connection Disconnected') : t('تعذر تشغيل الفيديو', 'Video Playback Notice')}
                   </h4>
                   <p className="text-xs text-slate-400 max-w-sm mb-4 leading-relaxed">
                     {isOffline 
                       ? t('يرجى التحقق من الاتصال بالشبكة. سيكمل الفيديو التشغيل تلقائياً عند عودة الإنترنت.', 'Please check your connection. Video will resume automatically once connected.')
-                      : t('يمكنك إعادة المحاولة أو تجربة التشغيل في إطار مدمج داخل المنصة.', 'You can retry playback or switch to embedded player inside the platform.')
+                      : t('يمكنك الضغط على زر إعادة التشغيل أو التأكد من سلامة رابط الفيديو.', 'Click retry to reload the video stream smoothly.')
                     }
                   </p>
                   <div className="flex flex-wrap items-center justify-center gap-3">
                     <button
                       type="button"
                       onClick={handleRetry}
-                      className="rounded-xl bg-brand-cyan text-brand-dark hover:bg-brand-cyan-light px-4 py-2.5 text-xs font-bold transition-all shadow-lg shadow-cyan-950/30 flex items-center gap-1.5 cursor-pointer"
+                      className="rounded-xl bg-brand-cyan text-brand-dark hover:bg-brand-cyan-light px-5 py-2.5 text-xs font-bold transition-all shadow-lg shadow-cyan-950/30 flex items-center gap-2 cursor-pointer active:scale-95"
                     >
                       <RefreshCw className="h-4 w-4" />
-                      <span>{t('إعادة المحاولة', 'Retry Playback')}</span>
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setHasError(false);
-                        setUseIframeFallback(true);
-                      }}
-                      className="rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white border border-indigo-500/30 px-4 py-2.5 text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer shadow-lg"
-                    >
-                      <Video className="h-4 w-4" />
-                      <span>{t('التشغيل كـ إطار مدمج', 'Play as Embedded')}</span>
+                      <span>{t('إعادة تشغيل الفيديو', 'Retry Video Playback')}</span>
                     </button>
                   </div>
                 </>
@@ -423,7 +476,7 @@ export const CustomVideoPlayer: React.FC<CustomVideoPlayerProps> = ({
             </div>
           )}
 
-          {(!formatted.embedUrl.startsWith('indexeddb://') || resolvedVideoSource) && (
+          {(!isCustomScheme || resolvedVideoSource) && (
             <video
               key={`${src}_${retryCount}_${resolvedVideoSource || ''}`}
               ref={videoRef}
@@ -473,22 +526,36 @@ export const CustomVideoPlayer: React.FC<CustomVideoPlayerProps> = ({
                 setHasError(false);
               }}
               onWaiting={() => setIsLoading(true)}
-              onError={(e) => {
+              onError={async () => {
                 const errObj = videoRef.current?.error;
                 console.warn("Video element onError triggered. Code:", errObj?.code, "Message:", errObj?.message || "Media load error");
                 if (errObj && errObj.code === 1) {
                   setIsLoading(false);
                   return;
                 }
+                
+                // Fallback attempt: check memory/IndexedDB
+                try {
+                  const fallbackBlob = await getVideoFromIndexedDB(src || '') || await getVideoFromIndexedDB(formatted.embedUrl);
+                  if (fallbackBlob) {
+                    const fallbackUrl = URL.createObjectURL(fallbackBlob);
+                    setResolvedVideoSource(fallbackUrl);
+                    setHasError(false);
+                    setIsLoading(false);
+                    return;
+                  }
+                } catch (e) {}
+
                 setIsLoading(false);
                 
-                const isFirebaseOrDirectVideo = formatted.embedUrl.includes('firebasestorage') ||
+                const isDirectVideo = formatted.embedUrl.includes('firebasestorage') ||
                   formatted.embedUrl.startsWith('indexeddb://') ||
+                  formatted.embedUrl.startsWith('firestore://') ||
                   formatted.embedUrl.startsWith('blob:') ||
                   formatted.embedUrl.startsWith('data:') ||
                   /\.(mp4|webm|mov|mkv|m3u8|avi)(\?.*)?$/i.test(formatted.embedUrl);
 
-                if (!isFirebaseOrDirectVideo && formatted.embedUrl && (formatted.embedUrl.startsWith('http://') || formatted.embedUrl.startsWith('https://')) && !useIframeFallback) {
+                if (!isDirectVideo && formatted.embedUrl && (formatted.embedUrl.startsWith('http://') || formatted.embedUrl.startsWith('https://')) && !useIframeFallback) {
                   console.log("Auto-switching to embedded iframe playback for non-direct video URL...");
                   setUseIframeFallback(true);
                   setHasError(false);

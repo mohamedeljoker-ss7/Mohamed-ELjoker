@@ -40,13 +40,13 @@ export const Footer: React.FC<FooterProps> = ({ settings, onNavigate }) => {
           {/* Col 1: About */}
           <div className="md:col-span-1.5 flex flex-col gap-4">
             <div className="flex items-center gap-2">
-              <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-brand-cyan/10 border border-brand-cyan/30 text-lg">
-                🧪
+              <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-br from-brand-cyan/20 to-blue-600/20 border border-brand-cyan/40 text-lg">
+                🎓
               </span>
               <span className="text-sm font-black text-white">{t(settings.websiteNameAr, settings.websiteNameEn)}</span>
             </div>
             <p className="text-slate-400 leading-relaxed">
-              {t(settings.seoDescription, 'Premium educational platform focusing on Science Preparatory Grades & High School Integrated Science by Mr. Mohamed Abdel Tawab.')}
+              {t(settings.seoDescription, 'Official technological university academic platform for IT department courses, delivering lectures and lab sheets in Word & PDF format by Eng/Mohamed abdal tawab.')}
             </p>
             {/* Social Icons */}
             <div className="flex items-center gap-2.5 mt-2">
@@ -69,32 +69,33 @@ export const Footer: React.FC<FooterProps> = ({ settings, onNavigate }) => {
 
           {/* Col 2: Navigation Links */}
           <div className="flex flex-col gap-4">
-            <h4 className="text-sm font-bold text-white border-r-2 border-brand-cyan pr-2 pl-2">{t('روابط الأكاديمية', 'Academy Links')}</h4>
+            <h4 className="text-sm font-bold text-white border-r-2 border-brand-cyan pr-2 pl-2">{t('روابط المنصة', 'Platform Links')}</h4>
             <div className="flex flex-col gap-2.5 font-semibold text-slate-400">
               <button onClick={() => onNavigate('home')} className="hover:text-brand-cyan text-right ltr:text-left cursor-pointer">{t('الرئيسية', 'Home')}</button>
-              <button onClick={() => onNavigate('courses')} className="hover:text-brand-cyan text-right ltr:text-left cursor-pointer">{t('كورسات العلوم', 'Science Courses')}</button>
+              <button onClick={() => onNavigate('courses')} className="hover:text-brand-cyan text-right ltr:text-left cursor-pointer">{t('المحاضرات والسكاشن', 'Lectures & Labs')}</button>
+              <button onClick={() => onNavigate('teacher')} className="hover:text-brand-cyan text-right ltr:text-left cursor-pointer">{t('عن المنصة', 'About Platform')}</button>
             </div>
           </div>
 
-          {/* Col 3: Academic Phases */}
+          {/* Col 3: 6 IT Core Subjects */}
           <div className="flex flex-col gap-4">
-            <h4 className="text-sm font-bold text-white border-r-2 border-brand-cyan pr-2 pl-2">{t('المراحل التعليمية', 'Academic Grades')}</h4>
-            <div className="flex flex-col gap-2.5 font-semibold text-slate-400 text-right ltr:text-left">
-              <span>{t('الصف الأول الإعدادي', '1st Prep Grade')}</span>
-              <span>{t('الصف الثاني الإعدادي', '2nd Prep Grade')}</span>
-              <span>{t('الصف الثالث الإعدادي', '3rd Prep Grade')}</span>
-              <span>{t('الصف الأول الثانوي', '1st Secondary Grade')}</span>
-              <span>{t('الصف الثاني الثانوي', '2nd Secondary Grade')}</span>
-              <span>{t('الصف الثالث الثانوي', '3rd Secondary Grade')}</span>
+            <h4 className="text-sm font-bold text-white border-r-2 border-brand-cyan pr-2 pl-2">{t('مقررات قسم IT الستة', '6 Core IT Courses')}</h4>
+            <div className="flex flex-col gap-2 font-semibold text-slate-400 text-right ltr:text-left text-[11px]">
+              <span>⚡ {t('Physics – الفيزياء', 'Physics')}</span>
+              <span>🐍 {t('Python Programming – بايثون', 'Python Programming')}</span>
+              <span>💻 {t('IT Essentials – أساسيات IT', 'IT Essentials')}</span>
+              <span>📐 {t('Mathematics – الرياضيات', 'Mathematics')}</span>
+              <span>🛡️ {t('Cyber Security – الأمن السيبراني', 'Cyber Security')}</span>
+              <span>🌐 {t('English – اللغة الإنجليزية', 'Technical English')}</span>
             </div>
           </div>
 
           {/* Col 4: Quick Help & Policy */}
           <div className="flex flex-col gap-4">
-            <h4 className="text-sm font-bold text-white border-r-2 border-brand-cyan pr-2 pl-2">{t('الدعم القانوني والسياسات', 'Terms & Policies')}</h4>
+            <h4 className="text-sm font-bold text-white border-r-2 border-brand-cyan pr-2 pl-2">{t('الدعم والسياسات', 'Terms & Policies')}</h4>
             <div className="flex flex-col gap-2.5 font-semibold text-slate-400 font-medium">
-              <button onClick={() => onNavigate('terms')} className="hover:text-brand-cyan text-right ltr:text-left cursor-pointer">{t('شروط وأحكام الأكاديمية', 'Academy Terms & Conditions')}</button>
-              <button onClick={() => onNavigate('privacy')} className="hover:text-brand-cyan text-right ltr:text-left cursor-pointer">{t('سياسة خصوصية الطالب', 'Student Privacy Policy')}</button>
+              <button onClick={() => onNavigate('terms')} className="hover:text-brand-cyan text-right ltr:text-left cursor-pointer">{t('شروط وأحكام المنصة', 'Platform Terms')}</button>
+              <button onClick={() => onNavigate('privacy')} className="hover:text-brand-cyan text-right ltr:text-left cursor-pointer">{t('سياسة خصوصية الطلاب', 'Student Privacy Policy')}</button>
             </div>
           </div>
 

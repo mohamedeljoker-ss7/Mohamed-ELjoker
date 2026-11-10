@@ -6,13 +6,17 @@ export interface Lesson {
   videoType?: 'youtube' | 'video' | 'drive' | 'vimeo' | 'iframe' | 'empty' | 'unsupported';
   videoId?: string;
   pdfUrl?: string;
+  wordUrl?: string; // Word Document (.docx / .doc)
+  fileUrl?: string; // Generic / Code / Archive
+  fileType?: 'pdf' | 'word' | 'powerpoint' | 'excel' | 'code' | 'video' | 'zip' | 'other';
+  isSection?: boolean; // True for practical section/lab, false for lecture
   attachments?: string[];
   homework?: string;
   notes?: string;
   duration: string;
 }
 
-export type LessonType = 'video' | 'pdf' | 'quiz' | 'assignment';
+export type LessonType = 'video' | 'pdf' | 'word' | 'quiz' | 'assignment' | 'lecture' | 'section';
 
 export interface UnitLesson {
   id: string;
@@ -23,6 +27,10 @@ export interface UnitLesson {
   duration: string;
   type: LessonType;
   pdfUrl?: string;
+  wordUrl?: string; // Word document (.docx / .doc)
+  fileUrl?: string; // Extra files / presentations
+  fileType?: 'pdf' | 'word' | 'powerpoint' | 'excel' | 'code' | 'video' | 'zip' | 'other';
+  isSection?: boolean; // True for practical section/lab
   order: number;
 }
 
@@ -357,6 +365,12 @@ export interface Notification {
   bodyEn: string;
   isRead: boolean;
   createdAt: string;
+  type?: 'lecture_added' | 'course_activated' | 'assignment' | 'exam' | 'general';
+  courseId?: string;
+  courseTitle?: string;
+  lessonId?: string;
+  lessonTitle?: string;
+  actionUrl?: string;
 }
 
 export interface CourseRequest extends Order {

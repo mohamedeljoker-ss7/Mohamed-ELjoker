@@ -703,28 +703,28 @@ function AcademyApp() {
   // FAQs
   const faqs = [
     {
-      qAr: 'كيف يمكنني البدء في الاشتراك في الكورسات الدراسية على المنصة؟',
-      qEn: 'How can I enroll in science courses on the academy platform?',
-      aAr: 'يمكنك اختيار الصف الدراسي المناسب لك، والضغط على زر "اشترك الآن" لتسجيل بياناتك، وسيتواصل معك مستر أو طاقم المساعدين فوراً لتأكيد الدفع وتفعيل حسابك لمشاهدة الدروس.',
-      aEn: 'You can choose your grade, click "Enroll Now" to input your contact details, and Mr. Mohamed’s assistants will contact you immediately to finalize enrollment and grant access.'
+      qAr: 'ما هي المقررات الأكاديمية الستة المتاحة على المنصة لقسم تكنولوجيا المعلومات IT؟',
+      qEn: 'What are the 6 academic IT courses available on the platform?',
+      aAr: 'تغطي المنصة المقررات الأساسية المعتمدة: Physics (الفيزياء)، Python Programming (برمجة بايثون)، IT Essentials (أساسيات تكنولوجيا المعلومات)، Mathematics (الرياضيات)، Cyber Security (الأمن السيبراني)، و English (اللغة الإنجليزية).',
+      aEn: 'The platform covers the 6 accredited IT courses: Physics, Python Programming, IT Essentials, Mathematics, Cyber Security, and English.'
     },
     {
-      qAr: 'هل يغطي المنهج التعليمي التجارب العملية والاختبارات الدورية؟',
-      qEn: 'Does the curriculum cover practical laboratory experiments?',
-      aAr: 'بكل تأكيد. جميع شروحات مستر محمد عبد التواب تتضمن فيديوهات تجارب معملية مصورة بجودة عالية، مع كراسة اختبارات وحلول نموذجية بعد كل فصل دراسي.',
-      aEn: 'Absolutely! All lessons feature high-definition practical lab animations, worksheets, and model solutions designed to maximize student performance.'
+      qAr: 'كيف أحصل على ملفات المحاضرات وسكاشن العملي والشيتات؟',
+      qEn: 'How can I access lecture notes, lab sheets, and assignments?',
+      aAr: 'تتوفر المحاضرات بصيغة PDF وسلايدز معتمدة للتحميل المباشر، وتتوفر سكاشن العملي وشيتات التمارين والتكليفات الأسبوعية بصيغة Word (.docx) و PDF قابلة للحل والتسليم الفوري.',
+      aEn: 'Lectures are available as PDF documents and slides, while practical lab sections and weekly assignment sheets are provided in editable Word (.docx) and PDF formats.'
     },
     {
-      qAr: 'ما هو منهج العلوم المتكاملة للصف الأول الثانوي؟',
-      qEn: 'What is the New Integrated Science Grade 10?',
-      aAr: 'هو المنهج الجديد المعتمد من وزارة التربية والتعليم لدمج الكيمياء والأحياء وعلوم الأرض في كتاب واحد مترابط، ويقدم مستر شرحاً خاصاً ومبسطاً له يربط المفاهيم الحياتية بالتطبيق العملي.',
-      aEn: 'It is the new unified ministry curriculum integrating Chemistry, Biology, and Earth sciences. Mr. Mohamed provides specialized visual teaching tailored to help secondary students excel.'
+      qAr: 'كيف يتم تفعيل حساب الطالب لتحميل ملفات المحاضرات والسكاشن وحل الشيتات؟',
+      qEn: 'How do I activate course access to download lecture and lab materials?',
+      aAr: 'يمكنك إنشاء حساب طالب أو تسجيل الدخول ثم الضغط على "طلب تفعيل المادة الأكاديمية"، وتراجع الإدارة طلبك لتفعيل صلاحية الوصول الفوري لكافة ملفات المحاضرات والسكاشن والشيتات وبنك الامتحانات.',
+      aEn: 'Create a student account or log in, then click "Request Course Activation". The administration will review and grant immediate access to all lecture, lab, and exam files.'
     },
     {
-      qAr: 'هل هناك ملفات ملخصة ومذكرات ورقية مرفقة بالكورسات؟',
-      qEn: 'Are there revision booklets and worksheets attached with courses?',
-      aAr: 'نعم، كل كورس دراسي يضم مرفقات كاملة بصيغة PDF مجانية جاهزة للتحميل والطباعة مباشرة لتسهيل المذاكرة وحل الأسئلة التطبيقية.',
-      aEn: 'Yes, every course contains detailed syllabus booklets, summary worksheets, and homework sheets in PDF format ready to download and print directly.'
+      qAr: 'هل يشتمل كل مقرر على قسم للامتحانات ونماذج الميدترم والفاينل وبنك الأسئلة؟',
+      qEn: 'Does each course include an exam archive and past midterm & final papers?',
+      aAr: 'نعم، يشتمل كل مقرر على قسم خاص بالشيتات والتكليفات المعملية، وقسم أرشيف الامتحانات وبنك الأسئلة التفاعلي مع نماذج حلول استرشادية لضمان التفوق الأكاديمي.',
+      aEn: 'Yes, every course includes a dedicated section for weekly sheets and assignments, plus a past exams archive with sample solutions for midterm and final preparations.'
     }
   ];
 
@@ -773,22 +773,22 @@ function AcademyApp() {
                 <section className="relative overflow-hidden py-20 lg:py-28">
                   <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 text-center relative z-10">
                     
-                    {/* Science tag */}
+                    {/* IT University tag */}
                     <span className="inline-flex items-center gap-1.5 rounded-full bg-brand-cyan/10 border border-brand-cyan/20 px-4 py-1.5 text-xs font-bold text-brand-cyan-light backdrop-blur-md mb-6">
-                      🧪 {t('منصة متخصصة في العلوم والعلوم المتكاملة', 'Platform Specialized in Science & Integrated Science')}
+                      🎓 {t('الجامعة التكنولوجية - قسم تكنولوجيا المعلومات (IT)', 'Technological University – IT Department')}
                     </span>
 
                     <h1 className="text-3xl font-black text-white sm:text-5xl lg:text-6xl tracking-tight leading-tight max-w-4xl mx-auto">
-                      {t('أكاديمية مستر', 'Academy of')} <br />
-                      <span className="text-transparent bg-clip-text bg-gradient-to-r from-brand-cyan-light to-emerald-400">
-                        {t('محمد عبد التواب للعلوم والعلوم المتكاملة', 'Mohamed Abdel Tawab (Science & Integrated Science)')}
+                      {t('الجامعة التكنولوجية', 'Technological University')} <br />
+                      <span className="text-transparent bg-clip-text bg-gradient-to-r from-brand-cyan-light via-blue-400 to-indigo-400">
+                        {t('منصة محمد عبد التواب (قسم IT)', 'Eng/Mohamed abdal tawab Platform (IT Dept)')}
                       </span>
                     </h1>
 
                     <p className="mx-auto mt-6 max-w-2xl text-slate-300 text-xs sm:text-sm md:text-base leading-relaxed">
                       {t(
-                        'شرح مبسط، وتجارب عملية مشوقة لمادة العلوم للمرحلة الإعدادية ومنهج العلوم المتكاملة للصف الأول الثانوي لتأمين الدرجات النهائية بالفهم والتميز.',
-                        'Simplified teaching, interactive lab experiments, and continuous training in science preparatory grades & secondary integrated science syllabus.'
+                        'المنصة الأكاديمية الشاملة لنزول المحاضرات والسكاشن العملية بصيغ PDF والوورد (Word .docx) وغيرها من الملفات لمواد قسم IT الستة: Physics – Python Programming – IT Essentials – Mathematics – Cyber Security – English.',
+                        'The comprehensive university platform for lectures and practical lab sections with PDF, Word (.docx) and materials for the 6 IT subjects: Physics, Python Programming, IT Essentials, Mathematics, Cyber Security, and English.'
                       )}
                     </p>
 
@@ -796,15 +796,17 @@ function AcademyApp() {
                     <div className="mt-10 flex flex-wrap items-center justify-center gap-4">
                       <button
                         onClick={() => handleNavigate('courses')}
-                        className="rounded-xl bg-brand-cyan text-brand-dark hover:bg-brand-cyan-light px-7 py-3 text-xs font-bold transition-all shadow-lg shadow-cyan-950/30 cursor-pointer active:scale-95"
+                        className="rounded-xl bg-brand-cyan text-brand-dark hover:bg-brand-cyan-light px-7 py-3 text-xs font-bold transition-all shadow-lg shadow-cyan-950/30 cursor-pointer active:scale-95 flex items-center gap-2"
                       >
-                        {t('استعرض الكورسات المتاحة', 'Browse Available Courses')}
+                        <span>📚</span>
+                        <span>{t('المحاضرات والسكاشن المتاحة', 'Browse Lectures & Labs')}</span>
                       </button>
                       <button
                         onClick={() => handleNavigate('teacher')}
-                        className="rounded-xl border border-slate-800 bg-slate-900/60 hover:bg-slate-800/80 px-7 py-3 text-xs font-bold text-slate-300 hover:text-white transition-all cursor-pointer"
+                        className="rounded-xl border border-slate-800 bg-slate-900/60 hover:bg-slate-800/80 px-7 py-3 text-xs font-bold text-slate-300 hover:text-white transition-all cursor-pointer flex items-center gap-2"
                       >
-                        {t('تعرف على مستر محمد', 'About Mr. Mohamed')}
+                        <span>ℹ️</span>
+                        <span>{t('عن منصة محمد عبد التواب', 'About Eng/Mohamed abdal tawab Platform')}</span>
                       </button>
                     </div>
 
@@ -878,35 +880,35 @@ function AcademyApp() {
                         <div className="aspect-square max-w-md mx-auto rounded-3xl overflow-hidden border border-slate-800 glass shadow-2xl relative">
                           <img
                             src="https://i.postimg.cc/9FdBHzv0/file-0000000039e471f4b1bca6e21564ec9d.png"
-                            alt="Mr. Mohamed Abdel Tawab"
+                            alt="Eng/Mohamed abdal tawab"
                             className="w-full h-full object-cover"
                             referrerPolicy="no-referrer"
                           />
                           <div className="absolute inset-0 bg-gradient-to-t from-brand-dark via-transparent to-transparent" />
                           <div className="absolute bottom-6 left-6 right-6 p-4 rounded-2xl glass-cyan">
-                            <p className="text-sm font-bold text-brand-cyan-light">{t('مدرس علوم للمرحلة الإعدادية ومدرس العلوم المتكاملة للصف الأول الثانوي', 'Science Teacher for Preparatory Stage & Integrated Science Teacher for 1st Secondary Grade')}</p>
+                            <p className="text-sm font-bold text-brand-cyan-light">{t('م. محمد عبد التواب - المشرف الأكاديمي لقسم تكنولوجيا المعلومات IT بالجامعة التكنولوجية', 'Eng/Mohamed abdal tawab – Academic Supervisor, IT Dept, Technological University')}</p>
                           </div>
                         </div>
                       </div>
 
                       <div className="space-y-6">
-                        <span className="text-xs font-bold text-brand-cyan font-mono uppercase tracking-wider">{t('مدرس علوم ومتكاملة', 'Science & Integrated Science Instructor')}</span>
-                        <h2 className="text-3xl font-black text-white">{t('مستر محمد عبد التواب', 'Mr. Mohamed Abdel Tawab')}</h2>
+                        <span className="text-xs font-bold text-brand-cyan font-mono uppercase tracking-wider">{t('الجامعة التكنولوجية - قسم تكنولوجيا المعلومات', 'Technological University - IT Dept')}</span>
+                        <h2 className="text-3xl font-black text-white">{t('م. محمد عبد التواب', 'Eng/Mohamed abdal tawab')}</h2>
                         
                         <p className="text-slate-300 text-xs sm:text-sm leading-relaxed">
                           {t(
-                            'أقدم شرحًا مبسطًا يعتمد على الفهم والتطبيق، مع اختبارات دورية، ومراجعات شاملة، ومتابعة مستمرة لمساعدة الطلاب على تحقيق أفضل النتائج.',
-                            'I provide a simplified explanation based on understanding and application, with periodic tests, comprehensive reviews, and continuous follow-up to help students achieve the best results.'
+                            'تركز منصة محمد عبد التواب على توفير بيئة تعليمية جامعية متكاملة لطلاب قسم تكنولوجيا المعلومات (IT)، من خلال رفع وتنسيق المحاضرات النظرية بصيغ PDF وسلايدز، والسكاشن العملية والتجارب المعملية بصيغ Word (.docx) و PDF لتسهيل أداء التكليفات والتقارير الأسبوعية ومذاكرة المواد التقنية.',
+                            'Eng/Mohamed abdal tawab platform provides a complete academic environment for IT students, delivering theoretical lectures in PDF and practical lab sections in Word (.docx) & PDF for assignments and tech study.'
                           )}
                         </p>
 
                         <div className="space-y-3 text-xs text-slate-300">
                           {[
-                            t('شرح مبسط ومنظم لجميع دروس العلوم والعلوم المتكاملة.', 'Simplified and organized explanation for all Science & Integrated Science lessons.'),
-                            t('تدريبات واختبارات بعد كل درس لقياس مستوى الطالب.', 'Practice exercises and tests after each lesson to assess student performance.'),
-                            t('مراجعات شاملة وملخصات منظمة قبل الامتحانات.', 'Comprehensive reviews and organized summaries before exams.'),
-                            t('متابعة مستمرة للإجابة عن استفسارات الطلاب.', 'Continuous follow-up to answer students\' questions.'),
-                            t('أسلوب حديث يجعل التعلم أكثر متعة وسهولة.', 'Modern approach that makes learning more fun and easy.')
+                            t('نزول دوري لمحاضرات المواد الستة: Physics, Python, IT Essentials, Math, Cyber Security, English.', 'Regular release of lectures for the 6 core IT subjects: Physics, Python, IT Essentials, Math, Cyber Security, English.'),
+                            t('سكاشن عملية وشيتات وتجارب معملية بصيغ Word (.docx) قابلة للتعديل والطباعة.', 'Practical lab sections and assignment sheets in editable Word (.docx) and PDF format.'),
+                            t('ملخصات مركزة ونماذج امتحانات الميدترم والفاينل مع الإجابات النموذجية.', 'Focused summaries and past midterm & final exam archives with model answers.'),
+                            t('مكتبة رقمية للمراجع والكتب وأكواد البرمجة الجاهزة والمشاريع التطبيقية.', 'Digital library with course textbooks, ready-to-run source code, and practical projects.'),
+                            t('بوابة أكاديمية مخصصة للطلاب للمتابعة وتسليم التكليفات والتواصل المستمر.', 'Dedicated student portal for tracking progress, submitting assignments, and continuous interaction.')
                           ].map((item, idx) => (
                             <div key={idx} className="flex items-center gap-2">
                               <CheckCircle2 className="h-4.5 w-4.5 text-brand-cyan shrink-0" />
@@ -1159,19 +1161,32 @@ function AcademyApp() {
                         <h3 className="font-bold text-white text-sm">{t('محتوى الكورس وخطة الدراسة', 'Syllabus & Core Outline')}</h3>
                         
                         <div className="space-y-2 text-xs">
-                          {[
-                            { unit: t('الوحدة الأولى: البناء الكيميائي والمادة', 'Unit 1: Atoms, Chemistry and Molecules'), desc: t('٤ دروس نظرية وتجربتين في معمل العلوم', '4 lectures & 2 simulated laboratory videos') },
-                            { unit: t('الوحدة الثانية: القوى والميكانيكا والحركة', 'Unit 2: Force, Acceleration and Motion'), desc: t('٥ دروس مجمعة مع بنك الأسئلة للمتميزين', '5 visual guides with homework model sheets') },
-                            { unit: t('الوحدة الثالثة: علوم الفلك والأرض المتكاملة', 'Unit 3: Solar Systems, Astronomy & Geology'), desc: t('فيديوهات ثلاثية الأبعاد لشرح المجرة والكون', '3D visual guides on earth theories & cell biology') }
-                          ].map((item, index) => (
-                            <div key={index} className="flex items-center justify-between p-3 rounded-xl border border-slate-800 bg-slate-900/30">
-                              <div>
-                                <p className="font-bold text-slate-200">{item.unit}</p>
-                                <p className="text-[10px] text-slate-500 mt-0.5">{item.desc}</p>
+                          {selectedCourse.units && selectedCourse.units.length > 0 ? (
+                            selectedCourse.units.map((unit, index) => (
+                              <div key={unit.id || index} className="p-3.5 rounded-xl border border-slate-800 bg-slate-900/40 space-y-2">
+                                <div className="flex items-center justify-between">
+                                  <p className="font-bold text-white text-xs">{unit.title}</p>
+                                  <span className="text-brand-cyan font-bold font-mono text-[10px]">الوحدة #{index + 1}</span>
+                                </div>
+                                {unit.description && <p className="text-[11px] text-slate-400">{unit.description}</p>}
+                                <div className="space-y-1 pt-1">
+                                  {unit.lessons?.map((lsn, lIdx) => (
+                                    <div key={lsn.id || lIdx} className="flex items-center justify-between py-1.5 px-2.5 rounded-lg bg-slate-950/60 text-[11px]">
+                                      <span className="text-slate-200 font-medium truncate">{lsn.title}</span>
+                                      <div className="flex items-center gap-1.5 shrink-0">
+                                        {lsn.wordUrl && <span className="px-1.5 py-0.5 rounded bg-blue-500/20 border border-blue-500/30 text-blue-400 text-[9px] font-bold">DOCX</span>}
+                                        {lsn.pdfUrl && <span className="px-1.5 py-0.5 rounded bg-red-500/20 border border-red-500/30 text-red-400 text-[9px] font-bold">PDF</span>}
+                                        {lsn.isSection && <span className="px-1.5 py-0.5 rounded bg-amber-500/20 border border-amber-500/30 text-amber-300 text-[9px] font-bold">معمل عملي</span>}
+                                        <span className="text-slate-400 font-mono text-[10px]">{lsn.duration}</span>
+                                      </div>
+                                    </div>
+                                  ))}
+                                </div>
                               </div>
-                              <span className="text-brand-cyan font-bold font-mono">#{index + 1}</span>
-                            </div>
-                          ))}
+                            ))
+                          ) : (
+                            <p className="text-xs text-slate-400">{t('المحاضرات والسكاشن العملية متاحة بالكامل للطلاب المشتركين.', 'Lectures and practical sections available to enrolled students.')}</p>
+                          )}
                         </div>
                       </div>
 
@@ -1274,50 +1289,47 @@ function AcademyApp() {
                           const access = verifyCourseAccess(authService.getCurrentUser(), selectedCourse, orders);
                           if (access.allowed) {
                             return (
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  if (selectedCourse.videoUrl) {
-                                    setActiveVideoModalUrl(selectedCourse.videoUrl);
-                                  } else {
+                                <button
+                                  type="button"
+                                  onClick={() => {
                                     window.scrollTo({ top: 400, behavior: 'smooth' });
-                                  }
-                                }}
-                                className="w-full rounded-xl bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 py-3 text-xs font-bold transition-all shadow-lg flex items-center justify-center gap-2 cursor-pointer"
-                              >
-                                <CheckCircle2 className="h-4 w-4 shrink-0" />
-                                <span>✅ {t('تم الاشتراك (أنت مشترك في هذا الكورس)', 'Subscribed')}</span>
-                              </button>
-                            );
-                          }
-                          if (access.reason === 'pending_approval') {
+                                  }}
+                                  className="w-full rounded-xl bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 py-3 text-xs font-bold transition-all shadow-lg flex items-center justify-center gap-2 cursor-pointer"
+                                >
+                                  <CheckCircle2 className="h-4 w-4 shrink-0" />
+                                  <span>✅ {t('تم تفعيل المادة (تحميل المحاضرات والسكاشن متاح)', 'Activated (Lectures & Lab Files Unlocked)')}</span>
+                                </button>
+                              );
+                            }
+                            if (access.reason === 'pending_approval') {
+                              return (
+                                <button
+                                  type="button"
+                                  disabled
+                                  className="w-full rounded-xl bg-amber-500/20 text-amber-300 border border-amber-500/30 py-3 text-xs font-bold transition-all shadow-lg flex items-center justify-center gap-2 cursor-default"
+                                >
+                                  <Clock className="h-4 w-4 shrink-0" />
+                                  <span>⏳ {t('طلب التفعيل قيد المراجعة الأكاديمية', 'Activation Pending Review')}</span>
+                                </button>
+                              );
+                            }
                             return (
                               <button
-                                type="button"
-                                disabled
-                                className="w-full rounded-xl bg-amber-500/20 text-amber-300 border border-amber-500/30 py-3 text-xs font-bold transition-all shadow-lg flex items-center justify-center gap-2 cursor-default"
+                                onClick={(e) => triggerEnroll(selectedCourse, e)}
+                                className="w-full rounded-xl bg-brand-cyan text-brand-dark hover:bg-brand-cyan-light py-3 text-xs font-bold transition-all shadow-lg shadow-cyan-950/20 cursor-pointer active:scale-95 flex items-center justify-center gap-2"
                               >
-                                <Clock className="h-4 w-4 shrink-0" />
-                                <span>{t('جاري مراجعة الطلب', 'Pending Review')}</span>
+                                <span>📥</span>
+                                <span>{t('طلب تفعيل المادة وتحميل المحاضرات والسكاشن', 'Request Course Activation & File Access')}</span>
                               </button>
                             );
-                          }
-                          return (
-                            <button
-                              onClick={(e) => triggerEnroll(selectedCourse, e)}
-                              className="w-full rounded-xl bg-brand-cyan text-brand-dark hover:bg-brand-cyan-light py-3 text-xs font-bold transition-all shadow-lg shadow-cyan-950/20 cursor-pointer active:scale-95"
-                            >
-                              {t('اشترك في الكورس الآن', 'Enroll in the Course Now')}
-                            </button>
-                          );
-                        })()}
+                          })()}
 
-                        <div className="space-y-2 text-[11px] text-slate-400 text-right ltr:text-left">
-                          <p>• {t('تفعيل فوري لجميع الدروس والملخصات', 'Instant access to all modules and PDFs')}</p>
-                          <p>• {t('متابعة دورية مباشرة مع مستر محمد', 'Continuous coordination with Mr. Mohamed')}</p>
-                          <p>• {t('دعم مستمر وإجابة للأسئلة وحل الواجبات', 'Direct doubt solving & homework coordination')}</p>
+                          <div className="space-y-2 text-[11px] text-slate-400 text-right ltr:text-left">
+                            <p>• {t('تفعيل فوري لتحميل ملفات المحاضرات (PDF) والسكاشن (Word)', 'Instant access to all lecture PDFs and lab Word sheets')}</p>
+                            <p>• {t('إشراف أكاديمي مباشر من Eng/Mohamed abdal tawab', 'Academic supervision by Eng/Mohamed abdal tawab')}</p>
+                            <p>• {t('قسم الشيتات والتكليفات المعملية ونماذج الامتحانات السابقة', 'Weekly lab sheets, assignments, and past exams archive')}</p>
+                          </div>
                         </div>
-                      </div>
 
                       {/* Instructor details short */}
                       <div className="rounded-2xl glass p-5 text-xs text-center space-y-3">
@@ -1330,10 +1342,10 @@ function AcademyApp() {
                         </div>
                         <div>
                           <p className="font-bold text-white text-sm">{selectedCourse.teacherName}</p>
-                          <p className="text-[10px] text-brand-cyan-light mt-0.5">{t('مدرس مادة العلوم والعلوم المتكاملة', 'Science & Integrated Science Instructor')}</p>
+                          <p className="text-[10px] text-brand-cyan-light mt-0.5">{t('الجامعة التكنولوجية - قسم تكنولوجيا المعلومات IT', 'Technological University - IT Department')}</p>
                         </div>
                         <p className="text-slate-400 leading-relaxed text-[11px]">
-                          {t('يسخر مستر محمد مجهوده لمساعدتك في فهم المناهج والوصول لأعلى مستويات التفوق.', 'Mr. Mohamed utilizes modern teaching methods to make sure you score top marks.')}
+                          {t('يقدم المهندس محمد عبد التواب كافة المحاضرات وسكاشن العملي والشيتات التخصصية لتمكين طلاب قسم IT من التفوق والتميز الدراسي والعملي.', 'Eng/Mohamed abdal tawab provides comprehensive lectures, lab sections, and practice sheets to empower IT students to achieve academic and practical excellence.')}
                         </p>
                       </div>
 
@@ -1376,45 +1388,45 @@ function AcademyApp() {
                       <div className="aspect-square h-40 w-40 shrink-0 rounded-3xl overflow-hidden border border-slate-800 bg-slate-900 shadow-2xl">
                         <img 
                           src="https://i.postimg.cc/9FdBHzv0/file-0000000039e471f4b1bca6e21564ec9d.png" 
-                          alt="Mr. Mohamed Abdel Tawab" 
+                          alt="Eng/Mohamed abdal tawab" 
                           className="w-full h-full object-cover"
                         />
                       </div>
                       <div className="space-y-2 text-center md:text-right ltr:text-left">
-                        <span className="text-[10px] font-bold text-brand-cyan uppercase tracking-wider font-mono">Professional Instructor Profile</span>
-                        <h1 className="text-2xl font-black text-white sm:text-3xl">مستر محمد عبد التواب</h1>
-                        <p className="text-sm text-brand-cyan-light font-bold font-arabic">{t('مدرس علوم للمرحلة الإعدادية ومدرس العلوم المتكاملة للصف الأول الثانوي', 'Science Teacher for Preparatory Stage & Integrated Science Teacher for 1st Secondary Grade')}</p>
+                        <span className="text-[10px] font-bold text-brand-cyan uppercase tracking-wider font-mono">Technological University Platform</span>
+                        <h1 className="text-2xl font-black text-white sm:text-3xl">{t('منصة محمد عبد التواب', 'Eng/Mohamed abdal tawab Platform')}</h1>
+                        <p className="text-sm text-brand-cyan-light font-bold font-arabic">{t('الجامعة التكنولوجية - قسم تكنولوجيا المعلومات (IT) | منصة المحاضرات والسكاشن', 'Technological University - IT Department | Lectures & Labs Hub')}</p>
                       </div>
                     </div>
 
                     <div className="space-y-6 text-xs sm:text-sm text-slate-300 leading-relaxed">
                       <h3 className="text-lg font-bold text-white flex items-center gap-2">
                         <Award className="h-5 w-5 text-brand-cyan" />
-                        {t('رؤيتنا التعليمية ومنهجية الشرح', 'Educational Vision & Strategy')}
+                        {t('عن المنصة والأهداف الأكاديمية لقسم IT', 'Platform Vision & IT Academic Goals')}
                       </h3>
 
                       <p>
                         {t(
-                          'نؤمن في أكاديمية مستر محمد عبد التواب للعلوم والعلوم المتكاملة أن فهم قوانين الكون والطبيعة والتفاعلات الكيميائية ليس مجرد كتاب يحفظ بل هو تجربة حية. لذلك قمنا بتأسيس هذه المنصة لتبسيط مادة العلوم والعلوم المتكاملة لطلاب صفوف الشهادة الإعدادية والثانوية العامة.',
-                          'We believe that understanding nature’s chemistry, energy laws, and reactions is not about simple text memorization; it is about active observation. Hence, we established this academy to render these advanced concepts easily digestible for students.'
+                          'تأسست منصة محمد عبد التواب لتكون المرجع الأكاديمي الرقمي المتكامل لطلاب الجامعة التكنولوجية بقسم تكنولوجيا المعلومات (Information Technology). تهدف المنصة إلى تيسير وصول الطلاب إلى المحاضرات النظرية بصيغ PDF وسلايدز، وتوفير شيتات السكاشن المعملية والتقارير الأسبوعية بصيغ Word (.docx) و PDF لتسهيل التعديل والحل والطباعة.',
+                          'Eng/Mohamed abdal tawab platform was built as the integrated digital academic reference for Technological University IT students, facilitating access to lectures in PDF and lab section sheets in editable Word (.docx) & PDF.'
                         )}
                       </p>
 
                       <p>
                         {t(
-                          'نهجنا يدمج بين التدريس النظري المعمق وخرائط المفاهيم المصورة، وتوضيح التجارب الكيميائية بواسطة نماذج رقمية، ومجموعات تقييم مخصصة ومستمرة ترفع الكفاءة التحليلية للطالب للتأهل للعلامة الكاملة.',
-                          'Our pedagogical approach merges exhaustive theoretical instructions with graphical concept maps, detailed simulation videos, and periodic analytical assessments ensuring students understand the deep mechanism behind equations.'
+                          'تغطي المنصة المقررات الستة الأساسية المعتمدة للقسم: مادة الفيزياء (Physics)، برمجة بايثون (Python Programming)، أساسيات تكنولوجيا المعلومات (IT Essentials)، الرياضيات (Mathematics)، الأمن السيبراني (Cyber Security)، واللغة الإنجليزية التخصصية (English).',
+                          'The platform covers the 6 core accredited courses: Physics, Python Programming, IT Essentials, Mathematics, Cyber Security, and Technical English.'
                         )}
                       </p>
 
                       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 pt-4">
                         <div className="rounded-xl border border-slate-800 bg-slate-950/40 p-4">
-                          <p className="font-bold text-white mb-2">🧪 {t('طريقة الشرح الحديثة', 'Interactive Digital Labs')}</p>
-                          <p className="text-xs text-slate-400">{t('فيديوهات تجارب معملية تجسد التفاعلات وتركيب الذرات وتكافؤ العناصر الكيميائية.', 'HD animations illustrating atomic grids, elements classification, and waves motion.')}</p>
+                          <p className="font-bold text-white mb-2">📄 {t('محاضرات وسلايدز PDF معتمدة', 'Accredited PDF Lectures & Slides')}</p>
+                          <p className="text-xs text-slate-400">{t('ملفات مذكرات وعروض تقديمية واضحة وشاملة لجميع المحاضرات النظرية مع إمكانية القراءة والتحميل الفوري.', 'High quality lecture notes and slides for all theoretical courses with instant preview and download.')}</p>
                         </div>
                         <div className="rounded-xl border border-slate-800 bg-slate-950/40 p-4">
-                          <p className="font-bold text-white mb-2">📝 {t('متابعة لا تنقطع', 'Uncompromising Quality Check')}</p>
-                          <p className="text-xs text-slate-400">{t('اختبارات تفاعلية مستمرة بعد كل وحدة لقياس كفاءة الطالب ومستواه التعليمي.', 'Regular assessments, predicted examination series, and specialized homework reviews.')}</p>
+                          <p className="font-bold text-white mb-2">📝 {t('سكاشن وشيتات Word (.docx)', 'Practical Word Lab Sheets')}</p>
+                          <p className="text-xs text-slate-400">{t('ملفات شيتات السكاشن العملية وتجارب المعامل بصيغ مايكروسوفت وورد قابلة للتعديل والحل المباشر والتسليم.', 'Practical lab sheets and assignment templates in Word format, ready for direct editing, solving, and submission.')}</p>
                         </div>
                       </div>
                     </div>
@@ -1437,8 +1449,8 @@ function AcademyApp() {
                 <div className="mx-auto max-w-5xl px-4 sm:px-6 lg:px-8">
                   
                   <div className="text-center max-w-xl mx-auto mb-10">
-                    <h1 className="text-2xl font-black text-white sm:text-4xl">{t('تواصل معنا للحجز والاستفسار', 'Contact Mohamed Abdel Tawab Academy')}</h1>
-                    <p className="text-xs text-slate-400 mt-2">{t('يسعدنا تواصلكم لطرح أي أسئلة حول مناهج العلوم الإعدادية والمتكاملة للثانوية', 'Have queries about class schedules or online platforms? Reach us easily.')}</p>
+                    <h1 className="text-2xl font-black text-white sm:text-4xl">{t('تواصل مع المنصة الأكاديمية لقسم IT', 'Contact Eng/Mohamed abdal tawab Platform')}</h1>
+                    <p className="text-xs text-slate-400 mt-2">{t('يسعدنا تواصل الطلاب لطرح أي استفسارات أكاديمية حول المقررات والمحاضرات والسكاشن', 'Have queries about courses, lectures, or practical lab sheets? Reach out anytime.')}</p>
                   </div>
 
                   <div className="grid grid-cols-1 md:grid-cols-5 gap-8">
@@ -1454,7 +1466,7 @@ function AcademyApp() {
                             📞
                           </span>
                           <div>
-                            <p className="font-bold text-white">{t('موبايل الأكاديمية والواتساب', 'Academy WhatsApp')}</p>
+                            <p className="font-bold text-white">{t('واتساب التواصل والدعم الفني', 'Academic Support WhatsApp')}</p>
                             <p className="text-slate-400 mt-0.5 font-mono select-all">{settings && settings.whatsapp ? settings.whatsapp : 'https://wa.me/201010298878'}</p>
                           </div>
                         </div>
@@ -1465,7 +1477,7 @@ function AcademyApp() {
                           </span>
                           <div>
                             <p className="font-bold text-white">{t('قناة التليجرام والمناقشات', 'Telegram Channel')}</p>
-                            <p className="text-slate-400 mt-0.5 font-mono select-all">{settings && settings.telegram ? settings.telegram : 'https://t.me/Mo7amedEL_JOKER'}</p>
+                            <p className="text-slate-400 mt-0.5 font-mono select-all">{settings && settings.telegram ? settings.telegram : 'https://t.me/mohamed_abdal_tawab'}</p>
                           </div>
                         </div>
 
@@ -1474,8 +1486,8 @@ function AcademyApp() {
                             📍
                           </span>
                           <div>
-                            <p className="font-bold text-white">{t('مناطق التدريس الحضوري', 'In-Person Centers')}</p>
-                            <p className="text-slate-400 mt-0.5">{t('محافظة الفيوم', 'Fayoum Governorate')}</p>
+                            <p className="font-bold text-white">{t('المقر والجهة الأكاديمية', 'Academic Department')}</p>
+                            <p className="text-slate-400 mt-0.5">{t('الجامعة التكنولوجية - قسم تكنولوجيا المعلومات (IT)', 'Technological University - IT Department')}</p>
                           </div>
                         </div>
 
@@ -1593,16 +1605,16 @@ function AcademyApp() {
               >
                 <div className="mx-auto max-w-3xl px-4 sm:px-6 lg:px-8">
                   <div className="rounded-2xl glass p-6 md:p-8 space-y-6 text-xs sm:text-sm text-slate-300 leading-relaxed">
-                    <h1 className="text-xl font-black text-white sm:text-2xl">{t('شروط وأحكام الأكاديمية والاشتراك', 'Terms & Conditions of Subscription')}</h1>
-                    <p className="text-slate-500 font-mono">Last updated: July 2026</p>
+                    <h1 className="text-xl font-black text-white sm:text-2xl">{t('لوائح المنصة الأكاديمية وصلاحية تحميل المحاضرات والسكاشن', 'Terms & Regulations of Course File Access')}</h1>
+                    <p className="text-slate-500 font-mono">Last updated: Academic Year 2026</p>
                     
-                    <p>{t('برجاء قراءة هذه الأحكام بعناية قبل حجز أي كورس دراسي بموقع أكاديمية مستر محمد عبد التواب للعلوم والعلوم المتكاملة:', 'Please read these terms carefully before booking any science course in our educational board:')}</p>
+                    <p>{t('برجاء قراءة اللوائح الأكاديمية المنظمة لاستخدام منصة Eng/Mohamed abdal tawab بالجامعة التكنولوجية لقسم تكنولوجيا المعلومات IT:', 'Please review the academic regulations governing the use of Eng/Mohamed abdal tawab’s IT University Platform:')}</p>
                     
-                    <h3 className="font-bold text-white text-sm">{t('١. صلاحية وامتياز الحساب والدراسة', '1. Study License & Validity')}</h3>
-                    <p>{t('عند تفعيل الاشتراك بأي كورس، يحق للطالب بمفرده الانتفاع بمقاطع الفيديو والملفات والملخصات المرفقة بصيغة PDF. يحظر تماماً مشاركة بيانات الولوج أو نسخ الفيديوهات لجهات أخرى، ولهذا قد يعرض الحساب للتجميد والمساءلة.', 'Each course active subscription grants the individual student a personal study license. Copying, distributing, or sharing login data with other students triggers account suspension.')}</p>
+                    <h3 className="font-bold text-white text-sm">{t('١. صلاحية استخدام المواد الأكاديمية والملفات', '1. Academic Materials Usage License')}</h3>
+                    <p>{t('عند تفعيل المقرر للطالب، يُمنح صلاحية أكاديمية للاطلاع وتحميل ملفات المحاضرات النظرية (PDF) وشيتات السكاشن العملية (Word .docx) وحل التكليفات والامتحانات للمقررات الستة. يحظر إعادة نشر أو بيع المحتوى الأكاديمي لجهات تجارية خارجية.', 'Active course access grants the student personal permission to access and download lecture notes, practical Word lab sheets, and assignments for accredited courses.')}</p>
 
-                    <h3 className="font-bold text-white text-sm">{t('٢. سياسة الإرجاع واستبدال الكورسات', '2. Return & Swap Policy')}</h3>
-                    <p>{t('نظراً للطبيعة الرقمية لملفات المدونات وكورسات الشرح المحملة، لا يمكن إرجاع المبالغ بمجرد فتح الكورس وتنزيل ملفات PDF إلا بموجب موافقة مسبقة ومثبتة من المعلم أو مساعديه.', 'Given the immediate nature of digital worksheets and syllabus videos, enrollment fees are non-refundable unless prior authorization is granted by Mr. Mohamed.')}</p>
+                    <h3 className="font-bold text-white text-sm">{t('٢. تفعيل المواد الدراسية وقسم الامتحانات', '2. Course Activation & Exam System')}</h3>
+                    <p>{t('يتم تفعيل الوصول إلى ملفات السكاشن والمحاضرات وحل الشيتات وبنك أسئلة الامتحانات بعد مراجعة حساب الطالب من قبل الإدارة لضمان انتظام العملية التعليمية لطلاب قسم IT.', 'File access and exam submissions are activated once student credentials are verified by the department administration.')}</p>
                   </div>
                 </div>
               </motion.div>
@@ -1619,12 +1631,12 @@ function AcademyApp() {
                 <div className="mx-auto max-w-3xl px-4 sm:px-6 lg:px-8">
                   <div className="rounded-2xl glass p-6 md:p-8 space-y-6 text-xs sm:text-sm text-slate-300 leading-relaxed">
                     <h1 className="text-xl font-black text-white sm:text-2xl">{t('سياسة الخصوصية وأمن بيانات الطلاب', 'Student Privacy Policy')}</h1>
-                    <p className="text-slate-500 font-mono">Last updated: July 2026</p>
+                    <p className="text-slate-500 font-mono">Last updated: Academic Year 2026</p>
                     
-                    <p>{t('نلتزم في أكاديمية العلوم بخصوصية وأمان بيانات أبنائنا الطلاب وعائلاتهم الكرام:', 'We are highly committed to student and parent data safety:')}</p>
+                    <p>{t('تلتزم منصة Eng/Mohamed abdal tawab الأكاديمية بالجامعة التكنولوجية بأعلى معايير حماية بيانات الطلاب وخصوصيتهم:', 'We strictly protect the privacy and records of our university students:')}</p>
                     
-                    <h3 className="font-bold text-white text-sm">{t('١. البيانات التي نجمعها من الطلاب', '1. Collected Data')}</h3>
-                    <p>{t('نقوم بجمع بيانات الاسم الكامل، عنوان البريد الإلكتروني، ورقم هاتف الموبايل والواتساب لأجل تمكين حجز الكورسات وتأكيد هوية الاشتراك وتيسير التواصل المباشر.', 'We securely collect Name, Active Email address, and WhatsApp/Mobile coordinates for subscription authorization and direct contact.')}</p>
+                    <h3 className="font-bold text-white text-sm">{t('١. البيانات الأكاديمية المسجلة', '1. Collected Academic Data')}</h3>
+                    <p>{t('نجمع بيانات الاسم، والبريد الإلكتروني، ورقم الواتساب، والفرقة الدراسية بقسم تكنولوجيا المعلومات لغرض تفعيل المقررات ومتابعة تسليمات الشيتات وحلول الامتحانات.', 'We securely collect student name, academic email, contact numbers, and year level to activate courses and record assignment submissions.')}</p>
 
                     <h3 className="font-bold text-white text-sm">{t('٢. سرية المعلومات وحمايتها', '2. Data Protection')}</h3>
                     <p>{t('لا يتم بيع أو مشاركة بيانات الطلاب مع أي جهة خارجية، وتظل محفوظة بأعلى معايير الحماية والتشفير بقواعد بياناتنا السحابية المزامنة.', 'No student data is sold or shared with third parties. Databases are encrypted and stored in safe synchronized cloud configurations.')}</p>
@@ -1689,7 +1701,7 @@ function AcademyApp() {
                         🔐
                       </span>
                       <h3 className="text-xl font-black text-white">{t('تسجيل الدخول للمسؤولين', 'Administrator Login')}</h3>
-                      <p className="text-xs text-slate-400 mt-1">{t('بوابة إدارة محتوى أكاديمية مستر محمد عبد التواب', 'Secure gateway for Mohamed Abdel Tawab academy board members')}</p>
+                      <p className="text-xs text-slate-400 mt-1">{t('بوابة إدارة محتوى أكاديمية م. محمد عبد التواب', 'Secure gateway for Eng/Mohamed abdal tawab academy board members')}</p>
                     </div>
 
                     <form onSubmit={handleAdminLoginSubmit} className="space-y-4 text-xs sm:text-sm text-slate-300">
@@ -1903,7 +1915,7 @@ function AcademyApp() {
                     {t('تسجيل دخول المعلم / المدير', 'Teacher & Board Login')}
                   </h3>
                   <p className="text-[11px] text-slate-400 mt-1">
-                    {t('بوابة إدارة الكورسات والطلاب لمستر محمد عبد التواب', 'Course & Student Management Portal')}
+                    {t('بوابة إدارة الكورسات والطلاب لم. محمد عبد التواب', 'Course & Student Management Portal')}
                   </p>
                 </div>
 
@@ -1968,7 +1980,7 @@ function AcademyApp() {
                   <p className="text-[11px] text-slate-400 mt-1">
                     {studentAuthMode === 'login' 
                       ? t('تابع دروسك واختباراتك التفاعلية', 'Continue your lessons and interactive tests') 
-                      : t('سجل الآن لتبدأ رحلة التفوق مع مستر محمد', 'Join us to begin your scientific journey')}
+                      : t('سجل الآن لتبدأ رحلة التفوق مع المهندس محمد عبد التواب', 'Join us to begin your scientific journey')}
                   </p>
                 </div>
 
@@ -2124,8 +2136,8 @@ function AcademyApp() {
                 <h3 className="text-lg font-black text-white">{t('تم تسجيل طلب الحجز بنجاح!', 'Booking Registered Successfully!')}</h3>
                 <p className="text-xs text-slate-400 leading-relaxed">
                   {t(
-                    'تمت إضافة اشتراكك لقاعدة البيانات. سيقوم طاقم المساعدين لمستر بالتواصل معك لتفعيل حسابك ومتابعة المذاكرة فورا.',
-                    'Your reservation has been added to our databases. Mr. Mohamed’s assistants will contact you soon.'
+                    'تمت إضافة اشتراكك لقاعدة البيانات. سيقوم طاقم المساعدين لالمهندس بالتواصل معك لتفعيل حسابك ومتابعة المذاكرة فورا.',
+                    'Your reservation has been added to our databases. Eng/Mohamed abdal tawab’s assistants will contact you soon.'
                   )}
                 </p>
               </div>

@@ -1,6 +1,6 @@
 import { app, firebaseAuth } from '../firebase';
 import firebaseAppletConfig from '../../firebase-applet-config.json';
-import { saveVideoToIndexedDB } from './videoStorage';
+import { saveVideoToIndexedDB, setVideoMemoryCache } from './videoStorage';
 import { saveFileToFirestoreChunks } from './firestoreMediaStorage';
 
 export interface UploadProgressInfo {
@@ -524,6 +524,13 @@ export async function uploadFileToFirebaseStorage(options: UploadOptions): Promi
 
     const resultUrl = await firebaseUploadPromise;
     console.log('[UploadService] Firebase Storage upload succeeded:', resultUrl);
+
+    try {
+      setVideoMemoryCache(resultUrl, uploadTargetFile);
+      setVideoMemoryCache(uniqueId, uploadTargetFile);
+      await saveVideoToIndexedDB(uploadTargetFile, uniqueId);
+      await saveVideoToIndexedDB(uploadTargetFile, resultUrl);
+    } catch (e) {}
 
     if (onProgress) {
       onProgress({

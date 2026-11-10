@@ -9,7 +9,7 @@ import { uploadLargeVideo } from '../utils/largeVideoUploader';
 import { VideoHostingUploader } from './VideoHostingUploader';
 import { FileUploadField } from './FileUploadField';
 import { useLanguage } from './LanguageContext';
-import { formatVideoEmbedUrl, parseVideoSource } from '../utils/authAccess';
+import { formatVideoEmbedUrl, parseVideoSource, normalizeCourseLessons } from '../utils/authAccess';
 import { CustomVideoPlayer } from './CustomVideoPlayer';
 import { triggerFileDownload } from '../utils/videoStorage';
 import { ACADEMIC_GRADES, ACADEMIC_SUBJECTS, getGradeName, getCourseDisplayTitle } from '../utils/gradeMatching';
@@ -202,7 +202,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
   // Course Form
   const [courseForm, setCourseForm] = useState<Omit<Course, 'id' | 'createdAt'>>({
     titleAr: '', titleEn: '', descriptionAr: '', descriptionEn: '',
-    teacherName: 'Mr. Mohamed Abdel Tawab', categoryId: 'prep1',
+    teacherName: 'Eng/Mohamed abdal tawab', categoryId: 'prep1',
     price: 300, discountPrice: 250, duration: '20 Hours', lessonsCount: 15,
     featured: false, popular: false, published: true,
     thumbnailUrl: '', bannerUrl: '', isFree: false, password: '', imageUrls: [], videoUrl: '', pdfUrl: '', attachments: [],
@@ -212,7 +212,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
   const [unitForm, setUnitForm] = useState<{ title: string; description: string; order: number }>({ title: '', description: '', order: 1 });
   const [editingLessonUnitIndex, setEditingLessonUnitIndex] = useState<number | null>(null);
   const [editingLessonIndex, setEditingLessonIndex] = useState<number | null>(null);
-  const [lessonForm, setLessonForm] = useState<{ title: string; videoUrl: string; duration: string; type: LessonType; pdfUrl: string; order: number }>({ title: '', videoUrl: '', duration: '15:00', type: 'video', pdfUrl: '', order: 1 });
+  const [lessonForm, setLessonForm] = useState<{ title: string; videoUrl: string; duration: string; type: LessonType; pdfUrl: string; wordUrl?: string; isSection?: boolean; order: number }>({ title: '', videoUrl: '', duration: '15:00', type: 'video', pdfUrl: '', wordUrl: '', isSection: false, order: 1 });
   const [tempAttachment, setTempAttachment] = useState<string>('');
   const [tempImageUrl, setTempImageUrl] = useState<string>('');
   const [previewCourse, setPreviewCourse] = useState<Course | null>(null);
@@ -230,7 +230,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
   // Article Form
   const [articleForm, setArticleForm] = useState<Omit<Article, 'id' | 'date'>>({
     titleAr: '', titleEn: '', contentAr: '', contentEn: '',
-    authorAr: 'مستر محمد عبد التواب', authorEn: 'Mr. Mohamed Abdel Tawab',
+    authorAr: 'م. محمد عبد التواب', authorEn: 'Eng/Mohamed abdal tawab',
     imageUrl: '', tags: []
   });
   const [tempTag, setTempTag] = useState<string>('');
@@ -555,7 +555,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
         titleEn: courseForm.titleEn?.trim() || `${selectedSubject} - ${getGradeName(selectedGrade, 'en')}`,
         descriptionAr: courseForm.descriptionAr?.trim() || 'لا يوجد وصف متاح حالياً.',
         descriptionEn: courseForm.descriptionEn?.trim() || courseForm.descriptionAr?.trim() || 'No description available.',
-        teacherName: courseForm.teacherName?.trim() || 'أ. محمد عبد التواب',
+        teacherName: courseForm.teacherName?.trim() || 'م. محمد عبد التواب',
         categoryId: validCategoryId,
         duration: courseForm.duration?.trim() || '20 Hours',
         lessonsCount: finalLessonsCount,
@@ -576,11 +576,55 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
       if (modalType === 'add') {
         const added = await dbService.addCourse(submissionForm);
         setCourses(prev => [...prev.filter(c => c.id !== added.id), added]);
-        triggerNotification(t('تم إضافة الكورس بنجاح والمزامنة!', 'Course added and synchronized successfully!'));
+
+        // Send real-time notification to students about new course/curriculum
+        try {
+          await dbService.addNotification({
+            userId: 'global',
+            titleAr: `تم طرح مقرر دراسي جديد: ${submissionForm.titleAr} 📚`,
+            titleEn: `New Course Published: ${submissionForm.titleEn || submissionForm.titleAr} 📚`,
+            bodyAr: `أصبح مقرر "${submissionForm.titleAr}" متاحاً الآن لطلاب قسم تكنولوجيا المعلومات (IT) مع ملفات المحاضرات وسكاشن المعامل.`,
+            bodyEn: `Course "${submissionForm.titleEn || submissionForm.titleAr}" is now live with lectures and lab worksheets ready for download.`,
+            isRead: false,
+            createdAt: new Date().toISOString(),
+            type: 'lecture_added',
+            courseId: added.id,
+            courseTitle: submissionForm.titleAr
+          });
+        } catch (nErr) {
+          console.warn("Could not dispatch course add notification:", nErr);
+        }
+
+        triggerNotification(t('تم إضافة الكورس بنجاح وإرسال إشعار فوري للطلاب!', 'Course added and notification dispatched!'));
       } else if (modalType === 'edit') {
+        const prevCourse = courses.find(c => c.id === selectedId);
+        const prevLessonCount = (prevCourse?.units || []).reduce((acc: number, u: any) => acc + (u.lessons?.length || 0), 0) || (prevCourse?.lessons?.length || 0);
+        const newLessonCount = (submissionForm.units || []).reduce((acc: number, u: any) => acc + (u.lessons?.length || 0), 0) || (submissionForm.lessons?.length || 0);
+
         await dbService.updateCourse(selectedId, submissionForm);
         setCourses(prev => prev.map(c => c.id === selectedId ? { ...c, ...submissionForm } : c));
-        triggerNotification(t('تم تحديث الكورس بنجاح والمزامنة!', 'Course updated and synchronized successfully!'));
+
+        // If new lessons/lectures were added, dispatch real-time alert
+        if (newLessonCount > prevLessonCount) {
+          try {
+            await dbService.addNotification({
+              userId: 'global',
+              titleAr: `تم رفع محاضرات وسكاشن جديدة لمقرر: ${submissionForm.titleAr} 📄`,
+              titleEn: `New Lectures & Lab Sections Uploaded: ${submissionForm.titleEn || submissionForm.titleAr} 📄`,
+              bodyAr: `أضاف المهندس محمد عبد التواب محتوى وملفات أكاديمية جديدة لمقرر "${submissionForm.titleAr}". الملفات جاهزة الآن للتحميل والمذاكرة.`,
+              bodyEn: `New lecture materials and practical lab sheets have been uploaded to "${submissionForm.titleEn || submissionForm.titleAr}". Available now for study and download.`,
+              isRead: false,
+              createdAt: new Date().toISOString(),
+              type: 'lecture_added',
+              courseId: selectedId,
+              courseTitle: submissionForm.titleAr
+            });
+          } catch (nErr) {
+            console.warn("Could not dispatch lecture notification:", nErr);
+          }
+        }
+
+        triggerNotification(t('تم تحديث الكورس بنجاح وإخطار الطلاب بالجديد!', 'Course updated and students notified!'));
       } else if (modalType === 'duplicate') {
         const duplicatedForm = { ...submissionForm, titleAr: submissionForm.titleAr + ' (نسخة)', titleEn: submissionForm.titleEn + ' (Copy)' };
         const added = await dbService.addCourse(duplicatedForm);
@@ -666,16 +710,19 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
 
     let effectiveTitle = lessonForm.title.trim();
     if (!effectiveTitle) {
-      if (lessonForm.videoUrl) {
-        effectiveTitle = `الدرس ${currentLessons.length + 1} (فيديو)`;
+      if (lessonForm.wordUrl || lessonForm.isSection) {
+        effectiveTitle = `سكشن عملي ${currentLessons.length + 1} (ملف وورد Word)`;
       } else if (lessonForm.pdfUrl) {
-        effectiveTitle = `الدرس ${currentLessons.length + 1} (ملف PDF)`;
+        effectiveTitle = `محاضرة ${currentLessons.length + 1} (ملف PDF)`;
+      } else if (lessonForm.videoUrl) {
+        effectiveTitle = `محاضرة ${currentLessons.length + 1} (فيديو)`;
       } else {
-        effectiveTitle = `الدرس ${currentLessons.length + 1}`;
+        effectiveTitle = `بند دراسي ${currentLessons.length + 1}`;
       }
     }
 
     const parsedLessonVideo = lessonForm.videoUrl ? parseVideoSource(lessonForm.videoUrl.trim()) : null;
+    const determinedType: LessonType = lessonForm.type || (lessonForm.wordUrl ? 'word' : lessonForm.pdfUrl ? 'pdf' : 'video');
 
     if (editingLessonIndex === null || editingLessonIndex === -1) {
       currentLessons.push({
@@ -684,9 +731,11 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
         videoUrl: lessonForm.videoUrl.trim(),
         videoType: parsedLessonVideo?.type,
         videoId: parsedLessonVideo?.videoId,
-        duration: lessonForm.duration.trim() || '15:00',
-        type: lessonForm.type,
+        duration: lessonForm.duration.trim() || '20:00',
+        type: determinedType,
         pdfUrl: lessonForm.pdfUrl.trim(),
+        wordUrl: lessonForm.wordUrl?.trim() || '',
+        isSection: !!lessonForm.isSection || determinedType === 'word',
         order: Number(lessonForm.order) || (currentLessons.length + 1)
       });
     } else {
@@ -696,9 +745,11 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
         videoUrl: lessonForm.videoUrl.trim(),
         videoType: parsedLessonVideo?.type,
         videoId: parsedLessonVideo?.videoId,
-        duration: lessonForm.duration.trim() || '15:00',
-        type: lessonForm.type,
+        duration: lessonForm.duration.trim() || '20:00',
+        type: determinedType,
         pdfUrl: lessonForm.pdfUrl.trim(),
+        wordUrl: lessonForm.wordUrl?.trim() || '',
+        isSection: !!lessonForm.isSection || determinedType === 'word',
         order: Number(lessonForm.order) || (editingLessonIndex + 1)
       };
     }
@@ -707,8 +758,8 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
     setCourseForm(prev => ({ ...prev, units: currentUnits }));
     setEditingLessonIndex(null);
     setEditingLessonUnitIndex(null);
-    setLessonForm({ title: '', videoUrl: '', duration: '15:00', type: 'video', pdfUrl: '', order: 1 });
-    triggerNotification(t('تم حفظ الدرس وإضافته للكورس بنجاح!', 'Lesson saved and added to course successfully!'));
+    setLessonForm({ title: '', videoUrl: '', duration: '15:00', type: 'video', pdfUrl: '', wordUrl: '', isSection: false, order: 1 });
+    triggerNotification(t('تم حفظ المحاضرة/السكشن وإضافته للكورس بنجاح!', 'Lecture/Lab section saved successfully!'));
   };
 
   const handleDeleteLesson = (unitIndex: number, lessonIndex: number) => {
@@ -979,7 +1030,24 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
       if (matchingUser) {
         await authService.updateUser(matchingUser.id, { status: 'active', isApproved: true } as any);
       }
-      triggerNotification(t('تم قبول حساب الطالب وتفعيله بنجاح ✅', 'Student account approved and activated successfully ✅'));
+
+      // Send real-time welcome & activation notification
+      try {
+        await dbService.addNotification({
+          userId: matchingUser ? matchingUser.id : stud.id,
+          titleAr: `تم تفعيل وقبول حسابك الأكاديمي بنجاح ✅`,
+          titleEn: `Your Academic Account Has Been Approved ✅`,
+          bodyAr: `مرحباً بك في منصة Eng/Mohamed abdal tawab - الجامعة التكنولوجية قسم IT. تم اعتماد حسابك بنجاح وأصبح بإمكانك طلب تفعيل المقررات والاطلاع على المحاضرات والسكاشن.`,
+          bodyEn: `Welcome to Eng/Mohamed abdal tawab IT University Platform! Your account is now active and ready for course enrollments.`,
+          isRead: false,
+          createdAt: new Date().toISOString(),
+          type: 'course_activated'
+        });
+      } catch (notifErr) {
+        console.warn("Could not dispatch welcome notification:", notifErr);
+      }
+
+      triggerNotification(t('تم قبول حساب الطالب وتفعيله بنجاح وإرسال إشعار فوري له ✅', 'Student account approved and notified successfully ✅'));
     } catch (err: any) {
       console.error(err);
       triggerNotification(t('خطأ أثناء تفعيل حساب الطالب', 'Error approving student account'), true);
@@ -1451,7 +1519,25 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
         });
       }
 
-      triggerNotification(t('تمت الموافقة على طلب الاشتراك وتفعيل الكورس للطالب بنجاح! 🚀', 'Subscription approved and course activated for student!'));
+      // Send real-time Academy Notification to the Student
+      try {
+        await dbService.addNotification({
+          userId: ord.studentId || ord.studentEmail,
+          titleAr: `تم تفعيل مقرر: ${ord.courseTitle} بنجاح! 🎓`,
+          titleEn: `Course Activated: ${ord.courseTitle}! 🎓`,
+          bodyAr: `تهانينا! قامت إدارة الأكاديمية باعتماد طلبك وتفعيل صلاحية الاطلاع وتحميل ملفات المحاضرات (PDF) والسكاشن (Word) لمقرر "${ord.courseTitle}". يمكنك البدء فوراً في المذاكرة وتحميل الملفات.`,
+          bodyEn: `Congratulations! Your course activation request for "${ord.courseTitle}" has been approved! You now have full access to view and download all lecture notes and lab worksheets.`,
+          isRead: false,
+          createdAt: new Date().toISOString(),
+          type: 'course_activated',
+          courseId: ord.courseId,
+          courseTitle: ord.courseTitle
+        });
+      } catch (notifErr) {
+        console.warn("Could not dispatch activation notification:", notifErr);
+      }
+
+      triggerNotification(t('تمت الموافقة على طلب تفعيل المقرر للطالب وإرسال إشعار فوري له! 🚀', 'Course activation approved and student notified!'));
     } catch (err: any) {
       console.error(err);
       triggerNotification(t('خطأ أثناء الموافقة على الطلب', 'Error approving request'), true);
@@ -1793,7 +1879,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
     if (activeTab === 'courses' || activeTab === 'dashboard') {
       setCourseForm({
         titleAr: '', titleEn: '', descriptionAr: '', descriptionEn: '',
-        teacherName: 'Mr. Mohamed Abdel Tawab', categoryId: categories[0]?.id || 'prep1',
+        teacherName: 'Eng/Mohamed abdal tawab', categoryId: categories[0]?.id || 'prep1',
         price: 300, discountPrice: 250, duration: '24 Hours', lessonsCount: 16,
         featured: false, popular: false, published: true,
         thumbnailUrl: 'https://images.unsplash.com/photo-1532094349884-543bc11b234d?auto=format&fit=crop&w=600&q=80',
@@ -1846,7 +1932,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
         createdAt: new Date().toISOString()
       });
     } else if (activeTab === 'articles') {
-      setArticleForm({ titleAr: '', titleEn: '', contentAr: '', contentEn: '', authorAr: 'مستر محمد عبد التواب', authorEn: 'Mr. Mohamed Abdel Tawab', imageUrl: 'https://images.unsplash.com/photo-1456513080510-7bf3a84b82f8?auto=format&fit=crop&w=600&q=80', tags: [] });
+      setArticleForm({ titleAr: '', titleEn: '', contentAr: '', contentEn: '', authorAr: 'م. محمد عبد التواب', authorEn: 'Eng/Mohamed abdal tawab', imageUrl: 'https://images.unsplash.com/photo-1456513080510-7bf3a84b82f8?auto=format&fit=crop&w=600&q=80', tags: [] });
     } else if (activeTab === 'news') {
       setNewsForm({ titleAr: '', titleEn: '', contentAr: '', contentEn: '', imageUrl: 'https://images.unsplash.com/photo-1523050854058-8df90110c9f1?auto=format&fit=crop&w=600&q=80' });
     } else if (activeTab === 'admins') {
@@ -2366,18 +2452,56 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
                 {/* 2. COURSES MANAGEMENT PANEL */}
                 {activeTab === 'courses' && (
                   <div>
-                    <div className="flex items-center justify-between mb-6">
+                    <div className="flex flex-wrap items-center justify-between gap-3 mb-6">
                       <h2 className="text-xl font-bold text-white flex items-center gap-2">
                         <BookOpen className="h-5 w-5 text-brand-cyan" />
-                        {t('كورسات العلوم والعلوم المتكاملة المتاحة', 'Manage Science & Integrated Science Courses')}
+                        {t('محاضرات وسكاشن قسم تكنولوجيا المعلومات (IT) - منصة محمد عبد التواب', 'IT Department Lectures & Practical Sections - Eng/Mohamed abdal tawab Platform')}
                       </h2>
-                      <button
-                        onClick={openAddModal}
-                        className="flex items-center gap-1.5 rounded-xl bg-brand-cyan text-brand-dark hover:bg-brand-cyan-light px-4 py-2 text-xs font-bold transition-all cursor-pointer"
-                      >
-                        <Plus className="h-4 w-4" />
-                        {t('إضافة كورس جديد', 'Add Course')}
-                      </button>
+                      <div className="flex items-center gap-2">
+                        {courses.length > 0 && (
+                          <button
+                            onClick={async () => {
+                              if (window.confirm(t('هل أنت متأكد من رغبتك في حذف جميع الكورسات بالكامل من المنصة؟ لن تتمكن من التراجع.', 'Are you sure you want to delete ALL courses from the platform? This cannot be undone.'))) {
+                                try {
+                                  await dbService.deleteAllCourses();
+                                  setCourses([]);
+                                  alert(t('تم حذف جميع الكورسات بنجاح.', 'All courses have been deleted successfully.'));
+                                } catch (err) {
+                                  alert(t('حدث خطأ أثناء حذف الكورسات.', 'Error deleting courses.'));
+                                }
+                              }
+                            }}
+                            className="flex items-center gap-1.5 rounded-xl bg-red-500/10 border border-red-500/30 text-red-400 hover:bg-red-500/20 px-3.5 py-2 text-xs font-bold transition-all cursor-pointer"
+                          >
+                            <Trash2 className="h-4 w-4" />
+                            <span>{t('حذف جميع الكورسات', 'Delete All Courses')}</span>
+                          </button>
+                        )}
+                        <button
+                          onClick={async () => {
+                            if (window.confirm(t('هل ترغب في تحميل وتثبيت مقررات قسم تكنولوجيا المعلومات الستة (Physics, Python, IT Essentials, Math, Cyber Security, English) مع المحاضرات والسكاشن الجاهزة؟', 'Load official 6 IT Department courses with lectures and lab sheets?'))) {
+                              try {
+                                const fresh = await dbService.seedITUniversityCourses();
+                                setCourses(fresh);
+                                alert(t('تم تحميل وتثبيت مقررات قسم تكنولوجيا المعلومات بنجاح! 🚀', 'IT Department courses loaded successfully!'));
+                              } catch (err) {
+                                alert(t('حدث خطأ أثناء تحميل المقررات.', 'Error loading courses.'));
+                              }
+                            }
+                          }}
+                          className="flex items-center gap-1.5 rounded-xl bg-blue-500/10 border border-blue-500/30 text-blue-400 hover:bg-blue-500/20 px-3.5 py-2 text-xs font-bold transition-all cursor-pointer"
+                        >
+                          <BookOpen className="h-4 w-4" />
+                          <span>{t('تحميل المقررات الـ 6 لقسم IT', 'Load 6 IT Courses')}</span>
+                        </button>
+                        <button
+                          onClick={openAddModal}
+                          className="flex items-center gap-1.5 rounded-xl bg-brand-cyan text-brand-dark hover:bg-brand-cyan-light px-4 py-2 text-xs font-bold transition-all cursor-pointer"
+                        >
+                          <Plus className="h-4 w-4" />
+                          <span>{t('إضافة كورس جديد', 'Add Course')}</span>
+                        </button>
+                      </div>
                     </div>
 
                     {/* Search and Category Filters */}
@@ -3525,7 +3649,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
                                 </div>
 
                                 <div>
-                                  <label className="block mb-1.5 font-semibold text-white">{t('ملاحظات وتوجيهات المستر للطالب (الفييدباك)', 'Teacher Feedback & Notes')}</label>
+                                  <label className="block mb-1.5 font-semibold text-white">{t('ملاحظات وتوجيهات المشرف الأكاديمي للطالب (الفييدباك)', 'Teacher Feedback & Notes')}</label>
                                   <textarea
                                     rows={3}
                                     placeholder={t('اكتب نصائحك أو أخطاء الطالب في الحل...', 'Write teacher tips or feedback...')}
@@ -3583,7 +3707,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
                             {t('موافقات تسجيل دخول المنصة (حسابات الطلاب الجدد)', 'Student Login & Account Approvals')}
                           </h2>
                           <p className="text-xs text-slate-400 mt-1">
-                            {t('قم بمراجعة طلبات تسجيل الحسابات الجديدة في الأكاديمية. عند الموافقة يتم تفعيل حساب الطالب ليصبح قادراً على تسجيل الدخول والتعلم.', 'Review new student account registration requests. Approving an account grants login access to the platform.')}
+                            {t('قم بمراجعة طلبات تسجيل الحسابات الجديدة في الأكاديمية. عند الموافقة يتم تفعيل صلاحية الطالب لعرض وتحميل ملفات المحاضرات (PDF) والسكاشن (Word) وحل الشيتات والامتحانات.', 'Review new student account registration requests. Approving an account grants login access to the platform.')}
                           </p>
                         </div>
                         <div className="flex flex-wrap items-center gap-2 shrink-0">
@@ -3699,7 +3823,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
                                       {/* Accept Account */}
                                       <button
                                         onClick={() => handleAcceptStudent(stud)}
-                                        title={t('قبول الحساب وتفعيله للدخول للمنصة', 'Accept Account')}
+                                        title={t('قبول الحساب وتفعيل صلاحية عرض وتحميل ملفات المحاضرات والسكاشن', 'Accept Account')}
                                         className="flex items-center gap-1.5 rounded-xl bg-emerald-500 text-slate-950 hover:bg-emerald-400 px-3 py-1.5 text-xs font-black transition-all cursor-pointer shadow-md"
                                       >
                                         <UserCheck className="h-4 w-4" />
@@ -3941,7 +4065,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
                                       {/* Approve Subscription */}
                                       <button
                                         onClick={() => handleApproveOrder(ord)}
-                                        title={t('قبول الاشتراك وتفعيل الكورس فوراً', 'Approve Subscription')}
+                                        title={t('تفعيل صلاحية عرض وتحميل ملفات المحاضرات والسكاشن والشيتات للطالب فوراً', 'Approve Subscription')}
                                         className="flex items-center gap-1.5 rounded-xl bg-emerald-500 text-slate-950 hover:bg-emerald-400 px-3 py-1.5 text-xs font-black transition-all cursor-pointer shadow-md"
                                       >
                                         <ShieldCheck className="h-4 w-4" />
@@ -4328,7 +4452,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
                                   <div className="flex justify-between items-center mb-1 text-[11px]">
                                     <span className="font-black text-brand-cyan flex items-center gap-1.5">
                                       <span className="w-1.5 h-1.5 rounded-full bg-brand-cyan animate-pulse"></span>
-                                      {t('رد الأستاذ / محمد عبد التواب', 'Instructor Reply - Mr. Mohamed')}
+                                      {t('رد المشرف الأكاديمي / م. محمد عبد التواب', 'Instructor Reply - Eng/Mohamed abdal tawab')}
                                     </span>
                                     {comm.replyTimestamp && (
                                       <span className="text-[10px] text-slate-500 font-mono">{new Date(comm.replyTimestamp).toLocaleString('ar-EG')}</span>
@@ -5030,173 +5154,6 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
         </div>
       </div>
 
-      {/* Course Preview Modal */}
-      {previewCourse && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-brand-dark/90 backdrop-blur-md p-4 animate-fadeIn">
-          <div className="relative w-full max-w-2xl rounded-2xl border border-slate-800 bg-slate-950 p-6 md:p-8 shadow-2xl overflow-y-auto max-h-[90vh]">
-            
-            {/* Close Button */}
-            <button
-              onClick={() => setPreviewCourse(null)}
-              className="absolute top-4 left-4 rounded-lg bg-slate-900 p-2 text-slate-400 hover:text-white border border-slate-800 cursor-pointer"
-            >
-              <X className="h-5 w-5" />
-            </button>
-
-            {/* Title */}
-            <div className="border-b border-slate-800 pb-4 mb-6">
-              <span className="text-[10px] font-bold uppercase tracking-wider text-brand-cyan-light bg-brand-cyan/10 px-2 py-0.5 rounded">
-                {t('معاينة كورس الأكاديمية', 'Course Preview Mode')}
-              </span>
-              <h3 className="text-2xl font-bold text-white mt-2">
-                {t(previewCourse.titleAr, previewCourse.titleEn)}
-              </h3>
-              {previewCourse.titleAr !== previewCourse.titleEn && (
-                <p className="text-xs text-slate-400 mt-1 font-mono">
-                  {previewCourse.titleAr} / {previewCourse.titleEn}
-                </p>
-              )}
-            </div>
-
-            {/* Layout Grid */}
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6 text-xs text-slate-300">
-              
-              {/* Media Section */}
-              <div className="space-y-4">
-                <div className="relative aspect-video w-full rounded-xl overflow-hidden border border-slate-800 bg-slate-900">
-                  <img
-                    src={previewCourse.thumbnailUrl || 'https://images.unsplash.com/photo-1532094349884-543bc11b234d?auto=format&fit=crop&w=600&q=80'}
-                    alt={previewCourse.titleAr}
-                    className="w-full h-full object-cover"
-                    referrerPolicy="no-referrer"
-                  />
-                  {!previewCourse.published && (
-                    <div className="absolute inset-0 bg-black/60 flex items-center justify-center">
-                      <span className="bg-red-500/20 text-red-400 border border-red-500/30 text-[10px] font-bold px-2 py-1 rounded">
-                        {t('مخفي / مسودة', 'Draft / Hidden')}
-                      </span>
-                    </div>
-                  )}
-                </div>
-
-                {/* Video Option */}
-                {previewCourse.videoUrl ? (
-                  <div className="rounded-xl border border-slate-800 bg-slate-900/40 p-3 space-y-2">
-                    <span className="font-bold text-slate-400 block">{t('الفيديو الترويجي بالكورس', 'Promo Video')}</span>
-                    <CustomVideoPlayer
-                      src={previewCourse.videoUrl}
-                      title={previewCourse.titleAr}
-                    />
-                  </div>
-                ) : (
-                  <div className="text-center p-3 border border-dashed border-slate-800/60 rounded-xl text-slate-500">
-                    {t('لا يوجد فيديو ترويجي مرفق', 'No promo video attached')}
-                  </div>
-                )}
-
-                {/* PDF Option */}
-                {previewCourse.pdfUrl ? (
-                  <div className="rounded-xl border border-slate-800 bg-slate-900/40 p-3 flex items-center justify-between">
-                    <div>
-                      <span className="font-bold text-slate-400 block">{t('ملف PDF المنهج', 'Course Syllabus PDF')}</span>
-                      <span className="text-[10px] text-slate-500 truncate block max-w-[200px]">{previewCourse.pdfUrl}</span>
-                    </div>
-                    <a
-                      href={previewCourse.pdfUrl}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="rounded bg-brand-cyan px-3 py-1.5 font-bold text-brand-dark hover:bg-brand-cyan-light text-[11px]"
-                    >
-                      {t('فتح الملف', 'Open PDF')}
-                    </a>
-                  </div>
-                ) : (
-                  <div className="text-center p-3 border border-dashed border-slate-800/60 rounded-xl text-slate-500">
-                    {t('لا يوجد ملف PDF مرفق', 'No syllabus PDF attached')}
-                  </div>
-                )}
-              </div>
-
-              {/* Details Section */}
-              <div className="space-y-4">
-                {/* Descriptions */}
-                <div>
-                  <span className="font-bold text-slate-400 block mb-1">{t('الوصف المنهجي بالعربية', 'Arabic Description')}</span>
-                  <div className="bg-slate-900/50 rounded-xl p-3 border border-slate-800/60 max-h-[100px] overflow-y-auto">
-                    {previewCourse.descriptionAr || t('لا يوجد وصف متاح.', 'No description available.')}
-                  </div>
-                </div>
-
-                <div>
-                  <span className="font-bold text-slate-400 block mb-1">{t('الوصف المنهجي بالإنجليزية', 'English Description')}</span>
-                  <div className="bg-slate-900/50 rounded-xl p-3 border border-slate-800/60 max-h-[100px] overflow-y-auto font-sans leading-relaxed">
-                    {previewCourse.descriptionEn || t('لا يوجد وصف متاح.', 'No description available.')}
-                  </div>
-                </div>
-
-                {/* Metadata Grid */}
-                <div className="grid grid-cols-2 gap-3 bg-slate-900/40 p-4 rounded-xl border border-slate-800/80">
-                  <div>
-                    <span className="text-slate-500 block mb-0.5">{t('المعلم المسؤول', 'Teacher')}</span>
-                    <span className="font-bold text-white text-xs">{previewCourse.teacherName}</span>
-                  </div>
-                  <div>
-                    <span className="text-slate-500 block mb-0.5">{t('المادة والمنهج', 'Subject')}</span>
-                    <span className="font-bold text-brand-cyan-light text-xs">
-                      {t(previewCourse.subjectAr || 'علوم', previewCourse.subjectEn || 'Science')}
-                    </span>
-                  </div>
-                  <div>
-                    <span className="text-slate-500 block mb-0.5">{t('الصف / المرحلة', 'Grade Class')}</span>
-                    <span className="font-bold text-white text-xs">
-                      {categories.find(cat => cat.id === previewCourse.categoryId)?.nameAr || previewCourse.categoryId}
-                    </span>
-                  </div>
-                  <div>
-                    <span className="text-slate-500 block mb-0.5">{t('السعر والاشتراك', 'Price Fee')}</span>
-                    <span className="font-bold text-white text-xs">
-                      {previewCourse.isFree ? t('مجاني', 'Free') : previewCourse.discountPrice ? `${previewCourse.discountPrice} ج.م` : `${previewCourse.price} ج.م`}
-                    </span>
-                  </div>
-                  <div>
-                    <span className="text-slate-500 block mb-0.5">{t('مدة الساعات المقدرة', 'Syllabus Duration')}</span>
-                    <span className="font-bold text-white font-mono text-xs">{previewCourse.duration}</span>
-                  </div>
-                  <div>
-                    <span className="text-slate-500 block mb-0.5">{t('إجمالي عدد الحصص', 'Lessons Count')}</span>
-                    <span className="font-bold text-white font-mono text-xs">{previewCourse.lessonsCount} {t('حصة تعليمية', 'Lessons')}</span>
-                  </div>
-                </div>
-
-                {/* Password Protection */}
-                {previewCourse.password && (
-                  <div className="bg-amber-500/10 text-amber-400 border border-amber-500/20 p-3 rounded-xl flex items-center justify-between">
-                    <div>
-                      <span className="font-bold">{t('كلمة مرور دخول الكورس', 'Course Passcode')}</span>
-                      <p className="text-[10px] text-slate-400 mt-0.5">{t('كلمة المرور مطلوبة للطلاب المسجلين لتفعيل الاشتراك', 'Passcode is required for enrolled students to unlock modules')}</p>
-                    </div>
-                    <span className="font-mono font-bold bg-slate-900/80 border border-slate-800 px-2 py-1 rounded text-white text-xs">
-                      {previewCourse.password}
-                    </span>
-                  </div>
-                )}
-              </div>
-            </div>
-
-            {/* Footer buttons */}
-            <div className="flex justify-end mt-6 pt-4 border-t border-slate-800">
-              <button
-                onClick={() => setPreviewCourse(null)}
-                className="rounded-xl bg-slate-800 hover:bg-slate-700 text-white px-5 py-2.5 font-bold cursor-pointer transition-all text-xs"
-              >
-                {t('إغلاق المعاينة', 'Close Preview')}
-              </button>
-            </div>
-
-          </div>
-        </div>
-      )}
-
       {/* MODAL SYSTEM (Add / Edit Forms for everything) */}
       {isModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-brand-dark/80 backdrop-blur-md p-4 animate-fadeIn">
@@ -5266,7 +5223,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
                     <label className="block mb-1.5 font-semibold text-white">{t('اسم المعلم المسؤول', 'Teacher Name')}</label>
                     <input
                       type="text"
-                      placeholder="أ. محمد عبد التواب"
+                      placeholder="م. محمد عبد التواب"
                       value={courseForm.teacherName}
                       onChange={e => setCourseForm({ ...courseForm, teacherName: e.target.value })}
                       className="w-full rounded-xl bg-slate-900 border border-slate-800 p-3 text-white focus:outline-none focus:border-brand-cyan"
@@ -5687,14 +5644,58 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
                                     />
                                   </div>
                                   <div>
-                                    <label className="block mb-1 font-semibold text-white">{t('مدة الدرس', 'Duration')}</label>
+                                    <label className="block mb-1 font-semibold text-white">{t('طبيعة المحتوى', 'Content Type')}</label>
+                                    <select
+                                      value={lessonForm.isSection ? "section" : (lessonForm.wordUrl ? "word" : (lessonForm.pdfUrl ? "pdf" : "lecture"))}
+                                      onChange={e => {
+                                        const val = e.target.value;
+                                        if (val === "section" || val === "word") {
+                                          setLessonForm(prev => ({ ...prev, isSection: true, type: "word" }));
+                                        } else if (val === "pdf") {
+                                          setLessonForm(prev => ({ ...prev, isSection: false, type: "pdf" }));
+                                        } else {
+                                          setLessonForm(prev => ({ ...prev, isSection: false, type: "video" }));
+                                        }
+                                      }}
+                                      className="w-full rounded-lg bg-slate-900 border border-slate-800 p-2 text-white text-xs focus:outline-none focus:border-emerald-500"
+                                    >
+                                      <option value="lecture">📖 {t('محاضرة نظرية (Lecture / PDF)', 'Theoretical Lecture (PDF/Video)')}</option>
+                                      <option value="section">🔬 {t('سكشن عملي / معمل (Lab Section / Word)', 'Practical Lab Section (Word/Code)')}</option>
+                                      <option value="sheet">📑 {t('شيت تمارين / مرجع (Sheet / Reference)', 'Problem Sheet / Reference')}</option>
+                                    </select>
+                                  </div>
+                                  <div>
+                                    <label className="block mb-1 font-semibold text-white">{t('مدة المحاضرة / السكشن', 'Duration')}</label>
                                     <input
                                       type="text"
-                                      placeholder="15:00"
+                                      placeholder="45:00"
                                       value={lessonForm.duration}
                                       onChange={e => setLessonForm({ ...lessonForm, duration: e.target.value })}
                                       className="w-full rounded-lg bg-slate-900 border border-slate-800 p-2 text-white font-mono focus:outline-none focus:border-emerald-500"
                                     />
+                                  </div>
+                                  <div className="sm:col-span-2 bg-blue-950/20 border border-blue-900/40 rounded-xl p-3 space-y-2">
+                                    <label className="block font-bold text-blue-300 text-xs flex items-center gap-1.5">
+                                      <span>📝</span>
+                                      <span>{t('ملف وورد للسكشن أو التقرير (.docx / .doc) - اختياري', 'Word Lab Sheet / Document (.docx / .doc) - Optional')}</span>
+                                    </label>
+                                    <div className="flex flex-col sm:flex-row gap-2">
+                                      <input
+                                        type="text"
+                                        placeholder="https://example.com/sheet.docx"
+                                        value={lessonForm.wordUrl || ""}
+                                        onChange={e => setLessonForm({ ...lessonForm, wordUrl: e.target.value })}
+                                        className="flex-1 rounded-lg bg-slate-900 border border-slate-800 p-2 text-white font-mono text-[11px] focus:outline-none focus:border-blue-500"
+                                      />
+                                      <FileUploadField
+                                        label={t('رفع ملف Word (.docx / .doc)', 'Upload Word (.docx)')}
+                                        value={lessonForm.wordUrl || ""}
+                                        onChange={url => setLessonForm(prev => ({ ...prev, wordUrl: url, isSection: true }))}
+                                        accept=".doc,.docx,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                                        folder="word_sheets"
+                                        courseId={selectedId}
+                                      />
+                                    </div>
                                   </div>
                                   <div className="sm:col-span-2">
                                     <label className="block mb-1 font-semibold text-white">{t('رابط PDF (اختياري)', 'PDF URL (Optional)')}</label>
@@ -5757,7 +5758,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
                                       <div className="flex items-center gap-2 overflow-hidden">
                                         <span className="text-[11px] text-slate-500 font-mono shrink-0">#{lsn.order || lIdx + 1}</span>
                                         <span className="px-1.5 py-0.5 rounded bg-slate-800 text-[10px] text-brand-cyan font-semibold shrink-0">
-                                          {lsn.type === 'video' ? t('فيديو', 'Video') : lsn.type === 'pdf' ? 'PDF' : lsn.type === 'quiz' ? t('اختبار', 'Quiz') : t('واجب', 'Assignment')}
+                                          lsn.wordUrl ? "📝 DOCX وورد" : lsn.pdfUrl ? "📕 PDF محاضرة" : lsn.isSection ? t("🔬 سكشن عملي", "Lab Section") : lsn.type === "video" ? t("▶️ فيديو", "Video") : lsn.type
                                         </span>
                                         <span className="font-bold text-slate-200 truncate">{lsn.title}</span>
                                       </div>
@@ -5771,9 +5772,11 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
                                             setLessonForm({
                                               title: lsn.title,
                                               videoUrl: lsn.videoUrl || '',
-                                              duration: lsn.duration || '15:00',
+                                              duration: lsn.duration || '45:00',
                                               type: lsn.type || 'video',
                                               pdfUrl: lsn.pdfUrl || '',
+                                              wordUrl: lsn.wordUrl || '',
+                                              isSection: !!lsn.isSection,
                                               order: lsn.order || lIdx + 1
                                             });
                                           }}
@@ -5967,7 +5970,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
                   </div>
 
                   <div className="sm:col-span-2">
-                    <label className="block mb-1.5 font-semibold text-white">{t('تفعيل الكورسات المشترك بها (حدد لتمكين الوصول للطلاب)', 'Subscribed Courses')}</label>
+                    <label className="block mb-1.5 font-semibold text-white">{t('تفعيل صلاحية تحميل ملفات المحاضرات والسكاشن للمقررات المحددة', 'Subscribed Courses')}</label>
                     <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 max-h-36 overflow-y-auto bg-slate-950 p-3 rounded-xl border border-slate-800">
                       {courses.map(c => {
                         const isEnrolled = studentForm.purchasedCourseIds.includes(c.id);
@@ -6883,6 +6886,173 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
           </div>
         </div>
       )}
+
+      {/* Course Full Preview Modal (معاينة الكورس والفيديوهات) */}
+      {previewCourse && (() => {
+        const normCourse = normalizeCourseLessons(previewCourse);
+        const allLessons = normCourse.lessons || [];
+        const activePreviewVideo = normCourse.videoUrl || (allLessons.length > 0 ? allLessons[0].videoUrl : '');
+
+        return (
+          <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/85 p-4 sm:p-6 backdrop-blur-md animate-fadeIn">
+            <div className="relative w-full max-w-5xl rounded-3xl bg-slate-900 border border-slate-800 p-5 sm:p-6 shadow-2xl max-h-[90vh] overflow-y-auto">
+              
+              {/* Header */}
+              <div className="flex items-center justify-between mb-4 border-b border-slate-800 pb-3">
+                <div className="flex items-center gap-3">
+                  <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-brand-cyan/10 border border-brand-cyan/20 text-brand-cyan">
+                    <Eye className="h-5 w-5" />
+                  </div>
+                  <div>
+                    <h3 className="font-black text-white text-base sm:text-lg">
+                      {getCourseDisplayTitle(normCourse, language)}
+                    </h3>
+                    <p className="text-xs text-slate-400 mt-0.5">
+                      {t('معاينة حية كما تظهر للطالب في المنصة', 'Live course player preview as seen by students')}
+                    </p>
+                  </div>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => setPreviewCourse(null)}
+                  className="rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 px-3 py-2 transition-all text-xs font-bold flex items-center gap-1.5 cursor-pointer"
+                >
+                  <X className="h-4 w-4" />
+                  <span>{t('إغلاق المعاينة', 'Close Preview')}</span>
+                </button>
+              </div>
+
+              {/* Player & Lessons Grid */}
+              <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                
+                {/* Video Area */}
+                <div className="lg:col-span-2 space-y-4">
+                  <div className="rounded-2xl overflow-hidden bg-black border border-slate-800 shadow-xl aspect-video">
+                    {activePreviewVideo ? (
+                      <CustomVideoPlayer
+                        src={activePreviewVideo}
+                        title={getCourseDisplayTitle(normCourse, language)}
+                        user={authService.getCurrentAdmin() || { id: 'admin', name: 'Admin', email: 'admin@academy.com' }}
+                      />
+                    ) : (
+                      <div className="w-full h-full flex flex-col items-center justify-center text-slate-500 p-6 text-center">
+                        <Video className="h-12 w-12 text-slate-600 mb-2" />
+                        <p className="text-xs font-bold text-slate-400">
+                          {t('لم يتم إرفاق رابط فيديو لهذا الكورس أو دروسه بعد.', 'No video URL attached to this course yet.')}
+                        </p>
+                        <p className="text-[11px] text-slate-500 mt-1">
+                          {t('يمكنك تعديل الكورس وإضافة رابط YouTube أو فيديو من لوحة التحكم.', 'Edit the course to add a YouTube URL or upload a video file.')}
+                        </p>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Course Details Info Box */}
+                  <div className="bg-slate-950/80 border border-slate-800 rounded-2xl p-4 space-y-2">
+                    <div className="flex flex-wrap items-center gap-3 text-xs">
+                      <span className="font-bold text-brand-cyan bg-brand-cyan/10 px-2.5 py-1 rounded-lg">
+                        {normCourse.teacherName}
+                      </span>
+                      <span className="text-slate-400 font-mono">
+                        ⏱️ {normCourse.duration || '20:00'}
+                      </span>
+                      <span className="text-slate-400 font-mono">
+                        📚 {allLessons.length} {t('حصص ودروس', 'Lessons')}
+                      </span>
+                      {normCourse.isFree ? (
+                        <span className="text-emerald-400 font-bold bg-emerald-500/10 px-2 py-0.5 rounded text-[11px]">
+                          {t('مجاني', 'Free')}
+                        </span>
+                      ) : (
+                        <span className="text-brand-cyan font-bold font-mono">
+                          {normCourse.price} ج.م
+                        </span>
+                      )}
+                    </div>
+                    {normCourse.descriptionAr && (
+                      <p className="text-xs text-slate-300 leading-relaxed pt-1">
+                        {normCourse.descriptionAr}
+                      </p>
+                    )}
+                  </div>
+                </div>
+
+                {/* Lessons Sidebar */}
+                <div className="space-y-3">
+                  <div className="bg-slate-950/90 border border-slate-800 rounded-2xl p-4 space-y-3">
+                    <h4 className="font-bold text-white text-xs uppercase font-mono tracking-wider flex items-center justify-between">
+                      <span>{t('قائمة الدروس والمحاضرات', 'Lessons Playlist')}</span>
+                      <span className="text-brand-cyan font-mono">{allLessons.length}</span>
+                    </h4>
+
+                    <div className="space-y-1.5 max-h-72 overflow-y-auto pr-1">
+                      {allLessons.length > 0 ? (
+                        allLessons.map((lsn, idx) => (
+                          <div
+                            key={lsn.id || idx}
+                            onClick={() => {
+                              if (lsn.videoUrl) {
+                                setPreviewCourse(prev => prev ? { ...prev, videoUrl: lsn.videoUrl } : null);
+                              }
+                            }}
+                            className={`w-full p-2.5 rounded-xl border text-xs text-right transition-all flex items-center gap-2 cursor-pointer ${
+                              lsn.videoUrl === activePreviewVideo
+                                ? 'bg-brand-cyan/10 border-brand-cyan/40 text-brand-cyan font-bold'
+                                : 'bg-slate-900/60 border-slate-800 text-slate-300 hover:bg-slate-800/80'
+                            }`}
+                          >
+                            <span className="font-mono text-[10px] text-slate-500 shrink-0">#{idx + 1}</span>
+                            <div className="truncate flex-1">
+                              <p className="truncate font-semibold">{t(lsn.titleAr, lsn.titleEn)}</p>
+                              <span className="text-[10px] text-slate-500 font-mono">{lsn.duration || '15:00'}</span>
+                            </div>
+                            {lsn.videoUrl ? (
+                              <Play className="h-3.5 w-3.5 text-brand-cyan shrink-0" />
+                            ) : (
+                              <span className="text-[9px] text-slate-600 font-mono shrink-0">No video</span>
+                            )}
+                          </div>
+                        ))
+                      ) : (
+                        <div className="text-center py-6 text-slate-500 text-xs">
+                          {t('لا توجد دروس فرعية مضافة بعد.', 'No lessons created yet.')}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Actions */}
+                  <div className="flex gap-2">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const toEdit = previewCourse;
+                        setPreviewCourse(null);
+                        handleEditCourse(toEdit);
+                      }}
+                      className="flex-1 rounded-xl bg-blue-600/20 hover:bg-blue-600/30 text-blue-300 border border-blue-500/30 py-2.5 text-xs font-bold transition-all flex items-center justify-center gap-1.5 cursor-pointer"
+                    >
+                      <Edit className="h-4 w-4" />
+                      <span>{t('تعديل الكورس', 'Edit Course')}</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setPreviewCourse(null)}
+                      className="flex-1 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 py-2.5 text-xs font-bold transition-all cursor-pointer"
+                    >
+                      {t('إغلاق', 'Close')}
+                    </button>
+                  </div>
+
+                </div>
+
+              </div>
+
+            </div>
+          </div>
+        );
+      })()}
 
     </div>
   );

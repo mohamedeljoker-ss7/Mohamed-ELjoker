@@ -31,6 +31,9 @@ export const FileUploadField: React.FC<FileUploadFieldProps> = ({
 
   const isImage = accept.includes('image') || (value && /\.(jpg|jpeg|png|webp|gif|svg)(\?.*)?$/i.test(value));
   const isPdf = accept.includes('pdf') || (value && /\.pdf(\?.*)?$/i.test(value));
+  const isWord = accept.includes('word') || accept.includes('doc') || (value && /\.(docx?|doc)(\?.*)?$/i.test(value));
+  const isPpt = (value && /\.(pptx?|ppt)(\?.*)?$/i.test(value));
+  const isCode = (value && /\.(py|ipynb|json|sql|cpp|js|ts)(\?.*)?$/i.test(value));
 
   const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -182,6 +185,18 @@ export const FileUploadField: React.FC<FileUploadFieldProps> = ({
             ) : isPdf ? (
               <div className="w-10 h-10 rounded-lg bg-red-950/60 border border-red-800 text-red-400 flex items-center justify-center font-bold text-xs shrink-0">
                 PDF
+              </div>
+            ) : isWord ? (
+              <div className="w-10 h-10 rounded-lg bg-blue-950/60 border border-blue-700 text-blue-400 flex items-center justify-center font-bold text-xs shrink-0">
+                DOCX
+              </div>
+            ) : isPpt ? (
+              <div className="w-10 h-10 rounded-lg bg-orange-950/60 border border-orange-700 text-orange-400 flex items-center justify-center font-bold text-xs shrink-0">
+                PPT
+              </div>
+            ) : isCode ? (
+              <div className="w-10 h-10 rounded-lg bg-emerald-950/60 border border-emerald-700 text-emerald-400 flex items-center justify-center font-bold text-xs shrink-0">
+                CODE
               </div>
             ) : (
               <div className="w-10 h-10 rounded-lg bg-slate-800 flex items-center justify-center text-slate-300 text-xs shrink-0">

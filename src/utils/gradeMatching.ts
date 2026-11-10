@@ -13,34 +13,34 @@ export interface AcademicSubject {
 }
 
 export const ACADEMIC_GRADES: AcademicGrade[] = [
-  { id: 'prep1', nameAr: 'الصف الأول الإعدادي', nameEn: '1st Prep Grade' },
-  { id: 'prep2', nameAr: 'الصف الثاني الإعدادي', nameEn: '2nd Prep Grade' },
-  { id: 'prep3', nameAr: 'الصف الثالث الإعدادي', nameEn: '3rd Prep Grade' },
-  { id: 'sec1', nameAr: 'الصف الأول الثانوي', nameEn: '1st Secondary Grade' },
-  { id: 'sec2', nameAr: 'الصف الثاني الثانوي', nameEn: '2nd Secondary Grade' },
-  { id: 'sec3', nameAr: 'الصف الثالث الثانوي', nameEn: '3rd Secondary Grade' },
+  { id: 'year1', nameAr: 'الفرقة الأولى - IT', nameEn: '1st Year - IT' },
+  { id: 'year2', nameAr: 'الفرقة الثانية - IT', nameEn: '2nd Year - IT' },
+  { id: 'year3', nameAr: 'الفرقة الثالثة - IT', nameEn: '3rd Year - IT' },
+  { id: 'year4', nameAr: 'الفرقة الرابعة - IT', nameEn: '4th Year - IT' },
+  { id: 'general', nameAr: 'جميع الفرق الدراسية', nameEn: 'All Academic Years' },
+  // Backward compatibility aliases
+  { id: 'prep1', nameAr: 'الفرقة الأولى', nameEn: '1st Year' },
+  { id: 'prep2', nameAr: 'الفرقة الثانية', nameEn: '2nd Year' },
+  { id: 'prep3', nameAr: 'الفرقة الثالثة', nameEn: '3rd Year' },
+  { id: 'sec1', nameAr: 'الفرقة الأولى', nameEn: '1st Year' },
+  { id: 'sec2', nameAr: 'الفرقة الثانية', nameEn: '2nd Year' },
+  { id: 'sec3', nameAr: 'الفرقة الثالثة', nameEn: '3rd Year' },
 ];
 
 export const ACADEMIC_SUBJECTS: AcademicSubject[] = [
-  { id: 'العلوم', nameAr: 'العلوم', nameEn: 'Science' },
-  { id: 'العلوم المتكاملة', nameAr: 'العلوم المتكاملة', nameEn: 'Integrated Sciences' },
-  { id: 'الرياضيات', nameAr: 'الرياضيات', nameEn: 'Mathematics' },
-  { id: 'الجبر', nameAr: 'الجبر', nameEn: 'Algebra' },
-  { id: 'الهندسة', nameAr: 'الهندسة', nameEn: 'Geometry' },
-  { id: 'اللغة العربية', nameAr: 'اللغة العربية', nameEn: 'Arabic Language' },
-  { id: 'اللغة الإنجليزية', nameAr: 'اللغة الإنجليزية', nameEn: 'English Language' },
-  { id: 'الدراسات الاجتماعية', nameAr: 'الدراسات الاجتماعية', nameEn: 'Social Studies' },
-  { id: 'التاريخ', nameAr: 'التاريخ', nameEn: 'History' },
-  { id: 'الجغرافيا', nameAr: 'الجغرافيا', nameEn: 'Geography' },
-  { id: 'الفلسفة والمنطق', nameAr: 'الفلسفة والمنطق', nameEn: 'Philosophy & Logic' },
-  { id: 'علم النفس', nameAr: 'علم النفس', nameEn: 'Psychology' },
-  { id: 'الكيمياء', nameAr: 'الكيمياء', nameEn: 'Chemistry' },
+  { id: 'Physics', nameAr: 'الفيزياء – Physics', nameEn: 'Physics' },
+  { id: 'Python Programming', nameAr: 'برمجة بايثون – Python Programming', nameEn: 'Python Programming' },
+  { id: 'IT Essentials', nameAr: 'أساسيات تكنولوجيا المعلومات – IT Essentials', nameEn: 'IT Essentials' },
+  { id: 'Mathematics', nameAr: 'الرياضيات – Mathematics', nameEn: 'Mathematics' },
+  { id: 'Cyber Security', nameAr: 'الأمن السيبراني – Cyber Security', nameEn: 'Cyber Security' },
+  { id: 'English', nameAr: 'اللغة الإنجليزية – English', nameEn: 'English' },
+  // Short Arabic aliases
   { id: 'الفيزياء', nameAr: 'الفيزياء', nameEn: 'Physics' },
-  { id: 'الأحياء', nameAr: 'الأحياء', nameEn: 'Biology' },
-  { id: 'الجيولوجيا', nameAr: 'الجيولوجيا', nameEn: 'Geology' },
-  { id: 'الحاسب الآلي', nameAr: 'الحاسب الآلي', nameEn: 'Computer Science' },
-  { id: 'تكنولوجيا المعلومات ICT', nameAr: 'تكنولوجيا المعلومات ICT', nameEn: 'Information & Communication Tech (ICT)' },
-  { id: 'التربية الدينية', nameAr: 'التربية الدينية', nameEn: 'Religious Education' },
+  { id: 'برمجة بايثون', nameAr: 'برمجة بايثون', nameEn: 'Python Programming' },
+  { id: 'أساسيات تكنولوجيا المعلومات', nameAr: 'أساسيات تكنولوجيا المعلومات', nameEn: 'IT Essentials' },
+  { id: 'الرياضيات', nameAr: 'الرياضيات', nameEn: 'Mathematics' },
+  { id: 'الأمن السيبراني', nameAr: 'الأمن السيبراني', nameEn: 'Cyber Security' },
+  { id: 'اللغة الإنجليزية', nameAr: 'اللغة الإنجليزية', nameEn: 'English' },
 ];
 
 export function getGradeName(gradeCode?: string, lang: 'ar' | 'en' = 'ar'): string {
@@ -83,12 +83,10 @@ export function getCourseDisplayTitle(course: Course, lang: 'ar' | 'en' = 'ar'):
 export function normalizeGradeCode(code?: string): string {
   if (!code) return '';
   const c = code.toLowerCase().trim();
-  if (c === '1prep' || c === 'prep1' || c === 'prep_1' || c.includes('أول إعداد') || c.includes('اول إعداد') || c.includes('أول اعداد') || c.includes('1st prep') || c.includes('grade 1 prep')) return 'prep1';
-  if (c === '2prep' || c === 'prep2' || c === 'prep_2' || c.includes('ثاني إعداد') || c.includes('ثانى إعداد') || c.includes('ثاني اعداد') || c.includes('2nd prep') || c.includes('grade 2 prep')) return 'prep2';
-  if (c === '3prep' || c === 'prep3' || c === 'prep_3' || c.includes('ثالث إعداد') || c.includes('ثالث اعداد') || c.includes('3rd prep') || c.includes('grade 3 prep')) return 'prep3';
-  if (c === '1sec' || c === 'sec1' || c === 'sec_1' || c.includes('أول ثان') || c.includes('اول ثان') || c.includes('1st sec') || c.includes('grade 1 sec') || c.includes('علوم متكاملة') || c.includes('integrated science')) return 'sec1';
-  if (c === '2sec' || c === 'sec2' || c === 'sec_2' || c.includes('ثاني ثان') || c.includes('ثانى ثان') || c.includes('2nd sec') || c.includes('grade 2 sec')) return 'sec2';
-  if (c === '3sec' || c === 'sec3' || c === 'sec_3' || c.includes('ثالث ثان') || c.includes('3rd sec') || c.includes('grade 3 sec')) return 'sec3';
+  if (c === 'year1' || c === '1year' || c === 'year_1' || c.includes('أولى') || c.includes('اولى') || c.includes('الفرقة الأولى') || c.includes('1st year') || c === 'prep1' || c === 'sec1') return 'year1';
+  if (c === 'year2' || c === '2year' || c === 'year_2' || c.includes('ثانية') || c.includes('تانية') || c.includes('الفرقة الثانية') || c.includes('2nd year') || c === 'prep2' || c === 'sec2') return 'year2';
+  if (c === 'year3' || c === '3year' || c === 'year_3' || c.includes('ثالثة') || c.includes('تالته') || c.includes('الفرقة الثالثة') || c.includes('3rd year') || c === 'prep3' || c === 'sec3') return 'year3';
+  if (c === 'year4' || c === '4year' || c === 'year_4' || c.includes('رابعة') || c.includes('الفرقة الرابعة') || c.includes('4th year')) return 'year4';
   if (c === 'all' || c === 'general' || c.includes('عام') || c.includes('جميع')) return 'all';
   return c;
 }

@@ -78,18 +78,21 @@ export const CourseCard: React.FC<CourseCardProps> = ({ course, category, onSele
         </p>
 
         {/* Course details */}
-        <div className="mt-4 flex items-center gap-4 border-t border-slate-800/60 pt-4 text-[11px] text-slate-400 font-sans">
+        <div className="mt-4 flex flex-wrap items-center gap-3 border-t border-slate-800/60 pt-4 text-[11px] text-slate-400 font-sans">
           <div className="flex items-center gap-1">
             <Clock className="h-3.5 w-3.5 text-brand-cyan" />
             <span>{course.duration}</span>
           </div>
           <div className="flex items-center gap-1">
             <BookOpen className="h-3.5 w-3.5 text-brand-cyan" />
-            <span>{course.lessonsCount} {t('درس', 'Lessons')}</span>
+            <span>{course.lessonsCount} {t('محاضرة وسكشن', 'Lectures & Labs')}</span>
           </div>
           <div className="flex items-center gap-1">
             <Award className="h-3.5 w-3.5 text-brand-cyan" />
-            <span className="truncate max-w-[80px]">{course.teacherName}</span>
+            <span className="truncate max-w-[100px]">{course.teacherName}</span>
+          </div>
+          <div className="flex items-center gap-1 text-blue-400 font-mono text-[10px] bg-blue-950/40 px-2 py-0.5 rounded border border-blue-900/50">
+            <span>📄 PDF & Word</span>
           </div>
         </div>
 
@@ -128,7 +131,7 @@ export const CourseCard: React.FC<CourseCardProps> = ({ course, category, onSele
               className="rounded-xl bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 hover:bg-emerald-500/30 px-3.5 py-2 text-xs font-bold transition-all duration-200 cursor-pointer shadow-md active:scale-95 flex items-center gap-1.5"
             >
               <CheckCircle2 className="h-3.5 w-3.5 shrink-0" />
-              <span>✅ {t('تم الاشتراك', 'Subscribed')}</span>
+              <span>✅ {t('مفعل (المحاضرات والسكاشن)', 'Activated (Lectures & Labs)')}</span>
             </button>
           ) : access.reason === 'pending_approval' ? (
             <button
@@ -137,7 +140,7 @@ export const CourseCard: React.FC<CourseCardProps> = ({ course, category, onSele
               className="rounded-xl bg-amber-500/20 text-amber-300 border border-amber-500/30 hover:bg-amber-500/30 px-3.5 py-2 text-xs font-bold transition-all duration-200 cursor-pointer shadow-md flex items-center gap-1.5"
             >
               <Clock className="h-3.5 w-3.5 shrink-0" />
-              <span>{t('جاري مراجعة الطلب', 'Pending Review')}</span>
+              <span>⏳ {t('طلب التفعيل قيد المراجعة', 'Activation Pending')}</span>
             </button>
           ) : (
             <button
@@ -145,7 +148,7 @@ export const CourseCard: React.FC<CourseCardProps> = ({ course, category, onSele
               onClick={(e) => { e.stopPropagation(); onEnroll(course, e); }}
               className="rounded-xl bg-brand-cyan text-brand-dark hover:bg-brand-cyan-light px-4 py-2 text-xs font-bold transition-all duration-200 cursor-pointer shadow-md shadow-cyan-950/20 active:scale-95"
             >
-              {t('اشترك الآن', 'Enroll Now')}
+              {t('طلب تفعيل المادة', 'Request Activation')}
             </button>
           )}
         </div>

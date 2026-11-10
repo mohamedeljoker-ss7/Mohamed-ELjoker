@@ -3,6 +3,23 @@
 const DB_NAME = 'MohamedAbdelTawab_VideoStore';
 const STORE_NAME = 'videos';
 
+// Fast in-memory Blob cache for instant zero-latency playback across the app
+const memoryBlobCache = new Map<string, Blob>();
+
+export function setVideoMemoryCache(key: string, blob: Blob): void {
+  if (key && blob) {
+    const cleanKey = key.replace('indexeddb://', '').replace('firestore://', '');
+    memoryBlobCache.set(cleanKey, blob);
+    memoryBlobCache.set(key, blob);
+  }
+}
+
+export function getVideoFromMemoryCache(key: string): Blob | null {
+  if (!key) return null;
+  const cleanKey = key.replace('indexeddb://', '').replace('firestore://', '');
+  return memoryBlobCache.get(cleanKey) || memoryBlobCache.get(key) || null;
+}
+
 function openVideoDB(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
     if (typeof window === 'undefined' || !window.indexedDB) {
@@ -43,32 +60,50 @@ function openVideoDB(): Promise<IDBDatabase> {
  * Returns an 'indexeddb://key' URL string that survives page reloads.
  */
 export async function saveVideoToIndexedDB(file: Blob, key: string): Promise<string> {
+  const cleanKey = key.replace('indexeddb://', '').replace('firestore://', '');
+  setVideoMemoryCache(cleanKey, file);
   try {
     const db = await openVideoDB();
     return new Promise((resolve, reject) => {
       const tx = db.transaction(STORE_NAME, 'readwrite');
       const store = tx.objectStore(STORE_NAME);
-      const req = store.put(file, key);
-      req.onsuccess = () => resolve(`indexeddb://${key}`);
+      const req = store.put(file, cleanKey);
+      req.onsuccess = () => resolve(`indexeddb://${cleanKey}`);
       req.onerror = () => reject(req.error);
     });
   } catch (err) {
     console.warn("Failed to save video to IndexedDB:", err);
-    throw err;
+    return `indexeddb://${cleanKey}`;
   }
 }
 
 /**
- * Retrieves a video or file Blob from local IndexedDB by key.
+ * Retrieves a video or file Blob from memory cache or local IndexedDB by key.
  */
 export async function getVideoFromIndexedDB(key: string): Promise<Blob | null> {
+  if (!key) return null;
+  const cleanKey = key.replace('indexeddb://', '').replace('firestore://', '');
+
+  // 1. Check in-memory cache first
+  const inMemory = getVideoFromMemoryCache(cleanKey);
+  if (inMemory) {
+    return inMemory;
+  }
+
+  // 2. Check IndexedDB
   try {
     const db = await openVideoDB();
     return new Promise((resolve) => {
       const tx = db.transaction(STORE_NAME, 'readonly');
       const store = tx.objectStore(STORE_NAME);
-      const req = store.get(key);
-      req.onsuccess = () => resolve(req.result || null);
+      const req = store.get(cleanKey);
+      req.onsuccess = () => {
+        const result = req.result || null;
+        if (result) {
+          setVideoMemoryCache(cleanKey, result);
+        }
+        resolve(result);
+      };
       req.onerror = () => resolve(null);
     });
   } catch (err) {

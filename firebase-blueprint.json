@@ -259,6 +259,167 @@
         "createdAt": { "type": "string" }
       },
       "required": ["userId", "titleAr", "bodyAr", "createdAt"]
+    },
+    "LectureItem": {
+      "title": "LectureItem",
+      "description": "Academic lecture material with YouTube link and PDF file",
+      "type": "object",
+      "properties": {
+        "courseId": { "type": "string" },
+        "courseTitle": { "type": "string" },
+        "number": { "type": "number" },
+        "title": { "type": "string", "maxLength": 200 },
+        "description": { "type": "string" },
+        "youtubeUrl": { "type": "string" },
+        "pdfUrl": { "type": "string" },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["courseId", "number", "title"]
+    },
+    "SectionItem": {
+      "title": "SectionItem",
+      "description": "Practical lab section with YouTube video and Word/PDF worksheet",
+      "type": "object",
+      "properties": {
+        "courseId": { "type": "string" },
+        "courseTitle": { "type": "string" },
+        "number": { "type": "number" },
+        "title": { "type": "string", "maxLength": 200 },
+        "description": { "type": "string" },
+        "youtubeUrl": { "type": "string" },
+        "fileUrl": { "type": "string" },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["courseId", "number", "title"]
+    },
+    "ExamItem": {
+      "title": "ExamItem",
+      "description": "Curriculum exams both printable PDF and interactive online quizzes",
+      "type": "object",
+      "properties": {
+        "courseId": { "type": "string" },
+        "courseTitle": { "type": "string" },
+        "number": { "type": "string" },
+        "title": { "type": "string", "maxLength": 200 },
+        "description": { "type": "string" },
+        "questionsFileUrl": { "type": "string" },
+        "answersFileUrl": { "type": "string" },
+        "examDate": { "type": "string" },
+        "isOnlineExam": { "type": "boolean" },
+        "durationMinutes": { "type": "number" },
+        "totalPoints": { "type": "number" },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["courseId", "number", "title"]
+    },
+    "SheetItem": {
+      "title": "SheetItem",
+      "description": "Lecture sheets and section practice sheets with downloadable files",
+      "type": "object",
+      "properties": {
+        "courseId": { "type": "string" },
+        "courseTitle": { "type": "string" },
+        "sheetType": { "type": "string", "enum": ["lecture_sheet", "section_sheet"] },
+        "referenceNumber": { "type": "number" },
+        "title": { "type": "string", "maxLength": 200 },
+        "description": { "type": "string" },
+        "fileUrl": { "type": "string" },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["courseId", "sheetType", "referenceNumber", "title", "fileUrl"]
+    },
+    "QuestionBankItem": {
+      "title": "QuestionBankItem",
+      "description": "Reusable test question bank repository divided by course and topic",
+      "type": "object",
+      "properties": {
+        "courseId": { "type": "string" },
+        "courseTitle": { "type": "string" },
+        "subject": { "type": "string" },
+        "topic": { "type": "string" },
+        "questionText": { "type": "string" },
+        "type": { "type": "string", "enum": ["multiple_choice", "true_false"] },
+        "options": { "type": "array" },
+        "correctAnswerIndex": { "type": "number" },
+        "points": { "type": "number" },
+        "explanation": { "type": "string" },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["courseId", "questionText", "type", "correctAnswerIndex", "points"]
+    },
+    "ExamSubmission": {
+      "title": "ExamSubmission",
+      "description": "Student online exam grading result record",
+      "type": "object",
+      "properties": {
+        "studentId": { "type": "string" },
+        "studentName": { "type": "string" },
+        "studentEmail": { "type": "string" },
+        "examId": { "type": "string" },
+        "examTitle": { "type": "string" },
+        "courseId": { "type": "string" },
+        "score": { "type": "number" },
+        "totalPoints": { "type": "number" },
+        "percentage": { "type": "number" },
+        "answers": { "type": "object" },
+        "submittedAt": { "type": "string" }
+      },
+      "required": ["studentId", "examId", "score", "totalPoints", "submittedAt"]
+    },
+    "ScheduleItem": {
+      "title": "ScheduleItem",
+      "description": "Weekly timetable and schedule for university lectures and sections",
+      "type": "object",
+      "properties": {
+        "title": { "type": "string" },
+        "courseId": { "type": "string" },
+        "courseTitle": { "type": "string" },
+        "itemType": { "type": "string", "enum": ["lecture", "section", "exam"] },
+        "dayOfWeek": { "type": "string" },
+        "dayOfWeekAr": { "type": "string" },
+        "startTime": { "type": "string" },
+        "endTime": { "type": "string" },
+        "location": { "type": "string" },
+        "instructor": { "type": "string" },
+        "notes": { "type": "string" },
+        "active": { "type": "boolean" }
+      },
+      "required": ["title", "courseId", "itemType", "dayOfWeekAr", "startTime", "endTime"]
+    },
+    "StudentInquiry": {
+      "title": "StudentInquiry",
+      "description": "Direct student question to management with admin answer thread",
+      "type": "object",
+      "properties": {
+        "studentId": { "type": "string" },
+        "studentName": { "type": "string" },
+        "studentEmail": { "type": "string" },
+        "category": { "type": "string" },
+        "title": { "type": "string" },
+        "question": { "type": "string" },
+        "status": { "type": "string", "enum": ["pending", "answered"] },
+        "reply": { "type": "string" },
+        "repliedBy": { "type": "string" },
+        "repliedAt": { "type": "string" },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["studentId", "title", "question", "status", "createdAt"]
+    },
+    "ActivityLogItem": {
+      "title": "ActivityLogItem",
+      "description": "Audit trail log for administrator CRUD modifications",
+      "type": "object",
+      "properties": {
+        "adminEmail": { "type": "string" },
+        "adminName": { "type": "string" },
+        "action": { "type": "string" },
+        "targetType": { "type": "string" },
+        "targetTitle": { "type": "string" },
+        "details": { "type": "string" },
+        "timestamp": { "type": "number" },
+        "date": { "type": "string" }
+      },
+      "required": ["adminEmail", "action", "targetType", "targetTitle", "timestamp"]
     }
   },
   "firestore": {
@@ -273,6 +434,42 @@
     "courses/{courseId}": {
       "schema": "Course",
       "description": "Academic courses with lessons"
+    },
+    "lectures/{lectureId}": {
+      "schema": "LectureItem",
+      "description": "Independent academic lectures"
+    },
+    "sections/{sectionId}": {
+      "schema": "SectionItem",
+      "description": "Independent lab and practical sections"
+    },
+    "exams/{examId}": {
+      "schema": "ExamItem",
+      "description": "Exams with PDF papers and online auto-graded quizzes"
+    },
+    "sheets/{sheetId}": {
+      "schema": "SheetItem",
+      "description": "Lecture and section practice sheets"
+    },
+    "question_bank/{questionId}": {
+      "schema": "QuestionBankItem",
+      "description": "Central question bank repository"
+    },
+    "exam_submissions/{submissionId}": {
+      "schema": "ExamSubmission",
+      "description": "Student online exam grading result record"
+    },
+    "schedule/{scheduleId}": {
+      "schema": "ScheduleItem",
+      "description": "Weekly timetable and schedule for lectures and sections"
+    },
+    "inquiries/{inquiryId}": {
+      "schema": "StudentInquiry",
+      "description": "Direct student question to management with admin answer thread"
+    },
+    "activity_logs/{logId}": {
+      "schema": "ActivityLogItem",
+      "description": "Audit trail log for administrator CRUD modifications"
     },
     "users/{userId}": {
       "schema": "UserAuth",

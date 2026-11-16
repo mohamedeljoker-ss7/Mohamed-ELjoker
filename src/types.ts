@@ -47,6 +47,176 @@ export interface UserSubscription {
   expiresAt: string | number;
 }
 
+export interface LectureItem {
+  id: string;
+  courseId: string;
+  courseTitle?: string;
+  subject?: string;
+  number: number;
+  lectureNumber?: number;
+  title: string;
+  description?: string;
+  youtubeUrl?: string;
+  pdfUrl?: string;
+  createdAt: string;
+}
+
+export interface SectionItem {
+  id: string;
+  courseId: string;
+  courseTitle?: string;
+  subject?: string;
+  number: number;
+  sectionNumber?: number;
+  title: string;
+  description?: string;
+  youtubeUrl?: string;
+  fileUrl?: string;
+  createdAt: string;
+}
+
+export interface OnlineExamQuestion {
+  id: string;
+  questionText: string;
+  question?: string;
+  type: 'multiple_choice' | 'true_false';
+  options: string[];
+  correctAnswerIndex: number;
+  correctAnswer?: number;
+  points: number;
+  explanation?: string;
+}
+
+export interface ExamItem {
+  id: string;
+  courseId: string;
+  courseTitle?: string;
+  subject?: string;
+  number: string;
+  title: string;
+  description?: string;
+  questionsFileUrl?: string;
+  answersFileUrl?: string;
+  questionsPdfUrl?: string;
+  modelAnswerUrl?: string;
+  examDate?: string;
+  createdAt: string;
+  createdBy?: string;
+  isOnlineExam?: boolean;
+  durationMinutes?: number;
+  totalPoints?: number;
+  showResultsImmediately?: boolean;
+  questions?: OnlineExamQuestion[];
+  published?: boolean;
+}
+
+export interface QuestionBankItem {
+  id: string;
+  courseId: string;
+  courseTitle: string;
+  subject?: string;
+  topic?: string;
+  difficulty?: 'easy' | 'medium' | 'hard';
+  questionText: string;
+  question?: string;
+  type: 'multiple_choice' | 'true_false';
+  options: string[];
+  correctAnswerIndex: number;
+  correctAnswer?: number;
+  points: number;
+  explanation?: string;
+  createdAt: string;
+}
+
+export interface ExamSubmission {
+  id: string;
+  studentId: string;
+  studentName: string;
+  studentEmail: string;
+  examId: string;
+  examTitle: string;
+  courseId: string;
+  courseTitle?: string;
+  subject?: string;
+  score: number;
+  totalPoints: number;
+  percentage: number;
+  correctCount?: number;
+  totalQuestions?: number;
+  answers: Record<string, number>;
+  submittedAt: string;
+}
+
+export interface ScheduleItem {
+  id: string;
+  title: string;
+  courseId: string;
+  courseTitle: string;
+  subject?: string;
+  itemType: 'lecture' | 'section' | 'exam';
+  type?: 'lecture' | 'section' | 'exam';
+  dayOfWeek: string;
+  dayOfWeekAr: string;
+  startTime: string;
+  endTime: string;
+  location: string;
+  instructor: string;
+  notes?: string;
+  active: boolean;
+  isActive?: boolean;
+  createdAt?: string;
+}
+
+export interface StudentInquiry {
+  id: string;
+  studentId: string;
+  studentName: string;
+  studentEmail: string;
+  studentPhone?: string;
+  courseId?: string;
+  courseTitle?: string;
+  subject?: string;
+  subjectTitle?: string;
+  category?: 'lecture' | 'section' | 'exam' | 'sheet' | 'general';
+  title: string;
+  question: string;
+  message?: string;
+  status: 'pending' | 'answered';
+  reply?: string;
+  adminReply?: string;
+  repliedBy?: string;
+  repliedAt?: string;
+  createdAt: string;
+}
+
+export interface ActivityLogItem {
+  id: string;
+  adminEmail: string;
+  adminName: string;
+  action: 'create' | 'update' | 'delete' | 'status_change' | 'approve' | 'reject' | 'suspend' | 'reply';
+  targetType: 'lecture' | 'section' | 'exam' | 'sheet' | 'student' | 'schedule' | 'question_bank' | 'notification' | 'inquiry' | 'general';
+  targetTitle: string;
+  details?: string;
+  timestamp: number;
+  date: string;
+}
+
+export interface SheetItem {
+  id: string;
+  courseId: string;
+  courseTitle?: string;
+  subject?: string;
+  sheetType: 'lecture_sheet' | 'section_sheet';
+  type?: 'lecture_sheet' | 'section_sheet';
+  referenceNumber: number;
+  lectureNumber?: number;
+  sectionNumber?: number;
+  title: string;
+  description?: string;
+  fileUrl: string;
+  createdAt: string;
+}
+
 export interface Course {
   id: string;
   titleAr: string;
@@ -58,10 +228,10 @@ export interface Course {
   categoryId: string; // References Category
   grade?: string; // Optional grade code (e.g., prep1, prep2, prep3, sec1, sec2, sec3)
   subject?: string; // Course subject (e.g., العلوم, الرياضيات, الفيزياء)
-  price: number;
+  price?: number;
   discountPrice?: number;
-  duration: string; // e.g. "12 Hours"
-  lessonsCount: number;
+  duration?: string; // e.g. "12 Hours"
+  lessonsCount?: number;
   featured: boolean;
   popular: boolean;
   published: boolean;
@@ -115,6 +285,8 @@ export interface Student {
   phone: string;
   purchasedCourseIds: string[];
   watchedLessonIds?: string[]; // Progress tracking
+  favorites?: string[]; // Bookmarked lecture/section IDs
+  bookmarkedLectureIds?: string[];
   quizGrades?: Record<string, number>; // quizId -> percentage score
   enrollmentDate: string;
   status: 'active' | 'suspended' | 'pending' | 'rejected';
@@ -136,6 +308,8 @@ export interface UserAuth {
   status: 'active' | 'suspended' | 'pending' | 'rejected';
   purchasedCourseIds?: string[];
   watchedLessonIds?: string[];
+  favorites?: string[];
+  bookmarkedLectureIds?: string[];
   quizGrades?: Record<string, number>;
   bio?: string;
   subscription?: UserSubscription;

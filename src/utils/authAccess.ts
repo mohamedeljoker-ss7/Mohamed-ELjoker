@@ -22,92 +22,48 @@ export function isCoursePremium(course: Course | null | undefined): boolean {
 }
 
 /**
- * Verifies access permission for a course.
- * Returns { allowed: true } or { allowed: false, reason: 'not_logged_in' | 'subscription_required' | 'pending_approval' }
+ * Verifies access permission for educational content.
+ * Platform is 100% Free. Access is granted solely based on Administration Account Approval.
+ * Returns { allowed: true } or { allowed: false, reason: 'not_logged_in' | 'pending_approval' | 'rejected' | 'suspended' }
  */
 export function verifyCourseAccess(
   user: UserAuth | Student | null | undefined,
-  course: Course | null | undefined,
-  userOrders?: Order[]
-): { allowed: boolean; reason?: 'not_logged_in' | 'subscription_required' | 'pending_approval' } {
-  if (!course) {
-    return { allowed: false, reason: 'subscription_required' };
-  }
-
-  // 1. If isPremium == false: Allow access normally.
-  if (!isCoursePremium(course)) {
-    return { allowed: true };
-  }
-
-  // 2. If isPremium == true: Check authentication. Must be logged in and not guest.
-  if (!user || ('role' in user && user.role as string === 'guest')) {
+  _course?: Course | null | undefined,
+  _userOrders?: Order[]
+): { allowed: boolean; reason?: 'not_logged_in' | 'subscription_required' | 'pending_approval' | 'rejected' | 'suspended' } {
+  // 1. Not logged in
+  if (!user || ('role' in user && (user.role as string) === 'guest')) {
     return { allowed: false, reason: 'not_logged_in' };
   }
 
-  // Admin and Teacher roles have full access
+  // 2. Admin and Teacher roles have full access
   const isAdminOrTeacher = ('role' in user && (user.role === 'admin' || user.role === 'teacher'));
   if (isAdminOrTeacher) {
     return { allowed: true };
   }
 
-  // Block if account is suspended
+  // 3. Block if account is suspended
   if (user.status === 'suspended') {
-    return { allowed: false, reason: 'subscription_required' };
+    return { allowed: false, reason: 'suspended' };
   }
 
-  // 3. Check if course is directly in purchasedCourseIds (Primary Proof of Access)
-  const isCoursePurchased = Array.isArray(user.purchasedCourseIds) && user.purchasedCourseIds.includes(course.id);
-  if (isCoursePurchased) {
+  // 4. Block if account was rejected
+  if (user.status === 'rejected') {
+    return { allowed: false, reason: 'rejected' };
+  }
+
+  // 5. Account is pending admin approval
+  if (user.status === 'pending' || user.isApproved === false) {
+    return { allowed: false, reason: 'pending_approval' };
+  }
+
+  // 6. Active / Approved student has 100% free access to all content!
+  if (user.status === 'active' || user.isApproved === true) {
     return { allowed: true };
   }
 
-  // 4. Verify student access via Firebase Orders
-  if (Array.isArray(userOrders) && user) {
-    const userEmail = (user.email || '').trim().toLowerCase();
-    const userId = user.id || (user as any).uid;
-    const userPhone = user.phone ? user.phone.replace(/\D/g, '') : '';
-
-    const matchingOrders = userOrders.filter(o => {
-      if (o.courseId !== course.id) return false;
-      const orderEmail = (o.studentEmail || '').trim().toLowerCase();
-      const orderPhone = o.studentPhone ? o.studentPhone.replace(/\D/g, '') : '';
-      return (orderEmail !== '' && orderEmail === userEmail) ||
-             (o.studentId !== '' && (o.studentId === userId || o.studentId === (user as any).uid)) ||
-             (orderPhone !== '' && orderPhone === userPhone);
-    });
-
-    if (matchingOrders.length > 0) {
-      // If there is ANY approved/completed order, allow access immediately
-      const hasApproved = matchingOrders.some(o => {
-        const st = (o.status || '').trim().toLowerCase();
-        return ['approved', 'completed', 'active', 'graded'].includes(st);
-      });
-      if (hasApproved) {
-        return { allowed: true };
-      }
-
-      // If no approved order, check if there is any rejected order
-      const hasRejected = matchingOrders.some(o => {
-        const st = (o.status || '').trim().toLowerCase();
-        return ['rejected', 'مرفوض', 'مرفوضة'].includes(st);
-      });
-      if (hasRejected) {
-        return { allowed: false, reason: 'subscription_required' };
-      }
-
-      // If no approved and no rejected, check if there is any pending order
-      const hasPending = matchingOrders.some(o => {
-        const st = (o.status || '').trim().toLowerCase();
-        return ['pending', 'waiting', 'قيد المراجعة', 'review'].includes(st);
-      });
-      if (hasPending) {
-        return { allowed: false, reason: 'pending_approval' };
-      }
-    }
-  }
-
-  // Access verification failed
-  return { allowed: false, reason: 'subscription_required' };
+  // Default fallback
+  return { allowed: false, reason: 'pending_approval' };
 }
 
 /**

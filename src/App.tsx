@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { Course, Category, Student, NewsItem, Article, UserReview, Message, WebsiteSettings, Order } from './types';
-import { dbService, authService, isAdminEmail } from './firebase';
+import { Course, Category, NewsItem, Article, UserReview, WebsiteSettings, Order } from './types';
+import { dbService, authService, isAdminEmail, firebaseAuth, waitForFirebaseAuth } from './firebase';
 import { LanguageProvider, useLanguage } from './components/LanguageContext';
 import { useTheme } from './components/ThemeContext';
 import { Header } from './components/Header';
@@ -15,9 +15,11 @@ import { triggerFileDownload } from './utils/videoStorage';
 import { doesCourseMatchStudent, doesCourseMatchStudentGrade, ACADEMIC_GRADES, ACADEMIC_SUBJECTS, getGradeName, getCourseDisplayTitle, normalizeGradeCode, getGradeFromCourseOrCategory } from './utils/gradeMatching';
 import { 
   Star, Phone, Send, Info, Award, Calendar, BookOpen, Clock, FileText, CheckCircle2, 
-  MapPin, HelpCircle, ShieldAlert, ArrowLeft, Loader, Play, Download, Check, X, Video, Plus
+  MapPin, HelpCircle, ShieldAlert, ArrowLeft, Loader, Play, Download, Check, X, Video, Plus, Sparkles,
+  Code2, Cpu, ShieldCheck, GraduationCap, Terminal, Globe
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
+import { HERO_IT_UNIVERSITY_IMG, ENG_MOHAMED_AVATAR_IMG } from './utils/platformAssets';
 
 function AcademyApp() {
   const { language, t, direction } = useLanguage();
@@ -32,11 +34,9 @@ function AcademyApp() {
   // Database State (synchronized with Firestore/LocalStorage)
   const [courses, setCourses] = useState<Course[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
-  const [students, setStudents] = useState<Student[]>([]);
   const [articles, setArticles] = useState<Article[]>([]);
   const [news, setNews] = useState<NewsItem[]>([]);
   const [reviews, setReviews] = useState<UserReview[]>([]);
-  const [messages, setMessages] = useState<Message[]>([]);
   const [orders, setOrders] = useState<Order[]>([]);
   const [settings, setSettings] = useState<WebsiteSettings | null>(null);
 
@@ -62,9 +62,10 @@ function AcademyApp() {
   const [isStudentAuthOpen, setIsStudentAuthOpen] = useState<boolean>(false);
   const [authTab, setAuthTab] = useState<'student' | 'teacher'>('student');
   const [studentAuthMode, setStudentAuthMode] = useState<'login' | 'register'>('login');
-  const [studentAuthForm, setStudentAuthForm] = useState({ name: '', email: '', password: '', phone: '', grade: '1prep', department: 'general' });
+  const [studentAuthForm, setStudentAuthForm] = useState({ name: '', email: '', password: '', phone: '', grade: 'year1', department: 'IT' });
   const [studentAuthError, setStudentAuthError] = useState<string>('');
   const [studentAuthSuccess, setStudentAuthSuccess] = useState<string>('');
+  const [studentAccountStatus, setStudentAccountStatus] = useState<string>('');
 
   // Enroll Modal State
   const [isEnrollModalOpen, setIsEnrollModalOpen] = useState<boolean>(false);
@@ -79,32 +80,26 @@ function AcademyApp() {
   // FAQ Accordion Active state
   const [activeFaq, setActiveFaq] = useState<number | null>(null);
 
-  // Fetch initial data
+  // Fetch initial public catalog data
   const fetchData = async () => {
     try {
       setLoading(true);
       const [
-        allCourses, allCategories, allStudents, allArticles, allNews, allReviews, allMessages, allOrders, webSettings
+        allCourses, allCategories, allArticles, allNews, allReviews, webSettings
       ] = await Promise.all([
         dbService.getCourses(),
         dbService.getCategories(),
-        dbService.getStudents(),
         dbService.getArticles(),
         dbService.getNews(),
         dbService.getReviews(),
-        dbService.getMessages(),
-        dbService.getOrders(),
         dbService.getSettings()
       ]);
 
       setCourses(allCourses);
       setCategories(allCategories);
-      setStudents(allStudents);
       setArticles(allArticles);
       setNews(allNews);
       setReviews(allReviews);
-      setMessages(allMessages);
-      setOrders(allOrders);
       setSettings(webSettings);
 
       // Verify active session
@@ -212,30 +207,23 @@ function AcademyApp() {
     }
   }, [courses, selectedCourse]);
 
-  // Guard admin routes and enforce platform authentication
+  // Guard admin routes without blocking public platform views
   useEffect(() => {
-    if (!loading && !isAdminLoggedIn && !isStudentLoggedIn) {
-      setIsStudentAuthOpen(true);
-    }
     if (currentView === 'admin-panel' && !isAdminLoggedIn) {
       if (isStudentLoggedIn) {
         handleNavigate('student-panel');
       } else {
         handleNavigate('home');
+        setAuthTab('teacher');
+        setIsAdminLoginOpen(true);
       }
     }
-  }, [loading, currentView, isAdminLoggedIn, isStudentLoggedIn]);
+  }, [currentView, isAdminLoggedIn, isStudentLoggedIn]);
 
   useEffect(() => {
     fetchData();
     const unsubCourses = dbService.listenToCourses((realtimeCourses) => {
       setCourses(realtimeCourses);
-    });
-    const unsubOrders = dbService.listenToOrders((realtimeOrders) => {
-      setOrders(realtimeOrders);
-    });
-    const unsubMessages = dbService.listenToMessages((realtimeMessages) => {
-      setMessages(realtimeMessages);
     });
     const unsubSettings = dbService.listenToSettings((realtimeSettings) => {
       setSettings(realtimeSettings);
@@ -259,11 +247,36 @@ function AcademyApp() {
     });
     return () => {
       if (unsubCourses) unsubCourses();
-      if (unsubOrders) unsubOrders();
-      if (unsubMessages) unsubMessages();
       if (unsubSettings) unsubSettings();
     };
-  }, [currentView]);
+  }, []);
+
+  // Auth-scoped orders listener (only when authenticated)
+  useEffect(() => {
+    if (!isAdminLoggedIn && !isStudentLoggedIn) {
+      setOrders([]);
+      return;
+    }
+    let cancelled = false;
+    let unsubOrders: (() => void) | undefined;
+
+    (async () => {
+      await waitForFirebaseAuth();
+      if (cancelled) return;
+      if (dbService.isRealFirebase() && !firebaseAuth?.currentUser) {
+        return;
+      }
+      const scopedStudentId = isAdminLoggedIn ? undefined : (firebaseAuth?.currentUser?.uid || authService.getCurrentUser()?.id);
+      unsubOrders = dbService.listenToOrders((realtimeOrders) => {
+        if (!cancelled) setOrders(realtimeOrders);
+      }, scopedStudentId);
+    })();
+
+    return () => {
+      cancelled = true;
+      if (unsubOrders) unsubOrders();
+    };
+  }, [isAdminLoggedIn, isStudentLoggedIn]);
 
   useEffect(() => {
     if (selectedCourse?.id) {
@@ -451,41 +464,51 @@ function AcademyApp() {
     }
     
     try {
+      setStudentAccountStatus('');
       if (studentAuthMode === 'login') {
         const res = await authService.loginUser(email, password);
         if (res.success && res.user) {
           if (res.user.role === 'admin') {
             setIsAdminLoggedIn(true);
             setIsStudentAuthOpen(false);
-            setStudentAuthForm({ name: '', email: '', password: '', phone: '' });
+            setStudentAuthForm({ name: '', email: '', password: '', phone: '', grade: 'year1', department: 'IT' });
             handleNavigate('home');
           } else {
             setIsStudentLoggedIn(true);
             setIsStudentAuthOpen(false);
-            setStudentAuthForm({ name: '', email: '', password: '', phone: '' });
+            setStudentAuthForm({ name: '', email: '', password: '', phone: '', grade: 'year1', department: 'IT' });
             handleNavigate('student-panel');
           }
         } else {
-          setStudentAuthError(res.error || t('خطأ في تسجيل الدخول. تواصل مع الدعم.', 'Authentication failed. Please verify inputs.'));
+          if ((res as any).accountStatus) {
+            setStudentAccountStatus((res as any).accountStatus);
+          }
+          setStudentAuthError(res.error || t('خطأ في تسجيل الدخول. تأكد من صحة البيانات.', 'Authentication failed. Please verify inputs.'));
         }
       } else {
-        // Register Student
+        // Register Student (initially Pending Admin Approval)
         const res = await authService.registerUser(
           name, 
           email, 
           password, 
           'student', 
           phone, 
-          studentAuthForm.grade || '1prep', 
-          studentAuthForm.department || 'general'
+          studentAuthForm.grade || 'year1', 
+          studentAuthForm.department || 'IT'
         );
         if (res.success && res.user) {
           setIsStudentLoggedIn(true);
           setIsStudentAuthOpen(false);
-          setStudentAuthForm({ name: '', email: '', password: '', phone: '', grade: '1prep', department: 'general' });
+          setStudentAuthForm({ name: '', email: '', password: '', phone: '', grade: 'year1', department: 'IT' });
           handleNavigate('student-panel');
         } else {
-          setStudentAuthError(res.error || t('خطأ في التسجيل. قد يكون البريد مسجلاً مسبقاً.', 'Registration failed.'));
+          const msg = res.error || '';
+          if (msg.includes('Pending') || msg.includes('مراجعة') || msg.includes('قيد')) {
+            setStudentAccountStatus('pending');
+            setStudentAuthSuccess(msg);
+          } else {
+            setStudentAuthError(msg || t('خطأ في التسجيل. قد يكون البريد مسجلاً مسبقاً.', 'Registration failed.'));
+          }
         }
       }
     } catch (err: any) {
@@ -526,12 +549,9 @@ function AcademyApp() {
     setSubmittingEnroll(true);
     try {
       const activeStudentUser = authService.getCurrentUser();
-      const isFreeCourse = Boolean(enrollingCourse.isFree);
-      const subExpiresAt = new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString();
       const courseTitle = language === 'ar' ? enrollingCourse.titleAr : enrollingCourse.titleEn;
-      const finalPrice = enrollingCourse.discountPrice || enrollingCourse.price || 0;
 
-      // 1. Create order / subscription request
+      // Submit a 100% Free Course Activation Request for Administration review
       await dbService.addOrder({
         studentId: activeStudentUser?.id || ('stud_' + Date.now()),
         studentName: name,
@@ -539,40 +559,9 @@ function AcademyApp() {
         studentPhone: phone,
         courseId: enrollingCourse.id,
         courseTitle: courseTitle,
-        pricePaid: isFreeCourse ? 0 : finalPrice,
-        status: isFreeCourse ? 'completed' : 'pending'
+        pricePaid: 0,
+        status: 'pending'
       });
-
-      // 2. If it is a free course, update existing student/user profile without creating registration requests
-      if (isFreeCourse) {
-        const activeUser = authService.getCurrentUser();
-        if (activeUser && activeUser.email.toLowerCase() === email.trim().toLowerCase()) {
-          const updatedPurchased = Array.from(new Set([...(activeUser.purchasedCourseIds || []), enrollingCourse.id]));
-          const updatedUser = {
-            ...activeUser,
-            purchasedCourseIds: updatedPurchased,
-            subscription: {
-              active: true,
-              expiresAt: subExpiresAt
-            }
-          };
-          await dbService.updateStudent(activeUser.id, {
-            purchasedCourseIds: updatedPurchased,
-            subscription: { active: true, expiresAt: subExpiresAt }
-          });
-          localStorage.setItem('academy_active_user', JSON.stringify(updatedUser));
-        } else {
-          const allStudents = await dbService.getStudents();
-          const existingStud = allStudents.find(s => (s.email || '').trim().toLowerCase() === email.trim().toLowerCase());
-          if (existingStud) {
-            const updatedPurchased = Array.from(new Set([...(existingStud.purchasedCourseIds || []), enrollingCourse.id]));
-            await dbService.updateStudent(existingStud.id, {
-              purchasedCourseIds: updatedPurchased,
-              subscription: { active: true, expiresAt: subExpiresAt }
-            });
-          }
-        }
-      }
 
       setEnrollSuccess(true);
       setTimeout(() => {
@@ -581,8 +570,8 @@ function AcademyApp() {
         setEnrollForm({ name: '', email: '', phone: '' });
       }, 3500);
     } catch (err: any) {
-      console.error("Enrollment submission failed:", err);
-      alert(language === 'ar' ? "حدث خطأ أثناء إرسال طلب الاشتراك" : "Subscription request failed");
+      console.error("Activation request submission failed:", err);
+      alert(language === 'ar' ? "حدث خطأ أثناء إرسال طلب التفعيل المجاني" : "Activation request failed");
     } finally {
       setSubmittingEnroll(false);
     }
@@ -729,12 +718,12 @@ function AcademyApp() {
   ];
 
   return (
-    <div className="flex min-h-screen flex-col bg-brand-dark text-slate-100 selection:bg-brand-cyan selection:text-brand-dark" style={{ direction }}>
+    <div className="flex min-h-screen flex-col bg-slate-50 dark:bg-[#090d16] text-slate-900 dark:text-slate-100 selection:bg-brand-cyan selection:text-white dark:selection:text-slate-950" style={{ direction }}>
       
       {/* Dynamic Background Mesh Grid */}
       <div className="pointer-events-none fixed inset-0 z-0 opacity-20 grid-bg" />
-      <div className="pointer-events-none fixed top-[-20%] left-[-10%] z-0 h-[600px] w-[600px] rounded-full bg-cyan-900/10 blur-[150px]" />
-      <div className="pointer-events-none fixed bottom-[-10%] right-[-10%] z-0 h-[600px] w-[600px] rounded-full bg-emerald-950/10 blur-[150px]" />
+      <div className="pointer-events-none fixed top-[-20%] left-[-10%] z-0 h-[600px] w-[600px] rounded-full bg-cyan-500/5 dark:bg-cyan-900/10 blur-[150px]" />
+      <div className="pointer-events-none fixed bottom-[-10%] right-[-10%] z-0 h-[600px] w-[600px] rounded-full bg-emerald-500/5 dark:bg-emerald-950/10 blur-[150px]" />
 
       {/* Header component */}
       <Header
@@ -770,66 +759,122 @@ function AcademyApp() {
                 className="pb-20"
               >
                 {/* Hero Section */}
-                <section className="relative overflow-hidden py-20 lg:py-28">
-                  <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 text-center relative z-10">
-                    
-                    {/* IT University tag */}
-                    <span className="inline-flex items-center gap-1.5 rounded-full bg-brand-cyan/10 border border-brand-cyan/20 px-4 py-1.5 text-xs font-bold text-brand-cyan-light backdrop-blur-md mb-6">
-                      🎓 {t('الجامعة التكنولوجية - قسم تكنولوجيا المعلومات (IT)', 'Technological University – IT Department')}
-                    </span>
+                <section className="relative overflow-hidden py-12 lg:py-20">
+                  <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 relative z-10">
+                    <div className="grid grid-cols-1 lg:grid-cols-12 gap-10 items-center">
+                      <div className="lg:col-span-7 text-center lg:text-right ltr:lg:text-left space-y-6">
+                        <p className="text-xs font-mono font-bold uppercase tracking-wider text-brand-cyan">
+                          {t('كلية تكنولوجيا الصناعة والطاقة · قسم تكنولوجيا المعلومات (IT)', 'Faculty of Industry & Energy Technology · IT Dept')}
+                        </p>
 
-                    <h1 className="text-3xl font-black text-white sm:text-5xl lg:text-6xl tracking-tight leading-tight max-w-4xl mx-auto">
-                      {t('الجامعة التكنولوجية', 'Technological University')} <br />
-                      <span className="text-transparent bg-clip-text bg-gradient-to-r from-brand-cyan-light via-blue-400 to-indigo-400">
-                        {t('منصة محمد عبد التواب (قسم IT)', 'Eng/Mohamed abdal tawab Platform (IT Dept)')}
-                      </span>
-                    </h1>
+                        <h1 className="text-3xl font-black text-slate-900 dark:text-white sm:text-5xl tracking-tight leading-[1.15]">
+                          {t('منصة MOHAMED ELJOKER التعليمية', 'MOHAMED ELJOKER IT University LMS')}
+                        </h1>
 
-                    <p className="mx-auto mt-6 max-w-2xl text-slate-300 text-xs sm:text-sm md:text-base leading-relaxed">
-                      {t(
-                        'المنصة الأكاديمية الشاملة لنزول المحاضرات والسكاشن العملية بصيغ PDF والوورد (Word .docx) وغيرها من الملفات لمواد قسم IT الستة: Physics – Python Programming – IT Essentials – Mathematics – Cyber Security – English.',
-                        'The comprehensive university platform for lectures and practical lab sections with PDF, Word (.docx) and materials for the 6 IT subjects: Physics, Python Programming, IT Essentials, Mathematics, Cyber Security, and English.'
-                      )}
-                    </p>
+                        <p className="max-w-2xl mx-auto lg:mx-0 text-slate-600 dark:text-slate-300 text-sm sm:text-base leading-relaxed">
+                          {t(
+                            'منصة جامعية مجانية بالكامل بإشراف Eng/Mohamed abdal tawab لتنظيم المحاضرات والسكاشن العملية (PDF & Word) والامتحانات التفاعلية وبنك الأسئلة لطلاب قسم تكنولوجيا المعلومات.',
+                            '100% Free university learning management system supervised by Eng/Mohamed abdal tawab for IT lectures, lab sections (PDF & Word), interactive exams, and question banks.'
+                          )}
+                        </p>
 
-                    {/* CTAs */}
-                    <div className="mt-10 flex flex-wrap items-center justify-center gap-4">
-                      <button
-                        onClick={() => handleNavigate('courses')}
-                        className="rounded-xl bg-brand-cyan text-brand-dark hover:bg-brand-cyan-light px-7 py-3 text-xs font-bold transition-all shadow-lg shadow-cyan-950/30 cursor-pointer active:scale-95 flex items-center gap-2"
-                      >
-                        <span>📚</span>
-                        <span>{t('المحاضرات والسكاشن المتاحة', 'Browse Lectures & Labs')}</span>
-                      </button>
-                      <button
-                        onClick={() => handleNavigate('teacher')}
-                        className="rounded-xl border border-slate-800 bg-slate-900/60 hover:bg-slate-800/80 px-7 py-3 text-xs font-bold text-slate-300 hover:text-white transition-all cursor-pointer flex items-center gap-2"
-                      >
-                        <span>ℹ️</span>
-                        <span>{t('عن منصة محمد عبد التواب', 'About Eng/Mohamed abdal tawab Platform')}</span>
-                      </button>
+                        {/* 6 Core IT Subjects Quick Filter Strip */}
+                        <div className="flex flex-wrap items-center justify-center lg:justify-start gap-x-4 gap-y-2 text-xs font-bold text-slate-700 dark:text-slate-300 pt-1">
+                          {[
+                            { id: 'Physics', label: 'Physics' },
+                            { id: 'Python Programming', label: 'Python' },
+                            { id: 'IT Essentials', label: 'IT Essentials' },
+                            { id: 'Mathematics', label: 'Mathematics' },
+                            { id: 'Cyber Security', label: 'Cyber Security' },
+                            { id: 'English', label: 'English' }
+                          ].map((subj) => (
+                            <button
+                              key={subj.id}
+                              type="button"
+                              onClick={() => {
+                                setSelectedSubjectFilter(subj.id);
+                                handleNavigate('courses');
+                              }}
+                              className="hover:text-brand-cyan transition-colors cursor-pointer underline decoration-brand-cyan/40 underline-offset-4"
+                            >
+                              {subj.label}
+                            </button>
+                          ))}
+                        </div>
+
+                        {/* CTAs */}
+                        <div className="pt-2 flex flex-wrap items-center justify-center lg:justify-start gap-3">
+                          <button
+                            type="button"
+                            onClick={() => handleNavigate('courses')}
+                            className="rounded-xl bg-brand-cyan text-white dark:text-slate-950 hover:bg-brand-cyan-light px-6 py-3.5 text-xs font-extrabold transition-all shadow-md cursor-pointer flex items-center gap-2"
+                          >
+                            <BookOpen className="h-4 w-4" />
+                            <span>{t('استعراض المقررات والمحاضرات', 'Browse IT Courses & Labs')}</span>
+                          </button>
+                          {isStudentLoggedIn ? (
+                            <button
+                              type="button"
+                              onClick={() => handleNavigate('student-panel')}
+                              className="rounded-xl border border-brand-cyan/40 bg-brand-cyan/10 hover:bg-brand-cyan/20 px-6 py-3.5 text-xs font-bold text-brand-cyan dark:text-brand-cyan-light transition-all cursor-pointer flex items-center gap-2"
+                            >
+                              <GraduationCap className="h-4 w-4" />
+                              <span>{t('فتح لوحة الطالب', 'Open Student Dashboard')}</span>
+                            </button>
+                          ) : (
+                            <button
+                              type="button"
+                              onClick={() => { setAuthTab('student'); setStudentAuthMode('register'); setIsStudentAuthOpen(true); }}
+                              className="rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900/70 hover:border-brand-cyan/50 px-6 py-3.5 text-xs font-bold text-slate-800 dark:text-slate-200 transition-all cursor-pointer flex items-center gap-2"
+                            >
+                              <GraduationCap className="h-4 w-4 text-brand-cyan" />
+                              <span>{t('إنشاء حساب طالب جديد (مجاني)', 'Create Student Account')}</span>
+                            </button>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Hero Editorial Laboratory Visual */}
+                      <div className="lg:col-span-5">
+                        <div className="relative rounded-3xl overflow-hidden border border-slate-200/80 dark:border-slate-800 shadow-2xl bg-slate-900">
+                          <img
+                            src={HERO_IT_UNIVERSITY_IMG}
+                            alt={t('معمل تكنولوجيا المعلومات بالجامعة التكنولوجية', 'Technological University IT Lab')}
+                            className="w-full aspect-[16/10] object-cover"
+                          />
+                          <div className="absolute inset-0 bg-gradient-to-t from-slate-950/85 via-slate-950/20 to-transparent" />
+                          <div className="absolute bottom-4 left-4 right-4 flex items-center justify-between text-xs text-white">
+                            <div>
+                              <p className="font-extrabold">{t('بوابة قسم تكنولوجيا المعلومات', 'IT Department Academic Hub')}</p>
+                              <p className="text-[11px] text-cyan-300 font-mono">Eng/Mohamed abdal tawab · 6 Core Courses</p>
+                            </div>
+                            <span className="text-[11px] font-mono font-bold text-emerald-300">100% FREE</span>
+                          </div>
+                        </div>
+                      </div>
                     </div>
-
                   </div>
                 </section>
 
                 {/* Categories strip */}
-                <section className="py-12 bg-slate-950/20">
+                <section className="py-12 bg-slate-100/70 dark:bg-slate-950/30 border-y border-slate-200/60 dark:border-slate-800/50">
                   <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
-                    <h2 className="text-xl font-bold text-white text-center mb-8">{t('اختر صفك الدراسي للبدء', 'Select Your Grade to Begin')}</h2>
+                    <h2 className="text-xl font-black text-slate-900 dark:text-white text-center mb-8">
+                      {t('تصفح حسب الفرقة الدراسية أو القسم الأكاديمي', 'Select Academic Year or Section')}
+                    </h2>
                     <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-                      {categories.map(cat => (
+                      {categories.map((cat, idx) => (
                         <div
                           key={cat.id}
                           onClick={() => { setSelectedCategoryId(cat.id); handleNavigate('courses'); }}
-                          className="group relative cursor-pointer overflow-hidden rounded-xl glass border border-slate-800/80 p-5 hover:border-brand-cyan/40 transition-all flex items-center justify-between"
+                          className="group relative cursor-pointer overflow-hidden rounded-2xl glass border border-slate-200/80 dark:border-slate-800/80 p-5 hover:border-brand-cyan/40 transition-all flex items-center justify-between"
                         >
                           <div>
-                            <h3 className="font-bold text-white group-hover:text-brand-cyan transition-colors text-sm">{t(cat.nameAr, cat.nameEn)}</h3>
-                            <p className="text-[10px] text-slate-400 mt-1">{t('شروحات واختبارات متكاملة', 'Comprehensive syllabus')}</p>
+                            <h3 className="font-bold text-slate-900 dark:text-white group-hover:text-brand-cyan transition-colors text-sm">{t(cat.nameAr, cat.nameEn)}</h3>
+                            <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-1">{t('محاضرات PDF وسكاشن Word وشيتات', 'PDF Lectures, Word Labs & Sheets')}</p>
                           </div>
-                          <span className="flex h-10 w-10 items-center justify-center rounded-lg bg-brand-cyan/10 text-brand-cyan">
-                            🧪
+                          <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-brand-cyan/10 text-brand-cyan">
+                            {idx % 3 === 0 ? <Terminal className="h-5 w-5" /> : idx % 3 === 1 ? <Cpu className="h-5 w-5" /> : <ShieldCheck className="h-5 w-5" />}
                           </span>
                         </div>
                       ))}
@@ -837,27 +882,30 @@ function AcademyApp() {
                   </div>
                 </section>
 
-                {/* Featured / Popular Courses */}
+                {/* Core IT Department Courses */}
                 <section className="py-16">
                   <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
                     <div className="flex flex-col md:flex-row md:items-end md:justify-between mb-10 gap-4">
                       <div>
-                        <h2 className="text-2xl font-black text-white flex items-center gap-2">
+                        <h2 className="text-2xl font-black text-slate-900 dark:text-white flex items-center gap-2">
                           <BookOpen className="h-6 w-6 text-brand-cyan" />
-                          {t('الكورسات المميزة والأكثر طلباً', 'Featured & Popular Courses')}
+                          {t('مقررات قسم تكنولوجيا المعلومات (IT)', 'Core IT Department Courses')}
                         </h2>
-                        <p className="text-xs text-slate-400 mt-1">{t('سجل الآن لضمان مقعدك والبدء فوراً في مذاكرة المنهج', 'Enroll now to lock in your seat and access instant learning modules')}</p>
+                        <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
+                          {t('جميع المواد متاحة مجاناً للطلاب المعتمدين شاملة المحاضرات والسكاشن والامتحانات', 'All courses are 100% free for approved IT students with lectures, labs, and exams')}
+                        </p>
                       </div>
                       <button
+                        type="button"
                         onClick={() => handleNavigate('courses')}
                         className="text-xs font-bold text-brand-cyan hover:text-brand-cyan-light flex items-center gap-1 cursor-pointer self-start"
                       >
-                        {t('عرض جميع الكورسات', 'View all courses')} &rarr;
+                        {t('عرض جميع المقررات', 'View all courses')} &rarr;
                       </button>
                     </div>
 
                     <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-3">
-                      {courses.slice(0, 3).map(course => (
+                      {courses.filter(c => c.published !== false).slice(0, 6).map(course => (
                         <CourseCard
                           key={course.id}
                           course={course}
@@ -872,37 +920,36 @@ function AcademyApp() {
                   </div>
                 </section>
 
-                {/* Teacher Profile Section (Home) */}
-                <section className="py-16 bg-slate-950/40 relative overflow-hidden">
+                {/* Supervisor Profile Section (Home) */}
+                <section className="py-16 bg-slate-100/70 dark:bg-slate-950/40 relative overflow-hidden">
                   <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 relative z-10">
                     <div className="grid grid-cols-1 lg:grid-cols-2 gap-12 items-center">
                       <div className="relative">
-                        <div className="aspect-square max-w-md mx-auto rounded-3xl overflow-hidden border border-slate-800 glass shadow-2xl relative">
+                        <div className="aspect-square max-w-md mx-auto rounded-3xl overflow-hidden border border-slate-200 dark:border-slate-800 glass shadow-2xl relative">
                           <img
-                            src="https://i.postimg.cc/9FdBHzv0/file-0000000039e471f4b1bca6e21564ec9d.png"
+                            src={ENG_MOHAMED_AVATAR_IMG}
                             alt="Eng/Mohamed abdal tawab"
                             className="w-full h-full object-cover"
-                            referrerPolicy="no-referrer"
                           />
-                          <div className="absolute inset-0 bg-gradient-to-t from-brand-dark via-transparent to-transparent" />
+                          <div className="absolute inset-0 bg-gradient-to-t from-slate-950/90 via-transparent to-transparent" />
                           <div className="absolute bottom-6 left-6 right-6 p-4 rounded-2xl glass-cyan">
-                            <p className="text-sm font-bold text-brand-cyan-light">{t('م. محمد عبد التواب - المشرف الأكاديمي لقسم تكنولوجيا المعلومات IT بالجامعة التكنولوجية', 'Eng/Mohamed abdal tawab – Academic Supervisor, IT Dept, Technological University')}</p>
+                            <p className="text-sm font-bold text-cyan-200">{t('Eng/Mohamed abdal tawab – المشرف الأكاديمي لقسم تكنولوجيا المعلومات IT', 'Eng/Mohamed abdal tawab – Academic Supervisor, IT Dept')}</p>
                           </div>
                         </div>
                       </div>
 
                       <div className="space-y-6">
                         <span className="text-xs font-bold text-brand-cyan font-mono uppercase tracking-wider">{t('الجامعة التكنولوجية - قسم تكنولوجيا المعلومات', 'Technological University - IT Dept')}</span>
-                        <h2 className="text-3xl font-black text-white">{t('م. محمد عبد التواب', 'Eng/Mohamed abdal tawab')}</h2>
+                        <h2 className="text-3xl font-black text-slate-900 dark:text-white">{t('MOHAMED ELJOKER', 'MOHAMED ELJOKER')}</h2>
                         
-                        <p className="text-slate-300 text-xs sm:text-sm leading-relaxed">
+                        <p className="text-slate-600 dark:text-slate-300 text-xs sm:text-sm leading-relaxed">
                           {t(
-                            'تركز منصة محمد عبد التواب على توفير بيئة تعليمية جامعية متكاملة لطلاب قسم تكنولوجيا المعلومات (IT)، من خلال رفع وتنسيق المحاضرات النظرية بصيغ PDF وسلايدز، والسكاشن العملية والتجارب المعملية بصيغ Word (.docx) و PDF لتسهيل أداء التكليفات والتقارير الأسبوعية ومذاكرة المواد التقنية.',
-                            'Eng/Mohamed abdal tawab platform provides a complete academic environment for IT students, delivering theoretical lectures in PDF and practical lab sections in Word (.docx) & PDF for assignments and tech study.'
+                            'تركز منصة MOHAMED ELJOKER التعليمية على توفير بيئة تعليمية جامعية مجانية بالكامل لطلاب قسم تكنولوجيا المعلومات (IT)، من خلال تنظيم ونشر المحاضرات والسكاشن العملية بصيغ PDF و Word والامتحانات وشيتات المادة لتسهيل الاستيعاب والتفوق الدراسي.',
+                            'MOHAMED ELJOKER Educational Platform provides a 100% free academic environment for IT students, delivering lectures, practical labs (PDF & Word), exams, and worksheets for academic excellence.'
                           )}
                         </p>
 
-                        <div className="space-y-3 text-xs text-slate-300">
+                        <div className="space-y-3 text-xs text-slate-700 dark:text-slate-300">
                           {[
                             t('نزول دوري لمحاضرات المواد الستة: Physics, Python, IT Essentials, Math, Cyber Security, English.', 'Regular release of lectures for the 6 core IT subjects: Physics, Python, IT Essentials, Math, Cyber Security, English.'),
                             t('سكاشن عملية وشيتات وتجارب معملية بصيغ Word (.docx) قابلة للتعديل والطباعة.', 'Practical lab sections and assignment sheets in editable Word (.docx) and PDF format.'),
@@ -918,8 +965,9 @@ function AcademyApp() {
                         </div>
 
                         <button
+                          type="button"
                           onClick={() => handleNavigate('teacher')}
-                          className="rounded-xl border border-brand-cyan/20 bg-brand-cyan/5 text-brand-cyan-light px-5 py-2.5 text-xs font-bold hover:bg-brand-cyan hover:text-brand-dark transition-all cursor-pointer"
+                          className="rounded-xl border border-brand-cyan/30 bg-brand-cyan/10 text-brand-cyan dark:text-brand-cyan-light px-5 py-2.5 text-xs font-bold hover:bg-brand-cyan hover:text-white dark:hover:text-slate-950 transition-all cursor-pointer"
                         >
                           {t('اقرأ السيرة الذاتية الكاملة', 'Read Complete Bio & Strategy')}
                         </button>
@@ -931,9 +979,9 @@ function AcademyApp() {
 
 
                 {/* FAQ Section */}
-                <section className="py-16 bg-slate-950/20">
+                <section className="py-16 bg-slate-50 dark:bg-slate-950/20">
                   <div className="mx-auto max-w-4xl px-4 sm:px-6 lg:px-8">
-                    <h2 className="text-2xl font-black text-white text-center mb-10 flex items-center justify-center gap-2">
+                    <h2 className="text-2xl font-black text-slate-900 dark:text-white text-center mb-10 flex items-center justify-center gap-2">
                       <HelpCircle className="h-6 w-6 text-brand-cyan" />
                       {t('الأسئلة الشائعة وإجاباتها', 'Frequently Asked Questions')}
                     </h2>
@@ -942,16 +990,17 @@ function AcademyApp() {
                       {faqs.map((faq, idx) => {
                         const isOpen = activeFaq === idx;
                         return (
-                          <div key={idx} className="rounded-xl border border-slate-800 bg-slate-900/30 overflow-hidden transition-all">
+                          <div key={idx} className="rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900/30 overflow-hidden transition-all shadow-xs">
                             <button
+                              type="button"
                               onClick={() => setActiveFaq(isOpen ? null : idx)}
-                              className="w-full text-right p-4 font-bold text-xs sm:text-sm text-white flex justify-between items-center gap-3 cursor-pointer"
+                              className="w-full text-right ltr:text-left p-4 font-bold text-xs sm:text-sm text-slate-900 dark:text-white flex justify-between items-center gap-3 cursor-pointer"
                             >
                               <span>{t(faq.qAr, faq.qEn)}</span>
-                              <span className="text-brand-cyan font-mono">{isOpen ? '−' : '+'}</span>
+                              <span className="text-brand-cyan font-mono shrink-0">{isOpen ? '−' : '+'}</span>
                             </button>
                             {isOpen && (
-                              <div className="p-4 pt-0 border-t border-slate-800/40 text-xs text-slate-400 leading-relaxed">
+                              <div className="p-4 pt-3 border-t border-slate-200/70 dark:border-slate-800/40 text-xs text-slate-600 dark:text-slate-400 leading-relaxed">
                                 {t(faq.aAr, faq.aEn)}
                               </div>
                             )}
@@ -977,20 +1026,21 @@ function AcademyApp() {
                   
                   {/* Headline */}
                   <div className="text-center max-w-2xl mx-auto mb-10">
-                    <h1 className="text-2xl font-black text-white md:text-4xl">{t('الكورسات والمناهج الدراسية', 'Educational Courses & Curriculums')}</h1>
-                    <p className="text-xs text-slate-400 mt-2">{t('تصفح الكورسات والمناهج لجميع المراحل الدراسية والمواد التعليمية', 'Browse courses by grade level and subject')}</p>
+                    <h1 className="text-2xl font-black text-slate-900 dark:text-white md:text-4xl">{t('الكورسات والمناهج الدراسية', 'Educational Courses & Curriculums')}</h1>
+                    <p className="text-xs text-slate-600 dark:text-slate-400 mt-2">{t('تصفح الكورسات والمناهج لجميع المراحل الدراسية والمواد التعليمية', 'Browse courses by grade level and subject')}</p>
                   </div>
 
                   {/* Filters Bar: Grade Tabs + Subject Filter */}
-                  <div className="flex flex-col md:flex-row items-center justify-between gap-4 mb-8 bg-slate-900/40 p-4 rounded-2xl border border-slate-800/80">
+                  <div className="flex flex-col md:flex-row items-center justify-between gap-4 mb-8 bg-white dark:bg-slate-900/40 p-4 rounded-2xl border border-slate-200 dark:border-slate-800/80 shadow-xs">
                     {/* Grade Tabs */}
                     <div className="flex flex-wrap items-center justify-center md:justify-start gap-1.5 w-full md:w-auto">
                       <button
+                        type="button"
                         onClick={() => setSelectedCategoryId('all')}
                         className={`rounded-xl px-3.5 py-1.5 text-xs font-bold transition-all cursor-pointer ${
                           selectedCategoryId === 'all' 
-                            ? 'bg-brand-cyan text-brand-dark shadow-md shadow-cyan-950/20' 
-                            : 'bg-slate-900 border border-slate-800 text-slate-300 hover:text-white'
+                            ? 'bg-brand-cyan text-white dark:text-slate-950 shadow-sm' 
+                            : 'bg-slate-100 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white'
                         }`}
                       >
                         {t('جميع الصفوف', 'All Grades')}
@@ -998,11 +1048,12 @@ function AcademyApp() {
                       {ACADEMIC_GRADES.map(g => (
                         <button
                           key={g.id}
+                          type="button"
                           onClick={() => setSelectedCategoryId(g.id)}
                           className={`rounded-xl px-3.5 py-1.5 text-xs font-bold transition-all cursor-pointer ${
                             selectedCategoryId === g.id 
-                              ? 'bg-brand-cyan text-brand-dark shadow-md shadow-cyan-950/20' 
-                              : 'bg-slate-900 border border-slate-800 text-slate-300 hover:text-white'
+                              ? 'bg-brand-cyan text-white dark:text-slate-950 shadow-sm' 
+                              : 'bg-slate-100 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white'
                           }`}
                         >
                           {t(g.nameAr, g.nameEn)}
@@ -1012,11 +1063,11 @@ function AcademyApp() {
 
                     {/* Subject Filter Dropdown */}
                     <div className="flex items-center gap-2 w-full md:w-auto justify-end">
-                      <span className="text-xs text-slate-400 font-semibold whitespace-nowrap">{t('المادة:', 'Subject:')}</span>
+                      <span className="text-xs text-slate-600 dark:text-slate-400 font-semibold whitespace-nowrap">{t('المادة:', 'Subject:')}</span>
                       <select
                         value={selectedSubjectFilter}
                         onChange={e => setSelectedSubjectFilter(e.target.value)}
-                        className="rounded-xl bg-slate-900 border border-slate-800 px-3 py-1.5 text-xs text-white focus:outline-none focus:border-brand-cyan"
+                        className="rounded-xl bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 px-3 py-1.5 text-xs text-slate-900 dark:text-white focus:outline-none focus:border-brand-cyan"
                       >
                         <option value="all">{t('جميع المواد', 'All Subjects')}</option>
                         {ACADEMIC_SUBJECTS.map(s => (
@@ -1031,9 +1082,9 @@ function AcademyApp() {
                   {/* Course grid */}
                   {filteredCourses.length === 0 ? (
                     <div className="rounded-2xl glass p-12 text-center max-w-md mx-auto">
-                      <HelpCircle className="h-10 w-10 text-slate-500 mx-auto mb-3" />
-                      <p className="font-bold text-white mb-1">{t('لا توجد كورسات حالياً', 'No courses currently available')}</p>
-                      <p className="text-xs text-slate-400">{t('جرب البحث بكلمات أخرى أو تغيير القسم.', 'Try searching for other keywords or categories.')}</p>
+                      <HelpCircle className="h-10 w-10 text-slate-400 dark:text-slate-500 mx-auto mb-3" />
+                      <p className="font-bold text-slate-900 dark:text-white mb-1">{t('لا توجد كورسات حالياً', 'No courses currently available')}</p>
+                      <p className="text-xs text-slate-500 dark:text-slate-400">{t('جرب البحث بكلمات أخرى أو تغيير القسم.', 'Try searching for other keywords or categories.')}</p>
                     </div>
                   ) : (
                     <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-3">
@@ -1085,25 +1136,25 @@ function AcademyApp() {
                     onClick={() => handleNavigate('courses')}
                     className="mb-6 flex items-center gap-1 text-xs font-bold text-brand-cyan hover:text-brand-cyan-light transition-all cursor-pointer"
                   >
-                    <ArrowLeft className="h-4 w-4" />
-                    <span>{t('العودة للكورسات والمناهج', 'Back to science courses')}</span>
+                    <ArrowLeft className="h-4 w-4 rtl:rotate-180" />
+                    <span>{t('العودة لمقررات قسم IT', 'Back to IT courses')}</span>
                   </button>
 
                   <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
                     
                     {/* Left side (Details, video, attachments) */}
-                    <div className="lg:col-span-2 space-y-6">
+                    <div className="lg:col-span-2 space-y-6 min-w-0">
                       
                       {/* Video Player placeholder */}
-                      <div className="rounded-2xl border border-slate-800 bg-slate-950 overflow-hidden aspect-video relative shadow-2xl">
+                      <div className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-slate-950 overflow-hidden aspect-video relative shadow-xl">
                         <img 
-                          src={selectedCourse.bannerUrl || selectedCourse.thumbnailUrl} 
+                          src={selectedCourse.bannerUrl || selectedCourse.thumbnailUrl || HERO_IT_UNIVERSITY_IMG} 
                           alt="Banner" 
                           className="w-full h-full object-cover opacity-60"
-                          referrerPolicy="no-referrer"
                         />
                         <div className="absolute inset-0 bg-slate-950/30 flex items-center justify-center">
                           <button 
+                            type="button"
                             onClick={() => {
                               const activeUser = authService.getCurrentUser();
                               const access = verifyCourseAccess(activeUser, selectedCourse, orders);
@@ -1119,27 +1170,27 @@ function AcademyApp() {
                               if (selectedCourse.videoUrl) {
                                 setActiveVideoModalUrl(selectedCourse.videoUrl);
                               } else {
-                                triggerEnroll(selectedCourse);
+                                handleNavigate('student-panel');
                               }
                             }}
-                            className="h-16 w-16 rounded-full bg-brand-cyan text-brand-dark flex items-center justify-center hover:scale-110 hover:bg-brand-cyan-light transition-all shadow-lg shadow-cyan-950/50 cursor-pointer"
-                            title={t('مشاهدة العرض التوضيحي', 'Watch Demo')}
+                            className="h-16 w-16 rounded-full bg-brand-cyan text-white dark:text-slate-950 flex items-center justify-center hover:scale-110 hover:bg-brand-cyan-light transition-all shadow-lg cursor-pointer"
+                            title={t('تشغيل المحاضرة التعريفية', 'Play Course Intro')}
                           >
-                            <Play className="h-6 w-6 fill-brand-dark ml-1" />
+                            <Play className="h-6 w-6 fill-current ml-1" />
                           </button>
                         </div>
-                        <div className="absolute bottom-4 right-4 bg-brand-dark/80 px-3 py-1.5 rounded-xl text-[10px] text-brand-cyan-light font-bold border border-brand-cyan/20">
-                          {t('شاهد فيديو الشرح للمادة المقدمة', 'Watch promo video intro')}
+                        <div className="absolute bottom-4 right-4 bg-slate-950/85 px-3 py-1.5 rounded-xl text-[10px] text-cyan-300 font-bold border border-cyan-500/25">
+                          {t('تشغيل الشرح أو الدخول للوحة الطالب', 'Play Intro or Open Student Hub')}
                         </div>
                       </div>
 
                       {/* Info Card */}
                       <div className="rounded-2xl glass p-6 space-y-4">
-                        <h1 className="text-xl font-black text-white sm:text-2xl">{t(selectedCourse.titleAr, selectedCourse.titleEn)}</h1>
+                        <h1 className="text-xl font-black text-slate-900 dark:text-white sm:text-2xl">{t(selectedCourse.titleAr, selectedCourse.titleEn)}</h1>
                         
-                        <div className="flex flex-wrap items-center gap-4 text-xs text-slate-400">
-                          <span className="font-bold text-brand-cyan-light bg-brand-cyan/10 px-2.5 py-1 rounded">
-                            {t('الصف الدراسي الخاص', 'Grade level')}
+                        <div className="flex flex-wrap items-center gap-4 text-xs text-slate-600 dark:text-slate-400 tabular-nums">
+                          <span className="font-bold text-brand-cyan dark:text-brand-cyan-light">
+                            {getGradeName(selectedCourse.grade, language)}
                           </span>
                           <span className="flex items-center gap-1">
                             <Clock className="h-4 w-4 text-brand-cyan" />
@@ -1147,37 +1198,36 @@ function AcademyApp() {
                           </span>
                           <span className="flex items-center gap-1">
                             <BookOpen className="h-4 w-4 text-brand-cyan" />
-                            {selectedCourse.lessonsCount} {t('درس تعليمي', 'Lessons')}
+                            {selectedCourse.lessonsCount} {t('محاضرة وسكشن', 'Lectures & Labs')}
                           </span>
                         </div>
 
-                        <p className="text-xs sm:text-sm text-slate-300 leading-relaxed pt-2 border-t border-slate-800/60">
+                        <p className="text-xs sm:text-sm text-slate-600 dark:text-slate-300 leading-relaxed pt-2 border-t border-slate-200 dark:border-slate-800/60">
                           {t(selectedCourse.descriptionAr, selectedCourse.descriptionEn)}
                         </p>
                       </div>
 
                       {/* Course Curriculum preview */}
                       <div className="rounded-2xl glass p-6 space-y-4">
-                        <h3 className="font-bold text-white text-sm">{t('محتوى الكورس وخطة الدراسة', 'Syllabus & Core Outline')}</h3>
+                        <h3 className="font-bold text-slate-900 dark:text-white text-sm">{t('محتوى المقرر والوحدات الدراسية', 'Course Syllabus & Units')}</h3>
                         
                         <div className="space-y-2 text-xs">
                           {selectedCourse.units && selectedCourse.units.length > 0 ? (
                             selectedCourse.units.map((unit, index) => (
-                              <div key={unit.id || index} className="p-3.5 rounded-xl border border-slate-800 bg-slate-900/40 space-y-2">
-                                <div className="flex items-center justify-between">
-                                  <p className="font-bold text-white text-xs">{unit.title}</p>
-                                  <span className="text-brand-cyan font-bold font-mono text-[10px]">الوحدة #{index + 1}</span>
+                              <div key={unit.id || index} className="p-3.5 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900/40 space-y-2">
+                                <div className="flex items-center justify-between gap-2">
+                                  <p className="font-bold text-slate-900 dark:text-white text-xs">{unit.title}</p>
+                                  <span className="text-brand-cyan font-bold font-mono text-[10px] shrink-0">{t(`الوحدة #${index + 1}`, `Unit #${index + 1}`)}</span>
                                 </div>
-                                {unit.description && <p className="text-[11px] text-slate-400">{unit.description}</p>}
+                                {unit.description && <p className="text-[11px] text-slate-500 dark:text-slate-400">{unit.description}</p>}
                                 <div className="space-y-1 pt-1">
                                   {unit.lessons?.map((lsn, lIdx) => (
-                                    <div key={lsn.id || lIdx} className="flex items-center justify-between py-1.5 px-2.5 rounded-lg bg-slate-950/60 text-[11px]">
-                                      <span className="text-slate-200 font-medium truncate">{lsn.title}</span>
-                                      <div className="flex items-center gap-1.5 shrink-0">
-                                        {lsn.wordUrl && <span className="px-1.5 py-0.5 rounded bg-blue-500/20 border border-blue-500/30 text-blue-400 text-[9px] font-bold">DOCX</span>}
-                                        {lsn.pdfUrl && <span className="px-1.5 py-0.5 rounded bg-red-500/20 border border-red-500/30 text-red-400 text-[9px] font-bold">PDF</span>}
-                                        {lsn.isSection && <span className="px-1.5 py-0.5 rounded bg-amber-500/20 border border-amber-500/30 text-amber-300 text-[9px] font-bold">معمل عملي</span>}
-                                        <span className="text-slate-400 font-mono text-[10px]">{lsn.duration}</span>
+                                    <div key={lsn.id || lIdx} className="flex items-center justify-between gap-2 py-1.5 px-2.5 rounded-lg bg-white dark:bg-slate-950/60 border border-slate-200/70 dark:border-slate-800/60 text-[11px]">
+                                      <span className="text-slate-800 dark:text-slate-200 font-medium truncate">{lsn.title}</span>
+                                      <div className="flex items-center gap-1.5 shrink-0 font-mono text-[10px]">
+                                        {lsn.wordUrl && <span className="text-blue-600 dark:text-blue-400 font-bold">DOCX</span>}
+                                        {lsn.pdfUrl && <span className="text-red-600 dark:text-red-400 font-bold">PDF</span>}
+                                        <span className="text-slate-500 dark:text-slate-400 tabular-nums">{lsn.duration}</span>
                                       </div>
                                     </div>
                                   ))}
@@ -1185,7 +1235,7 @@ function AcademyApp() {
                               </div>
                             ))
                           ) : (
-                            <p className="text-xs text-slate-400">{t('المحاضرات والسكاشن العملية متاحة بالكامل للطلاب المشتركين.', 'Lectures and practical sections available to enrolled students.')}</p>
+                            <p className="text-xs text-slate-500 dark:text-slate-400">{t('المحاضرات والسكاشن العملية متاحة بالكامل للطلاب المعتمدين.', 'Lectures and practical sections available to approved students.')}</p>
                           )}
                         </div>
                       </div>
@@ -1193,7 +1243,7 @@ function AcademyApp() {
                       {/* Attachments / PDFs */}
                       {(selectedCourse.pdfUrl || (selectedCourse.attachments && selectedCourse.attachments.length > 0)) && (
                         <div className="rounded-2xl glass p-6 space-y-3">
-                          <h3 className="font-bold text-white text-sm">{t('مذكرات الشرح وملفات التحميل المرفقة', 'Worksheets & Downloadable PDFs')}</h3>
+                          <h3 className="font-bold text-slate-900 dark:text-white text-sm">{t('ملفات المنهج والمذكرات المرفقة', 'Course Notes & Downloadable PDFs')}</h3>
                           
                           <div className="space-y-2">
                             {selectedCourse.pdfUrl && (
@@ -1213,9 +1263,9 @@ function AcademyApp() {
                                   }
                                   triggerFileDownload(selectedCourse.pdfUrl, selectedCourse.titleAr || 'syllabus.pdf');
                                 }}
-                                className="w-full flex items-center justify-between p-3 rounded-xl bg-brand-cyan/5 border border-brand-cyan/20 text-xs text-brand-cyan-light hover:bg-brand-cyan/10 transition-all cursor-pointer text-left"
+                                className="w-full flex items-center justify-between p-3 rounded-xl bg-brand-cyan/10 border border-brand-cyan/25 text-xs text-brand-cyan dark:text-brand-cyan-light hover:bg-brand-cyan/15 transition-all cursor-pointer text-right ltr:text-left"
                               >
-                                <span className="font-bold">{t('تحميل مذكرة المنهج الكاملة والملخصات PDF', 'Download Syllabus Revision Booklet PDF')}</span>
+                                <span className="font-bold">{t('تحميل ملف المنهج الشامل PDF', 'Download Complete Syllabus PDF')}</span>
                                 <Download className="h-4 w-4 shrink-0" />
                               </button>
                             )}
@@ -1238,10 +1288,10 @@ function AcademyApp() {
                                   }
                                   triggerFileDownload(attachment, 'course_attachment.pdf');
                                 }}
-                                className="w-full flex items-center justify-between p-3 rounded-xl border border-slate-800 text-xs text-slate-300 bg-slate-900/10 hover:border-brand-cyan/20 transition-all cursor-pointer text-left"
+                                className="w-full flex items-center justify-between p-3 rounded-xl border border-slate-200 dark:border-slate-800 text-xs text-slate-700 dark:text-slate-300 bg-slate-50 dark:bg-slate-900/20 hover:border-brand-cyan/30 transition-all cursor-pointer text-right ltr:text-left gap-2"
                               >
-                                <span>{attachment.split('/').pop()?.split('?')[0] || attachment}</span>
-                                <span className="text-[10px] text-slate-500 font-mono">PDF Booklet</span>
+                                <span className="truncate">{attachment.split('/').pop()?.split('?')[0] || attachment}</span>
+                                <span className="text-[10px] text-slate-500 font-mono shrink-0">PDF / DOCX</span>
                               </button>
                             ))}
                           </div>
@@ -1250,39 +1300,23 @@ function AcademyApp() {
 
                     </div>
 
-                    {/* Right side (Purchase / teacher details card) */}
+                    {/* Right side (100% Free Access & Supervisor details card) */}
                     <div className="space-y-6">
                       
-                      {/* Price card */}
-                      <div className="rounded-2xl border border-slate-800 bg-slate-950/60 p-6 space-y-5 text-center">
+                      {/* Access card */}
+                      <div className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950/60 p-6 space-y-5 text-center shadow-sm">
                         <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500 block">
-                          {t('قيمة الاشتراك بالدورة الدراسية', 'Syllabus Enrollment Fee')}
+                          {t('إتاحة المقرر الأكاديمي', 'Academic Course Access')}
                         </span>
                         
-                        <div className="flex flex-col items-center justify-center">
-                          {selectedCourse.isFree ? (
-                            <span className="text-3xl font-black text-emerald-400 font-mono">
-                              {t('مجاني', 'Free')}
-                            </span>
-                          ) : (selectedCourse.discountPrice !== undefined && selectedCourse.discountPrice !== null && selectedCourse.discountPrice < selectedCourse.price) ? (
-                            <>
-                              <div className="flex items-center gap-2 mb-1">
-                                <span className="text-sm text-slate-500 line-through font-mono">
-                                  {language === 'ar' ? `${selectedCourse.price} ج.م` : `${selectedCourse.price} EGP`}
-                                </span>
-                                <span className="rounded bg-rose-500/20 px-2 py-0.5 text-xs font-bold text-rose-400 border border-rose-500/30">
-                                  -{Math.round(((selectedCourse.price - selectedCourse.discountPrice) / selectedCourse.price) * 100)}%
-                                </span>
-                              </div>
-                              <span className="text-3xl font-black text-brand-cyan-light font-mono">
-                                {language === 'ar' ? `${selectedCourse.discountPrice} ج.م` : `${selectedCourse.discountPrice} EGP`}
-                              </span>
-                            </>
-                          ) : (
-                            <span className="text-3xl font-black text-white font-mono">
-                              {language === 'ar' ? `${selectedCourse.price} ج.م` : `${selectedCourse.price} EGP`}
-                            </span>
-                          )}
+                        <div className="flex flex-col items-center justify-center text-center">
+                          <span className="text-2xl font-black text-brand-cyan dark:text-brand-cyan-light font-mono flex items-center justify-center gap-1.5">
+                            <Sparkles className="h-5 w-5 text-brand-cyan" />
+                            {t('مجاني 100%', '100% Free')}
+                          </span>
+                          <span className="text-[11px] text-slate-500 dark:text-slate-400 mt-1">
+                            {t('جميع المحاضرات والسكاشن متاحة مجاناً للطلاب المعتمدين', 'All lectures & lab files are completely free for approved students')}
+                          </span>
                         </div>
 
                         {(() => {
@@ -1291,13 +1325,11 @@ function AcademyApp() {
                             return (
                                 <button
                                   type="button"
-                                  onClick={() => {
-                                    window.scrollTo({ top: 400, behavior: 'smooth' });
-                                  }}
-                                  className="w-full rounded-xl bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 py-3 text-xs font-bold transition-all shadow-lg flex items-center justify-center gap-2 cursor-pointer"
+                                  onClick={() => handleNavigate('student-panel')}
+                                  className="w-full rounded-xl bg-emerald-500/15 text-emerald-700 dark:text-emerald-400 border border-emerald-500/30 py-3 text-xs font-bold transition-all shadow-xs flex items-center justify-center gap-2 cursor-pointer"
                                 >
                                   <CheckCircle2 className="h-4 w-4 shrink-0" />
-                                  <span>✅ {t('تم تفعيل المادة (تحميل المحاضرات والسكاشن متاح)', 'Activated (Lectures & Lab Files Unlocked)')}</span>
+                                  <span>{t('فتح المقرر في لوحة الطالب', 'Open in Student Hub')}</span>
                                 </button>
                               );
                             }
@@ -1306,45 +1338,45 @@ function AcademyApp() {
                                 <button
                                   type="button"
                                   disabled
-                                  className="w-full rounded-xl bg-amber-500/20 text-amber-300 border border-amber-500/30 py-3 text-xs font-bold transition-all shadow-lg flex items-center justify-center gap-2 cursor-default"
+                                  className="w-full rounded-xl bg-amber-500/15 text-amber-700 dark:text-amber-300 border border-amber-500/30 py-3 text-xs font-bold transition-all flex items-center justify-center gap-2 cursor-default"
                                 >
                                   <Clock className="h-4 w-4 shrink-0" />
-                                  <span>⏳ {t('طلب التفعيل قيد المراجعة الأكاديمية', 'Activation Pending Review')}</span>
+                                  <span>{t('حسابك قيد المراجعة الأكاديمية', 'Account Pending Review')}</span>
                                 </button>
                               );
                             }
                             return (
                               <button
+                                type="button"
                                 onClick={(e) => triggerEnroll(selectedCourse, e)}
-                                className="w-full rounded-xl bg-brand-cyan text-brand-dark hover:bg-brand-cyan-light py-3 text-xs font-bold transition-all shadow-lg shadow-cyan-950/20 cursor-pointer active:scale-95 flex items-center justify-center gap-2"
+                                className="w-full rounded-xl bg-brand-cyan text-white dark:text-slate-950 hover:bg-brand-cyan-light py-3 text-xs font-bold transition-all shadow-md cursor-pointer active:scale-95 flex items-center justify-center gap-2"
                               >
-                                <span>📥</span>
-                                <span>{t('طلب تفعيل المادة وتحميل المحاضرات والسكاشن', 'Request Course Activation & File Access')}</span>
+                                <span>{t('طلب تفعيل الوصول المجاني للمادة', 'Request Free Course Access')}</span>
                               </button>
                             );
                           })()}
 
-                          <div className="space-y-2 text-[11px] text-slate-400 text-right ltr:text-left">
-                            <p>• {t('تفعيل فوري لتحميل ملفات المحاضرات (PDF) والسكاشن (Word)', 'Instant access to all lecture PDFs and lab Word sheets')}</p>
+                          <div className="space-y-2 text-[11px] text-slate-600 dark:text-slate-400 text-right ltr:text-left">
+                            <p>• {t('تفعيل مجاني لتحميل ملفات المحاضرات (PDF) والسكاشن (Word)', 'Free access to lecture PDFs and lab Word sheets')}</p>
                             <p>• {t('إشراف أكاديمي مباشر من Eng/Mohamed abdal tawab', 'Academic supervision by Eng/Mohamed abdal tawab')}</p>
-                            <p>• {t('قسم الشيتات والتكليفات المعملية ونماذج الامتحانات السابقة', 'Weekly lab sheets, assignments, and past exams archive')}</p>
+                            <p>• {t('قسم الشيتات والامتحانات التفاعلية وبنك الأسئلة', 'Weekly lab sheets, interactive exams & question bank')}</p>
                           </div>
                         </div>
 
                       {/* Instructor details short */}
                       <div className="rounded-2xl glass p-5 text-xs text-center space-y-3">
-                        <div className="h-14 w-14 rounded-full overflow-hidden border border-slate-800 mx-auto bg-slate-900">
+                        <div className="h-14 w-14 rounded-full overflow-hidden border border-slate-200 dark:border-slate-800 mx-auto bg-slate-100 dark:bg-slate-900">
                           <img 
-                            src="https://i.postimg.cc/9FdBHzv0/file-0000000039e471f4b1bca6e21564ec9d.png" 
-                            alt="Teacher" 
+                            src={ENG_MOHAMED_AVATAR_IMG} 
+                            alt="Eng/Mohamed abdal tawab" 
                             className="w-full h-full object-cover"
                           />
                         </div>
                         <div>
-                          <p className="font-bold text-white text-sm">{selectedCourse.teacherName}</p>
-                          <p className="text-[10px] text-brand-cyan-light mt-0.5">{t('الجامعة التكنولوجية - قسم تكنولوجيا المعلومات IT', 'Technological University - IT Department')}</p>
+                          <p className="font-bold text-slate-900 dark:text-white text-sm">{selectedCourse.teacherName}</p>
+                          <p className="text-[10px] text-brand-cyan dark:text-brand-cyan-light mt-0.5">{t('الجامعة التكنولوجية - قسم تكنولوجيا المعلومات IT', 'Technological University - IT Department')}</p>
                         </div>
-                        <p className="text-slate-400 leading-relaxed text-[11px]">
+                        <p className="text-slate-600 dark:text-slate-400 leading-relaxed text-[11px]">
                           {t('يقدم المهندس محمد عبد التواب كافة المحاضرات وسكاشن العملي والشيتات التخصصية لتمكين طلاب قسم IT من التفوق والتميز الدراسي والعملي.', 'Eng/Mohamed abdal tawab provides comprehensive lectures, lab sections, and practice sheets to empower IT students to achieve academic and practical excellence.')}
                         </p>
                       </div>
@@ -1384,31 +1416,31 @@ function AcademyApp() {
                 <div className="mx-auto max-w-4xl px-4 sm:px-6 lg:px-8">
                   <div className="rounded-2xl glass p-6 md:p-10 space-y-8">
                     
-                    <div className="flex flex-col md:flex-row gap-8 items-center border-b border-slate-800/80 pb-8">
-                      <div className="aspect-square h-40 w-40 shrink-0 rounded-3xl overflow-hidden border border-slate-800 bg-slate-900 shadow-2xl">
+                    <div className="flex flex-col md:flex-row gap-8 items-center border-b border-slate-200 dark:border-slate-800/80 pb-8">
+                      <div className="aspect-square h-40 w-40 shrink-0 rounded-3xl overflow-hidden border border-slate-200 dark:border-slate-800 bg-slate-100 dark:bg-slate-900 shadow-xl">
                         <img 
-                          src="https://i.postimg.cc/9FdBHzv0/file-0000000039e471f4b1bca6e21564ec9d.png" 
+                          src={ENG_MOHAMED_AVATAR_IMG} 
                           alt="Eng/Mohamed abdal tawab" 
                           className="w-full h-full object-cover"
                         />
                       </div>
                       <div className="space-y-2 text-center md:text-right ltr:text-left">
                         <span className="text-[10px] font-bold text-brand-cyan uppercase tracking-wider font-mono">Technological University Platform</span>
-                        <h1 className="text-2xl font-black text-white sm:text-3xl">{t('منصة محمد عبد التواب', 'Eng/Mohamed abdal tawab Platform')}</h1>
-                        <p className="text-sm text-brand-cyan-light font-bold font-arabic">{t('الجامعة التكنولوجية - قسم تكنولوجيا المعلومات (IT) | منصة المحاضرات والسكاشن', 'Technological University - IT Department | Lectures & Labs Hub')}</p>
+                        <h1 className="text-2xl font-black text-slate-900 dark:text-white sm:text-3xl">{t('منصة MOHAMED ELJOKER التعليمية', 'MOHAMED ELJOKER Platform')}</h1>
+                        <p className="text-sm text-brand-cyan dark:text-brand-cyan-light font-bold font-arabic">{t('الجامعة التكنولوجية - قسم تكنولوجيا المعلومات (IT) | منصة المحاضرات والسكاشن', 'Technological University - IT Department | Lectures & Labs Hub')}</p>
                       </div>
                     </div>
 
-                    <div className="space-y-6 text-xs sm:text-sm text-slate-300 leading-relaxed">
-                      <h3 className="text-lg font-bold text-white flex items-center gap-2">
+                    <div className="space-y-6 text-xs sm:text-sm text-slate-600 dark:text-slate-300 leading-relaxed">
+                      <h3 className="text-lg font-bold text-slate-900 dark:text-white flex items-center gap-2">
                         <Award className="h-5 w-5 text-brand-cyan" />
                         {t('عن المنصة والأهداف الأكاديمية لقسم IT', 'Platform Vision & IT Academic Goals')}
                       </h3>
 
                       <p>
                         {t(
-                          'تأسست منصة محمد عبد التواب لتكون المرجع الأكاديمي الرقمي المتكامل لطلاب الجامعة التكنولوجية بقسم تكنولوجيا المعلومات (Information Technology). تهدف المنصة إلى تيسير وصول الطلاب إلى المحاضرات النظرية بصيغ PDF وسلايدز، وتوفير شيتات السكاشن المعملية والتقارير الأسبوعية بصيغ Word (.docx) و PDF لتسهيل التعديل والحل والطباعة.',
-                          'Eng/Mohamed abdal tawab platform was built as the integrated digital academic reference for Technological University IT students, facilitating access to lectures in PDF and lab section sheets in editable Word (.docx) & PDF.'
+                          'تأسست منصة MOHAMED ELJOKER التعليمية لتكون المرجع الأكاديمي الرقمي المجاني المتكامل لطلاب الجامعة التكنولوجية بقسم تكنولوجيا المعلومات (Information Technology). تهدف المنصة إلى تنظيم ونشر المحاضرات والسكاشن بصيغ PDF و Word والامتحانات وشيتات المادة لتسهيل الاستيعاب والتفوق الدراسي.',
+                          'MOHAMED ELJOKER Platform was built as the integrated digital academic reference for Technological University IT students, facilitating access to lectures, practical lab sections, exams, and sheets.'
                         )}
                       </p>
 
@@ -1420,13 +1452,13 @@ function AcademyApp() {
                       </p>
 
                       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 pt-4">
-                        <div className="rounded-xl border border-slate-800 bg-slate-950/40 p-4">
-                          <p className="font-bold text-white mb-2">📄 {t('محاضرات وسلايدز PDF معتمدة', 'Accredited PDF Lectures & Slides')}</p>
-                          <p className="text-xs text-slate-400">{t('ملفات مذكرات وعروض تقديمية واضحة وشاملة لجميع المحاضرات النظرية مع إمكانية القراءة والتحميل الفوري.', 'High quality lecture notes and slides for all theoretical courses with instant preview and download.')}</p>
+                        <div className="rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950/40 p-4">
+                          <p className="font-bold text-slate-900 dark:text-white mb-2">📄 {t('محاضرات وسلايدز PDF معتمدة', 'Accredited PDF Lectures & Slides')}</p>
+                          <p className="text-xs text-slate-600 dark:text-slate-400">{t('ملفات مذكرات وعروض تقديمية واضحة وشاملة لجميع المحاضرات النظرية مع إمكانية القراءة والتحميل الفوري.', 'High quality lecture notes and slides for all theoretical courses with instant preview and download.')}</p>
                         </div>
-                        <div className="rounded-xl border border-slate-800 bg-slate-950/40 p-4">
-                          <p className="font-bold text-white mb-2">📝 {t('سكاشن وشيتات Word (.docx)', 'Practical Word Lab Sheets')}</p>
-                          <p className="text-xs text-slate-400">{t('ملفات شيتات السكاشن العملية وتجارب المعامل بصيغ مايكروسوفت وورد قابلة للتعديل والحل المباشر والتسليم.', 'Practical lab sheets and assignment templates in Word format, ready for direct editing, solving, and submission.')}</p>
+                        <div className="rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950/40 p-4">
+                          <p className="font-bold text-slate-900 dark:text-white mb-2">📝 {t('سكاشن وشيتات Word (.docx)', 'Practical Word Lab Sheets')}</p>
+                          <p className="text-xs text-slate-600 dark:text-slate-400">{t('ملفات شيتات السكاشن العملية وتجارب المعامل بصيغ مايكروسوفت وورد قابلة للتعديل والحل المباشر والتسليم.', 'Practical lab sheets and assignment templates in Word format, ready for direct editing, solving, and submission.')}</p>
                         </div>
                       </div>
                     </div>
@@ -1449,8 +1481,8 @@ function AcademyApp() {
                 <div className="mx-auto max-w-5xl px-4 sm:px-6 lg:px-8">
                   
                   <div className="text-center max-w-xl mx-auto mb-10">
-                    <h1 className="text-2xl font-black text-white sm:text-4xl">{t('تواصل مع المنصة الأكاديمية لقسم IT', 'Contact Eng/Mohamed abdal tawab Platform')}</h1>
-                    <p className="text-xs text-slate-400 mt-2">{t('يسعدنا تواصل الطلاب لطرح أي استفسارات أكاديمية حول المقررات والمحاضرات والسكاشن', 'Have queries about courses, lectures, or practical lab sheets? Reach out anytime.')}</p>
+                    <h1 className="text-2xl font-black text-slate-900 dark:text-white sm:text-4xl">{t('تواصل مع المنصة الأكاديمية لقسم IT', 'Contact Eng/Mohamed abdal tawab Platform')}</h1>
+                    <p className="text-xs text-slate-600 dark:text-slate-400 mt-2">{t('يسعدنا تواصل الطلاب لطرح أي استفسارات أكاديمية حول المقررات والمحاضرات والسكاشن', 'Have queries about courses, lectures, or practical lab sheets? Reach out anytime.')}</p>
                   </div>
 
                   <div className="grid grid-cols-1 md:grid-cols-5 gap-8">
@@ -1459,53 +1491,55 @@ function AcademyApp() {
                     <div className="md:col-span-2 space-y-4">
                       
                       <div className="rounded-2xl glass p-5 space-y-5 text-xs">
-                        <h3 className="font-bold text-white text-sm">{t('قنوات التواصل المباشرة', 'Direct Channels')}</h3>
+                        <h3 className="font-bold text-slate-900 dark:text-white text-sm">{t('قنوات التواصل المباشرة', 'Direct Channels')}</h3>
                         
                         <div className="flex gap-3 items-center">
-                          <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-slate-900 text-brand-cyan border border-slate-800 text-lg">
+                          <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-slate-100 dark:bg-slate-900 text-brand-cyan border border-slate-200 dark:border-slate-800 text-lg">
                             📞
                           </span>
-                          <div>
-                            <p className="font-bold text-white">{t('واتساب التواصل والدعم الفني', 'Academic Support WhatsApp')}</p>
-                            <p className="text-slate-400 mt-0.5 font-mono select-all">{settings && settings.whatsapp ? settings.whatsapp : 'https://wa.me/201010298878'}</p>
+                          <div className="min-w-0">
+                            <p className="font-bold text-slate-900 dark:text-white">{t('واتساب التواصل والدعم الفني', 'Academic Support WhatsApp')}</p>
+                            <p className="text-slate-600 dark:text-slate-400 mt-0.5 font-mono select-all break-all">{settings && settings.whatsapp ? settings.whatsapp : 'https://wa.me/201010298878'}</p>
                           </div>
                         </div>
 
                         <div className="flex gap-3 items-center">
-                          <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-slate-900 text-brand-cyan border border-slate-800 text-lg">
+                          <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-slate-100 dark:bg-slate-900 text-brand-cyan border border-slate-200 dark:border-slate-800 text-lg">
                             ✈️
                           </span>
-                          <div>
-                            <p className="font-bold text-white">{t('قناة التليجرام والمناقشات', 'Telegram Channel')}</p>
-                            <p className="text-slate-400 mt-0.5 font-mono select-all">{settings && settings.telegram ? settings.telegram : 'https://t.me/mohamed_abdal_tawab'}</p>
+                          <div className="min-w-0">
+                            <p className="font-bold text-slate-900 dark:text-white">{t('قناة التليجرام والمناقشات', 'Telegram Channel')}</p>
+                            <p className="text-slate-600 dark:text-slate-400 mt-0.5 font-mono select-all break-all">{settings && settings.telegram ? settings.telegram : 'https://t.me/mohamed_abdal_tawab'}</p>
                           </div>
                         </div>
 
                         <div className="flex gap-3 items-center">
-                          <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-slate-900 text-brand-cyan border border-slate-800 text-lg">
+                          <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-slate-100 dark:bg-slate-900 text-brand-cyan border border-slate-200 dark:border-slate-800 text-lg">
                             📍
                           </span>
                           <div>
-                            <p className="font-bold text-white">{t('المقر والجهة الأكاديمية', 'Academic Department')}</p>
-                            <p className="text-slate-400 mt-0.5">{t('الجامعة التكنولوجية - قسم تكنولوجيا المعلومات (IT)', 'Technological University - IT Department')}</p>
+                            <p className="font-bold text-slate-900 dark:text-white">{t('المقر والجهة الأكاديمية', 'Academic Department')}</p>
+                            <p className="text-slate-600 dark:text-slate-400 mt-0.5">{t('الجامعة التكنولوجية - قسم تكنولوجيا المعلومات (IT)', 'Technological University - IT Department')}</p>
                           </div>
                         </div>
 
                         {/* Quick Interactive Clickable Buttons */}
-                        <div className="pt-4 border-t border-slate-800/60 space-y-2">
-                          <p className="font-bold text-white mb-1.5">{t('محادثة فورية بنقرة واحدة:', 'Instant One-Click Contact:')}</p>
+                        <div className="pt-4 border-t border-slate-200 dark:border-slate-800/60 space-y-2">
+                          <p className="font-bold text-slate-900 dark:text-white mb-1.5">{t('محادثة فورية بنقرة واحدة:', 'Instant One-Click Contact:')}</p>
                           
                           <button
+                            type="button"
                             onClick={handleWhatsappTrigger}
-                            className="w-full flex items-center justify-center gap-2 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-white py-2.5 font-bold transition-all shadow-md shadow-emerald-950/20 cursor-pointer"
+                            className="w-full flex items-center justify-center gap-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white py-2.5 font-bold transition-all shadow-md cursor-pointer"
                           >
                             <Phone className="h-4 w-4 fill-white" />
                             {t('تواصل معنا عبر واتساب', 'Chat on WhatsApp')}
                           </button>
 
                           <button
+                            type="button"
                             onClick={handleTelegramTrigger}
-                            className="w-full flex items-center justify-center gap-2 rounded-xl bg-cyan-500 hover:bg-cyan-400 text-white py-2.5 font-bold transition-all shadow-md shadow-cyan-950/20 cursor-pointer"
+                            className="w-full flex items-center justify-center gap-2 rounded-xl bg-sky-600 hover:bg-sky-500 text-white py-2.5 font-bold transition-all shadow-md cursor-pointer"
                           >
                             <Send className="h-4 w-4 fill-white mr-0.5" />
                             {t('انضم لقناتنا على تليجرام', 'Join Telegram Channel')}
@@ -1517,64 +1551,64 @@ function AcademyApp() {
 
                     {/* Contact Form column */}
                     <div className="md:col-span-3">
-                      <form onSubmit={handleContactSubmit} className="rounded-2xl glass p-6 md:p-8 space-y-4 text-xs text-slate-300">
-                        <h3 className="font-bold text-white text-sm">{t('أرسل استفسارك وسنعاود الاتصال بك', 'Drop an Inquiry Message')}</h3>
+                      <form onSubmit={handleContactSubmit} className="rounded-2xl glass p-6 md:p-8 space-y-4 text-xs text-slate-700 dark:text-slate-300">
+                        <h3 className="font-bold text-slate-900 dark:text-white text-sm">{t('أرسل استفسارك وسنعاود الاتصال بك', 'Drop an Inquiry Message')}</h3>
                         
                         {contactSuccess && (
-                          <div className="rounded-xl bg-emerald-500/10 border border-emerald-500/20 p-4 text-xs text-emerald-400 font-bold">
+                          <div className="rounded-xl bg-emerald-500/10 border border-emerald-500/20 p-4 text-xs text-emerald-700 dark:text-emerald-400 font-bold">
                             ✓ {t('تم إرسال رسالتك بنجاح المزامنة! سنقوم بالتواصل معك عبر الواتساب أو الهاتف قريباً.', 'Your inquiry message sent successfully! We will contact you soon.')}
                           </div>
                         )}
 
                         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                           <div>
-                            <label className="block mb-1.5 font-semibold text-white">{t('اسمك بالكامل', 'Your Name')}</label>
+                            <label className="block mb-1.5 font-semibold text-slate-800 dark:text-white">{t('اسمك بالكامل', 'Your Name')}</label>
                             <input
                               type="text"
                               required
                               value={contactForm.name}
                               onChange={e => setContactForm({ ...contactForm, name: e.target.value })}
-                              className="w-full rounded-xl bg-slate-900 border border-slate-800 p-3 text-white focus:outline-none focus:border-brand-cyan"
+                              className="w-full rounded-xl bg-slate-50 dark:bg-slate-900 border border-slate-300 dark:border-slate-800 p-3 text-slate-900 dark:text-white focus:outline-none focus:border-brand-cyan"
                             />
                           </div>
                           <div>
-                            <label className="block mb-1.5 font-semibold text-white">{t('رقم الموبايل (يفضل واتساب)', 'Mobile Number')}</label>
+                            <label className="block mb-1.5 font-semibold text-slate-800 dark:text-white">{t('رقم الموبايل (يفضل واتساب)', 'Mobile Number')}</label>
                             <input
                               type="text"
                               required
                               value={contactForm.phone}
                               onChange={e => setContactForm({ ...contactForm, phone: e.target.value })}
-                              className="w-full rounded-xl bg-slate-900 border border-slate-800 p-3 text-white focus:outline-none focus:border-brand-cyan font-mono"
+                              className="w-full rounded-xl bg-slate-50 dark:bg-slate-900 border border-slate-300 dark:border-slate-800 p-3 text-slate-900 dark:text-white focus:outline-none focus:border-brand-cyan font-mono"
                             />
                           </div>
                           <div className="sm:col-span-2">
-                            <label className="block mb-1.5 font-semibold text-white">{t('البريد الإلكتروني', 'Email Address')}</label>
+                            <label className="block mb-1.5 font-semibold text-slate-800 dark:text-white">{t('البريد الإلكتروني', 'Email Address')}</label>
                             <input
                               type="email"
                               required
                               value={contactForm.email}
                               onChange={e => setContactForm({ ...contactForm, email: e.target.value })}
-                              className="w-full rounded-xl bg-slate-900 border border-slate-800 p-3 text-white focus:outline-none focus:border-brand-cyan font-mono"
+                              className="w-full rounded-xl bg-slate-50 dark:bg-slate-900 border border-slate-300 dark:border-slate-800 p-3 text-slate-900 dark:text-white focus:outline-none focus:border-brand-cyan font-mono"
                             />
                           </div>
                           <div className="sm:col-span-2">
-                            <label className="block mb-1.5 font-semibold text-white">{t('موضوع الاستفسار (مثال: حجز كورس علوم)', 'Subject')}</label>
+                            <label className="block mb-1.5 font-semibold text-slate-800 dark:text-white">{t('موضوع الاستفسار (مثال: استفسار حول مقرر أو محاضرة قسم IT)', 'Subject (e.g. IT Course or Lecture Inquiry)')}</label>
                             <input
                               type="text"
                               required
                               value={contactForm.subject}
                               onChange={e => setContactForm({ ...contactForm, subject: e.target.value })}
-                              className="w-full rounded-xl bg-slate-900 border border-slate-800 p-3 text-white focus:outline-none focus:border-brand-cyan"
+                              className="w-full rounded-xl bg-slate-50 dark:bg-slate-900 border border-slate-300 dark:border-slate-800 p-3 text-slate-900 dark:text-white focus:outline-none focus:border-brand-cyan"
                             />
                           </div>
                           <div className="sm:col-span-2">
-                            <label className="block mb-1.5 font-semibold text-white">{t('تفاصيل رسالتك أو استفسارك', 'Your message details')}</label>
+                            <label className="block mb-1.5 font-semibold text-slate-800 dark:text-white">{t('تفاصيل رسالتك أو استفسارك', 'Your message details')}</label>
                             <textarea
                               required
                               rows={4}
                               value={contactForm.message}
                               onChange={e => setContactForm({ ...contactForm, message: e.target.value })}
-                              className="w-full rounded-xl bg-slate-900 border border-slate-800 p-3 text-white focus:outline-none focus:border-brand-cyan"
+                              className="w-full rounded-xl bg-slate-50 dark:bg-slate-900 border border-slate-300 dark:border-slate-800 p-3 text-slate-900 dark:text-white focus:outline-none focus:border-brand-cyan"
                             />
                           </div>
                         </div>
@@ -1582,7 +1616,7 @@ function AcademyApp() {
                         <button
                           type="submit"
                           disabled={submittingContact}
-                          className="rounded-xl bg-brand-cyan text-brand-dark hover:bg-brand-cyan-light px-6 py-3.5 font-bold transition-all disabled:opacity-50 cursor-pointer shadow-lg shadow-cyan-950/20"
+                          className="rounded-xl bg-brand-cyan text-white dark:text-slate-950 hover:bg-brand-cyan-light px-6 py-3.5 font-bold transition-all disabled:opacity-50 cursor-pointer shadow-md"
                         >
                           {submittingContact ? t('جاري إرسال الرسالة...', 'Submitting...') : t('إرسال الاستفسار والاتصال', 'Send Inquiry')}
                         </button>
@@ -1604,16 +1638,16 @@ function AcademyApp() {
                 className="py-12"
               >
                 <div className="mx-auto max-w-3xl px-4 sm:px-6 lg:px-8">
-                  <div className="rounded-2xl glass p-6 md:p-8 space-y-6 text-xs sm:text-sm text-slate-300 leading-relaxed">
-                    <h1 className="text-xl font-black text-white sm:text-2xl">{t('لوائح المنصة الأكاديمية وصلاحية تحميل المحاضرات والسكاشن', 'Terms & Regulations of Course File Access')}</h1>
+                  <div className="rounded-2xl glass p-6 md:p-8 space-y-6 text-xs sm:text-sm text-slate-600 dark:text-slate-300 leading-relaxed">
+                    <h1 className="text-xl font-black text-slate-900 dark:text-white sm:text-2xl">{t('لوائح المنصة الأكاديمية وصلاحية تحميل المحاضرات والسكاشن', 'Terms & Regulations of Course File Access')}</h1>
                     <p className="text-slate-500 font-mono">Last updated: Academic Year 2026</p>
                     
                     <p>{t('برجاء قراءة اللوائح الأكاديمية المنظمة لاستخدام منصة Eng/Mohamed abdal tawab بالجامعة التكنولوجية لقسم تكنولوجيا المعلومات IT:', 'Please review the academic regulations governing the use of Eng/Mohamed abdal tawab’s IT University Platform:')}</p>
                     
-                    <h3 className="font-bold text-white text-sm">{t('١. صلاحية استخدام المواد الأكاديمية والملفات', '1. Academic Materials Usage License')}</h3>
+                    <h3 className="font-bold text-slate-900 dark:text-white text-sm">{t('١. صلاحية استخدام المواد الأكاديمية والملفات', '1. Academic Materials Usage License')}</h3>
                     <p>{t('عند تفعيل المقرر للطالب، يُمنح صلاحية أكاديمية للاطلاع وتحميل ملفات المحاضرات النظرية (PDF) وشيتات السكاشن العملية (Word .docx) وحل التكليفات والامتحانات للمقررات الستة. يحظر إعادة نشر أو بيع المحتوى الأكاديمي لجهات تجارية خارجية.', 'Active course access grants the student personal permission to access and download lecture notes, practical Word lab sheets, and assignments for accredited courses.')}</p>
 
-                    <h3 className="font-bold text-white text-sm">{t('٢. تفعيل المواد الدراسية وقسم الامتحانات', '2. Course Activation & Exam System')}</h3>
+                    <h3 className="font-bold text-slate-900 dark:text-white text-sm">{t('٢. تفعيل المواد الدراسية وقسم الامتحانات', '2. Course Activation & Exam System')}</h3>
                     <p>{t('يتم تفعيل الوصول إلى ملفات السكاشن والمحاضرات وحل الشيتات وبنك أسئلة الامتحانات بعد مراجعة حساب الطالب من قبل الإدارة لضمان انتظام العملية التعليمية لطلاب قسم IT.', 'File access and exam submissions are activated once student credentials are verified by the department administration.')}</p>
                   </div>
                 </div>
@@ -1629,16 +1663,16 @@ function AcademyApp() {
                 className="py-12"
               >
                 <div className="mx-auto max-w-3xl px-4 sm:px-6 lg:px-8">
-                  <div className="rounded-2xl glass p-6 md:p-8 space-y-6 text-xs sm:text-sm text-slate-300 leading-relaxed">
-                    <h1 className="text-xl font-black text-white sm:text-2xl">{t('سياسة الخصوصية وأمن بيانات الطلاب', 'Student Privacy Policy')}</h1>
+                  <div className="rounded-2xl glass p-6 md:p-8 space-y-6 text-xs sm:text-sm text-slate-600 dark:text-slate-300 leading-relaxed">
+                    <h1 className="text-xl font-black text-slate-900 dark:text-white sm:text-2xl">{t('سياسة الخصوصية وأمن بيانات الطلاب', 'Student Privacy Policy')}</h1>
                     <p className="text-slate-500 font-mono">Last updated: Academic Year 2026</p>
                     
                     <p>{t('تلتزم منصة Eng/Mohamed abdal tawab الأكاديمية بالجامعة التكنولوجية بأعلى معايير حماية بيانات الطلاب وخصوصيتهم:', 'We strictly protect the privacy and records of our university students:')}</p>
                     
-                    <h3 className="font-bold text-white text-sm">{t('١. البيانات الأكاديمية المسجلة', '1. Collected Academic Data')}</h3>
+                    <h3 className="font-bold text-slate-900 dark:text-white text-sm">{t('١. البيانات الأكاديمية المسجلة', '1. Collected Academic Data')}</h3>
                     <p>{t('نجمع بيانات الاسم، والبريد الإلكتروني، ورقم الواتساب، والفرقة الدراسية بقسم تكنولوجيا المعلومات لغرض تفعيل المقررات ومتابعة تسليمات الشيتات وحلول الامتحانات.', 'We securely collect student name, academic email, contact numbers, and year level to activate courses and record assignment submissions.')}</p>
 
-                    <h3 className="font-bold text-white text-sm">{t('٢. سرية المعلومات وحمايتها', '2. Data Protection')}</h3>
+                    <h3 className="font-bold text-slate-900 dark:text-white text-sm">{t('٢. سرية المعلومات وحمايتها', '2. Data Protection')}</h3>
                     <p>{t('لا يتم بيع أو مشاركة بيانات الطلاب مع أي جهة خارجية، وتظل محفوظة بأعلى معايير الحماية والتشفير بقواعد بياناتنا السحابية المزامنة.', 'No student data is sold or shared with third parties. Databases are encrypted and stored in safe synchronized cloud configurations.')}</p>
                   </div>
                 </div>
@@ -1656,25 +1690,27 @@ function AcademyApp() {
                   exit={{ opacity: 0 }}
                   className="py-16 flex items-center justify-center min-h-[75vh]"
                 >
-                  <div className="relative w-full max-w-md rounded-2xl border border-slate-800 bg-slate-950 p-6 md:p-8 shadow-2xl glass mx-4">
+                  <div className="relative w-full max-w-md rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950 p-6 md:p-8 shadow-xl glass mx-4">
                     <div className="text-center mb-6">
                       <span className="inline-flex h-12 w-12 items-center justify-center rounded-xl bg-brand-cyan/10 border border-brand-cyan/20 text-2xl mx-auto mb-3">
                         🎓
                       </span>
-                      <h3 className="text-xl font-black text-white">{t('بوابة الطالب التعليمية', 'Student Learning Portal')}</h3>
-                      <p className="text-xs text-slate-400 mt-1">{t('سجل دخولك لمتابعة حصصك وحل الامتحانات والواجبات المنزلية', 'Access courses, check certificates, do online exams and assignments')}</p>
+                      <h3 className="text-xl font-black text-slate-900 dark:text-white">{t('بوابة الطالب التعليمية', 'Student Learning Portal')}</h3>
+                      <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">{t('سجل دخولك لمتابعة حصصك وحل الامتحانات والواجبات المنزلية', 'Access courses, check certificates, do online exams and assignments')}</p>
                     </div>
 
                     <div className="space-y-4">
                       <button
+                        type="button"
                         onClick={() => { setStudentAuthMode('login'); setIsStudentAuthOpen(true); }}
-                        className="w-full flex items-center justify-center gap-2 rounded-xl bg-brand-cyan text-brand-dark hover:bg-brand-cyan-light py-3.5 font-bold transition-all cursor-pointer shadow-lg shadow-cyan-950/20 text-xs sm:text-sm"
+                        className="w-full flex items-center justify-center gap-2 rounded-xl bg-brand-cyan text-white dark:text-slate-950 hover:bg-brand-cyan-light py-3.5 font-bold transition-all cursor-pointer shadow-md text-xs sm:text-sm"
                       >
                         {t('تسجيل الدخول كطالب', 'Login to Student Account')}
                       </button>
                       <button
+                        type="button"
                         onClick={() => { setStudentAuthMode('register'); setIsStudentAuthOpen(true); }}
-                        className="w-full flex items-center justify-center gap-2 rounded-xl border border-slate-800 bg-slate-900/60 hover:bg-slate-800/80 text-white py-3.5 font-bold transition-all cursor-pointer text-xs sm:text-sm"
+                        className="w-full flex items-center justify-center gap-2 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-100 dark:bg-slate-900/60 hover:bg-slate-200 dark:hover:bg-slate-800/80 text-slate-800 dark:text-white py-3.5 font-bold transition-all cursor-pointer text-xs sm:text-sm"
                       >
                         {t('إنشاء حساب طالب جديد', 'Register New Student Account')}
                       </button>
@@ -1695,50 +1731,50 @@ function AcademyApp() {
                   exit={{ opacity: 0 }}
                   className="py-16 flex items-center justify-center min-h-[75vh]"
                 >
-                  <div className="relative w-full max-w-md rounded-2xl border border-slate-800 bg-slate-950 p-6 md:p-8 shadow-2xl glass mx-4">
+                  <div className="relative w-full max-w-md rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950 p-6 md:p-8 shadow-xl glass mx-4">
                     <div className="text-center mb-6">
                       <span className="inline-flex h-12 w-12 items-center justify-center rounded-xl bg-brand-cyan/10 border border-brand-cyan/20 text-2xl mx-auto mb-3">
                         🔐
                       </span>
-                      <h3 className="text-xl font-black text-white">{t('تسجيل الدخول للمسؤولين', 'Administrator Login')}</h3>
-                      <p className="text-xs text-slate-400 mt-1">{t('بوابة إدارة محتوى أكاديمية م. محمد عبد التواب', 'Secure gateway for Eng/Mohamed abdal tawab academy board members')}</p>
+                      <h3 className="text-xl font-black text-slate-900 dark:text-white">{t('تسجيل الدخول للمسؤولين', 'Administrator Login')}</h3>
+                      <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">{t('بوابة إدارة محتوى منصة MOHAMED ELJOKER التعليمية', 'Secure gateway for MOHAMED ELJOKER Platform')}</p>
                     </div>
 
-                    <form onSubmit={handleAdminLoginSubmit} className="space-y-4 text-xs sm:text-sm text-slate-300">
+                    <form onSubmit={handleAdminLoginSubmit} className="space-y-4 text-xs sm:text-sm text-slate-700 dark:text-slate-300">
                       {loginError && (
-                        <div className="rounded-lg bg-red-500/10 border border-red-500/20 p-3 text-red-400 font-bold flex items-center gap-1.5 text-xs">
+                        <div className="rounded-lg bg-red-500/10 border border-red-500/20 p-3 text-red-600 dark:text-red-400 font-bold flex items-center gap-1.5 text-xs">
                           <ShieldAlert className="h-4.5 w-4.5" />
                           <span>{loginError}</span>
                         </div>
                       )}
 
                       <div>
-                        <label className="block mb-1.5 font-semibold text-white">{t('البريد الإلكتروني للمدير', 'Admin Email')}</label>
+                        <label className="block mb-1.5 font-semibold text-slate-800 dark:text-white">{t('البريد الإلكتروني للمدير', 'Admin Email')}</label>
                         <input
                           type="email"
                           required
                           placeholder="admin@example.com"
                           value={adminEmail}
                           onChange={e => setAdminEmail(e.target.value)}
-                          className="w-full rounded-xl bg-slate-900 border border-slate-800 p-3 text-white focus:outline-none focus:border-brand-cyan font-mono"
+                          className="w-full rounded-xl bg-slate-50 dark:bg-slate-900 border border-slate-300 dark:border-slate-800 p-3 text-slate-900 dark:text-white focus:outline-none focus:border-brand-cyan font-mono"
                         />
                       </div>
 
                       <div>
-                        <label className="block mb-1.5 font-semibold text-white">{t('كلمة المرور الآمنة', 'Password')}</label>
+                        <label className="block mb-1.5 font-semibold text-slate-800 dark:text-white">{t('كلمة المرور الآمنة', 'Password')}</label>
                         <input
                           type="password"
                           required
                           placeholder="••••••••"
                           value={adminPassword}
                           onChange={e => setAdminPassword(e.target.value)}
-                          className="w-full rounded-xl bg-slate-900 border border-slate-800 p-3 text-white focus:outline-none focus:border-brand-cyan font-mono"
+                          className="w-full rounded-xl bg-slate-50 dark:bg-slate-900 border border-slate-300 dark:border-slate-800 p-3 text-slate-900 dark:text-white focus:outline-none focus:border-brand-cyan font-mono"
                         />
                       </div>
 
                       <button
                         type="submit"
-                        className="w-full rounded-xl bg-brand-cyan text-brand-dark hover:bg-brand-cyan-light py-3.5 font-bold transition-all cursor-pointer shadow-lg shadow-cyan-950/20 text-xs sm:text-sm"
+                        className="w-full rounded-xl bg-brand-cyan text-white dark:text-slate-950 hover:bg-brand-cyan-light py-3.5 font-bold transition-all cursor-pointer shadow-md text-xs sm:text-sm"
                       >
                         {t('الولوج الآمن لقاعدة البيانات', 'Access Board Controls')}
                       </button>
@@ -1765,7 +1801,7 @@ function AcademyApp() {
         />
       )}
 
-      <div className="fixed bottom-6 left-6 z-50 flex flex-col items-start gap-3 pointer-events-auto">
+      <div className={`fixed bottom-6 left-4 sm:left-6 z-50 flex-col items-start gap-3 pointer-events-auto ${currentView === 'student-panel' ? 'hidden lg:flex' : 'flex'}`}>
         <AnimatePresence>
           {isSpeedDialOpen && (
             <motion.div
@@ -1778,17 +1814,18 @@ function AcademyApp() {
               {/* 1. Theme Toggle Button */}
               <div className="flex items-center gap-2">
                 <button
+                  type="button"
                   onClick={() => {
                     toggleTheme();
                     setIsSpeedDialOpen(false);
                   }}
-                  className="flex h-12 w-12 items-center justify-center rounded-full border border-slate-700/80 bg-slate-900/95 text-white hover:scale-110 active:scale-95 transition-all shadow-xl hover:border-brand-cyan hover:text-brand-cyan cursor-pointer text-lg"
+                  className="flex h-12 w-12 items-center justify-center rounded-full border border-slate-200 dark:border-slate-700/80 bg-white dark:bg-slate-900/95 text-slate-900 dark:text-white hover:scale-110 active:scale-95 transition-all shadow-xl hover:border-brand-cyan hover:text-brand-cyan cursor-pointer text-lg"
                   title={theme === 'light' ? t('تفعيل الوضع الليلي', 'Switch to Dark Mode') : t('تفعيل الوضع النهاري', 'Switch to Light Mode')}
                   aria-label="Toggle Theme"
                 >
                   {theme === 'light' ? '🌙' : '☀️'}
                 </button>
-                <span className="px-3 py-1.5 rounded-xl bg-slate-900/95 text-white border border-slate-700/80 text-xs font-semibold shadow-lg backdrop-blur-md select-none pointer-events-none">
+                <span className="px-3 py-1.5 rounded-xl bg-white dark:bg-slate-900/95 text-slate-900 dark:text-white border border-slate-200 dark:border-slate-700/80 text-xs font-semibold shadow-lg backdrop-blur-md select-none pointer-events-none">
                   {theme === 'light' ? t('🌙 تغيير المظهر (ليلي)', '🌙 Dark Mode') : t('☀️ تغيير المظهر (نهاري)', '☀️ Light Mode')}
                 </span>
               </div>
@@ -1797,17 +1834,17 @@ function AcademyApp() {
               {currentView !== 'admin-panel' && settings && settings.whatsapp && (
                 <div className="flex items-center gap-2">
                   <button
+                    type="button"
                     onClick={() => {
                       handleWhatsappTrigger();
                       setIsSpeedDialOpen(false);
                     }}
-                    className="flex h-12 w-12 items-center justify-center rounded-full bg-emerald-500 text-white hover:bg-emerald-400 hover:scale-110 active:scale-95 transition-all shadow-xl shadow-emerald-950/40 relative group cursor-pointer"
+                    className="flex h-12 w-12 items-center justify-center rounded-full bg-emerald-500 text-white hover:bg-emerald-400 hover:scale-110 active:scale-95 transition-all shadow-xl relative group cursor-pointer"
                     title={t('تواصل معنا عبر واتساب', 'Contact on WhatsApp')}
                   >
-                    <span className="absolute -inset-1 rounded-full bg-emerald-500/20 animate-ping pointer-events-none" />
                     <Phone className="h-5 w-5 fill-white" />
                   </button>
-                  <span className="px-3 py-1.5 rounded-xl bg-slate-900/95 text-emerald-400 border border-emerald-500/30 text-xs font-semibold shadow-lg backdrop-blur-md select-none pointer-events-none">
+                  <span className="px-3 py-1.5 rounded-xl bg-white dark:bg-slate-900/95 text-emerald-700 dark:text-emerald-400 border border-emerald-500/30 text-xs font-semibold shadow-lg backdrop-blur-md select-none pointer-events-none">
                     {t('📱 واتساب', '📱 WhatsApp')}
                   </span>
                 </div>
@@ -1817,16 +1854,17 @@ function AcademyApp() {
               {currentView !== 'admin-panel' && settings && settings.telegram && (
                 <div className="flex items-center gap-2">
                   <button
+                    type="button"
                     onClick={() => {
                       handleTelegramTrigger();
                       setIsSpeedDialOpen(false);
                     }}
-                    className="flex h-12 w-12 items-center justify-center rounded-full bg-cyan-500 text-white hover:bg-cyan-400 hover:scale-110 active:scale-95 transition-all shadow-xl shadow-cyan-950/40 cursor-pointer"
+                    className="flex h-12 w-12 items-center justify-center rounded-full bg-sky-500 text-white hover:bg-sky-400 hover:scale-110 active:scale-95 transition-all shadow-xl cursor-pointer"
                     title={t('تابعنا على قناة التليجرام', 'Join Telegram Channel')}
                   >
                     <Send className="h-5 w-5 fill-white mr-0.5" />
                   </button>
-                  <span className="px-3 py-1.5 rounded-xl bg-slate-900/95 text-cyan-400 border border-cyan-500/30 text-xs font-semibold shadow-lg backdrop-blur-md select-none pointer-events-none">
+                  <span className="px-3 py-1.5 rounded-xl bg-white dark:bg-slate-900/95 text-sky-700 dark:text-cyan-400 border border-cyan-500/30 text-xs font-semibold shadow-lg backdrop-blur-md select-none pointer-events-none">
                     {t('✈️ تيليجرام', '✈️ Telegram')}
                   </span>
                 </div>
@@ -1837,8 +1875,9 @@ function AcademyApp() {
 
         {/* Main Speed Dial Trigger (+) Button */}
         <button
+          type="button"
           onClick={() => setIsSpeedDialOpen(!isSpeedDialOpen)}
-          className="flex h-13 w-13 items-center justify-center rounded-full bg-gradient-to-r from-cyan-500 to-emerald-400 text-slate-950 hover:scale-105 active:scale-95 transition-all duration-250 shadow-2xl shadow-cyan-500/40 border-2 border-white/20 cursor-pointer z-50"
+          className="flex h-12 w-12 sm:h-13 sm:w-13 items-center justify-center rounded-full bg-gradient-to-r from-cyan-500 to-emerald-400 text-slate-950 hover:scale-105 active:scale-95 transition-all duration-250 shadow-2xl shadow-cyan-500/30 border-2 border-white/40 cursor-pointer z-50"
           title={isSpeedDialOpen ? t('إغلاق القائمة', 'Close Menu') : t('القائمة العائمة', 'Actions Menu')}
           aria-label="Toggle Floating Action Menu"
         >
@@ -1851,27 +1890,29 @@ function AcademyApp() {
       </div>
 
       {/* Unified Dual Login Modal (Student Login & Teacher Login) */}
-      {(isStudentAuthOpen || isAdminLoginOpen || (!loading && !isAdminLoggedIn && !isStudentLoggedIn)) && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-brand-dark/95 backdrop-blur-md p-4 animate-fadeIn">
-          <div className="relative w-full max-w-sm rounded-2xl border border-slate-800 bg-slate-950 p-6 md:p-8 shadow-2xl glass mx-4 animate-scaleUp">
+      {(isStudentAuthOpen || isAdminLoginOpen) && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/75 dark:bg-[#090d16]/90 backdrop-blur-md p-3 sm:p-4 animate-fadeIn">
+          <div className="relative w-full max-w-sm rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950 p-5 sm:p-7 shadow-2xl animate-scaleUp max-h-[90vh] overflow-y-auto">
             
-            {/* Close Button - Only available when logged in */}
-            {(isAdminLoggedIn || isStudentLoggedIn) && (
-              <button
-                onClick={() => {
-                  setIsStudentAuthOpen(false);
-                  setIsAdminLoginOpen(false);
-                  setLoginError('');
-                  setStudentAuthError('');
-                }}
-                className="absolute top-4 left-4 rounded-lg bg-slate-900 p-2 text-slate-400 hover:text-white border border-slate-800 cursor-pointer"
-              >
-                <X className="h-4.5 w-4.5" />
-              </button>
-            )}
+            {/* Close Button - Always available so visitors can browse freely */}
+            <button
+              type="button"
+              onClick={() => {
+                setIsStudentAuthOpen(false);
+                setIsAdminLoginOpen(false);
+                setLoginError('');
+                setStudentAuthError('');
+                setStudentAuthSuccess('');
+                setStudentAccountStatus('');
+              }}
+              className="absolute top-3.5 left-3.5 rounded-lg bg-slate-100 dark:bg-slate-900 p-2 text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white border border-slate-200 dark:border-slate-800 cursor-pointer"
+              aria-label="Close modal"
+            >
+              <X className="h-4.5 w-4.5" />
+            </button>
 
             {/* Dual Login Option Tabs */}
-            <div className="flex rounded-xl bg-slate-900 p-1 border border-slate-800 mb-6 font-bold text-xs">
+            <div className="flex rounded-xl bg-slate-100 dark:bg-slate-900 p-1 border border-slate-200 dark:border-slate-800 mb-6 font-bold text-xs mt-6 sm:mt-2">
               <button
                 type="button"
                 onClick={() => {
@@ -1881,8 +1922,8 @@ function AcademyApp() {
                 }}
                 className={`flex-1 py-2 text-center rounded-lg transition-all cursor-pointer ${
                   authTab === 'student'
-                    ? 'bg-brand-cyan text-brand-dark shadow-md font-black'
-                    : 'text-slate-400 hover:text-white'
+                    ? 'bg-brand-cyan text-white dark:text-slate-950 shadow-sm font-black'
+                    : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
                 }`}
               >
                 🎓 {t('دخول الطالب', 'Student Login')}
@@ -1896,8 +1937,8 @@ function AcademyApp() {
                 }}
                 className={`flex-1 py-2 text-center rounded-lg transition-all cursor-pointer ${
                   authTab === 'teacher'
-                    ? 'bg-brand-cyan text-brand-dark shadow-md font-black'
-                    : 'text-slate-400 hover:text-white'
+                    ? 'bg-brand-cyan text-white dark:text-slate-950 shadow-sm font-black'
+                    : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
                 }`}
               >
                 👨‍🏫 {t('دخول المعلم', 'Teacher Login')}
@@ -1911,54 +1952,54 @@ function AcademyApp() {
                   <span className="inline-flex h-11 w-11 items-center justify-center rounded-xl bg-brand-cyan/10 border border-brand-cyan/20 text-xl mx-auto mb-2">
                     👨‍🏫
                   </span>
-                  <h3 className="text-lg font-black text-white">
+                  <h3 className="text-lg font-black text-slate-900 dark:text-white">
                     {t('تسجيل دخول المعلم / المدير', 'Teacher & Board Login')}
                   </h3>
-                  <p className="text-[11px] text-slate-400 mt-1">
+                  <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-1">
                     {t('بوابة إدارة الكورسات والطلاب لم. محمد عبد التواب', 'Course & Student Management Portal')}
                   </p>
                 </div>
 
-                <form onSubmit={handleAdminLoginSubmit} className="space-y-4 text-xs text-slate-300">
+                <form onSubmit={handleAdminLoginSubmit} className="space-y-4 text-xs text-slate-700 dark:text-slate-300">
                   {loginError && (
-                    <div className="rounded-lg bg-red-500/10 border border-red-500/20 p-3 text-red-400 font-bold flex items-center gap-1.5 text-[11px]">
+                    <div className="rounded-lg bg-red-500/10 border border-red-500/20 p-3 text-red-600 dark:text-red-400 font-bold flex items-center gap-1.5 text-[11px]">
                       <ShieldAlert className="h-4 w-4 shrink-0" />
                       <span>{loginError}</span>
                     </div>
                   )}
 
                   <div>
-                    <label className="block mb-1.5 font-semibold text-white">{t('البريد الإلكتروني للمعلم', 'Teacher Email')}</label>
+                    <label className="block mb-1.5 font-semibold text-slate-800 dark:text-white">{t('البريد الإلكتروني للمعلم', 'Teacher Email')}</label>
                     <input
                       type="email"
                       required
                       placeholder="teacher@example.com"
                       value={adminEmail}
                       onChange={e => setAdminEmail(e.target.value)}
-                      className="w-full rounded-xl bg-slate-900 border border-slate-800 p-3 text-white focus:outline-none focus:border-brand-cyan font-mono"
+                      className="w-full rounded-xl bg-slate-50 dark:bg-slate-900 border border-slate-300 dark:border-slate-800 p-3 text-slate-900 dark:text-white focus:outline-none focus:border-brand-cyan font-mono"
                     />
                   </div>
 
                   <div>
-                    <label className="block mb-1.5 font-semibold text-white">{t('كلمة المرور', 'Password')}</label>
+                    <label className="block mb-1.5 font-semibold text-slate-800 dark:text-white">{t('كلمة المرور', 'Password')}</label>
                     <input
                       type="password"
                       required
                       placeholder="••••••••"
                       value={adminPassword}
                       onChange={e => setAdminPassword(e.target.value)}
-                      className="w-full rounded-xl bg-slate-900 border border-slate-800 p-3 text-white focus:outline-none focus:border-brand-cyan font-mono"
+                      className="w-full rounded-xl bg-slate-50 dark:bg-slate-900 border border-slate-300 dark:border-slate-800 p-3 text-slate-900 dark:text-white focus:outline-none focus:border-brand-cyan font-mono"
                     />
                   </div>
 
                   <button
                     type="submit"
-                    className="w-full rounded-xl bg-brand-cyan text-brand-dark hover:bg-brand-cyan-light py-3 font-bold transition-all cursor-pointer shadow-lg shadow-cyan-950/20 text-xs"
+                    className="w-full rounded-xl bg-brand-cyan text-white dark:text-slate-950 hover:bg-brand-cyan-light py-3 font-bold transition-all cursor-pointer shadow-md text-xs"
                   >
                     {t('تسجيل الدخول كمعلم', 'Login as Teacher')}
                   </button>
 
-                  <div className="text-center pt-2 text-[10px] text-slate-500 border-t border-slate-900/60">
+                  <div className="text-center pt-2 text-[10px] text-slate-500 border-t border-slate-200 dark:border-slate-900/60">
                     <p>{t('يتم التحقق من رتبة الحساب (role == "admin") في قاعدة البيانات فور تسجيل الدخول.', 'Role (role == "admin") is strictly verified in Firestore upon login.')}</p>
                   </div>
                 </form>
@@ -1972,72 +2013,108 @@ function AcademyApp() {
                   <span className="inline-flex h-11 w-11 items-center justify-center rounded-xl bg-brand-cyan/10 border border-brand-cyan/20 text-xl mx-auto mb-2">
                     {studentAuthMode === 'login' ? '🔑' : '📝'}
                   </span>
-                  <h3 className="text-lg font-black text-white">
+                  <h3 className="text-lg font-black text-slate-900 dark:text-white">
                     {studentAuthMode === 'login' 
                       ? t('بوابة تسجيل دخول الطلاب', 'Student Login Portal') 
                       : t('إنشاء حساب طالب جديد', 'Student Registration')}
                   </h3>
-                  <p className="text-[11px] text-slate-400 mt-1">
+                  <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-1">
                     {studentAuthMode === 'login' 
                       ? t('تابع دروسك واختباراتك التفاعلية', 'Continue your lessons and interactive tests') 
-                      : t('سجل الآن لتبدأ رحلة التفوق مع المهندس محمد عبد التواب', 'Join us to begin your scientific journey')}
+                      : t('سجل الآن لتبدأ رحلة التعلم في منصة MOHAMED ELJOKER التعليمية', 'Join us to begin your learning journey on MOHAMED ELJOKER Platform')}
                   </p>
                 </div>
 
-                <form onSubmit={handleStudentAuthSubmit} className="space-y-4 text-xs text-slate-300">
+                <form onSubmit={handleStudentAuthSubmit} className="space-y-4 text-xs text-slate-700 dark:text-slate-300">
+                  {studentAuthSuccess && (
+                    <div className="rounded-xl bg-amber-500/10 border border-amber-500/30 p-3.5 text-amber-800 dark:text-amber-200 space-y-2 text-[11px]">
+                      <div className="flex items-center gap-1.5 font-extrabold text-amber-700 dark:text-amber-300">
+                        <Clock className="h-4 w-4 shrink-0" />
+                        <span>{t('تم استلام طلبك (الحالة: قيد المراجعة Pending)', 'Request Received (Status: Pending)')}</span>
+                      </div>
+                      <p className="leading-relaxed">{studentAuthSuccess}</p>
+                      <a
+                        href={`https://wa.me/201010298878?text=${encodeURIComponent('مرحباً، قمت بتسجيل حساب جديد في منصة MOHAMED ELJOKER وأرجو مراجعة وتفعيل الحساب.')}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-flex items-center gap-1.5 font-bold text-emerald-700 dark:text-emerald-400 hover:underline pt-1"
+                      >
+                        <Phone className="h-3.5 w-3.5" />
+                        <span>{t('تواصل عبر واتساب لتسريع الاعتماد', 'Contact Admin on WhatsApp')}</span>
+                      </a>
+                    </div>
+                  )}
+
                   {studentAuthError && (
-                    <div className="rounded-lg bg-red-500/10 border border-red-500/20 p-3 text-red-400 font-bold flex items-center gap-1.5 text-[11px]">
-                      <ShieldAlert className="h-4 w-4 shrink-0" />
-                      <span>{studentAuthError}</span>
+                    <div className={`rounded-xl border p-3.5 font-bold space-y-2 text-[11px] ${
+                      studentAccountStatus === 'pending'
+                        ? 'bg-amber-500/10 border-amber-500/30 text-amber-700 dark:text-amber-300'
+                        : 'bg-red-500/10 border-red-500/20 text-red-600 dark:text-red-400'
+                    }`}>
+                      <div className="flex items-center gap-1.5">
+                        <ShieldAlert className="h-4 w-4 shrink-0" />
+                        <span>{studentAuthError}</span>
+                      </div>
+                      {studentAccountStatus && (
+                        <a
+                          href={`https://wa.me/201010298878?text=${encodeURIComponent('مرحباً، أستفسر عن حالة حسابي في منصة MOHAMED ELJOKER.')}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="inline-flex items-center gap-1.5 text-emerald-700 dark:text-emerald-400 hover:underline"
+                        >
+                          <Phone className="h-3.5 w-3.5" />
+                          <span>{t('تواصل مع الإدارة عبر واتساب', 'Contact Admin via WhatsApp')}</span>
+                        </a>
+                      )}
                     </div>
                   )}
 
                   {studentAuthMode === 'register' && (
                     <div>
-                      <label className="block mb-1.5 font-semibold text-white">{t('الاسم الثلاثي للطالب', 'Full Name')}</label>
+                      <label className="block mb-1.5 font-semibold text-slate-800 dark:text-white">{t('الاسم الثلاثي للطالب', 'Full Name')}</label>
                       <input
                         type="text"
                         required
                         placeholder={t('مثال: أحمد محمد علي', 'e.g. Ahmed Mohamed')}
                         value={studentAuthForm.name}
                         onChange={e => setStudentAuthForm({ ...studentAuthForm, name: e.target.value })}
-                        className="w-full rounded-xl bg-slate-900 border border-slate-800 p-3 text-white focus:outline-none focus:border-brand-cyan"
+                        className="w-full rounded-xl bg-slate-50 dark:bg-slate-900 border border-slate-300 dark:border-slate-800 p-3 text-slate-900 dark:text-white focus:outline-none focus:border-brand-cyan"
                       />
                     </div>
                   )}
 
                   <div>
-                    <label className="block mb-1.5 font-semibold text-white">{t('البريد الإلكتروني للطالب', 'Student Email')}</label>
+                    <label className="block mb-1.5 font-semibold text-slate-800 dark:text-white">{t('البريد الإلكتروني للطالب', 'Student Email')}</label>
                     <input
                       type="email"
                       required
                       placeholder="student@example.com"
                       value={studentAuthForm.email}
                       onChange={e => setStudentAuthForm({ ...studentAuthForm, email: e.target.value })}
-                      className="w-full rounded-xl bg-slate-900 border border-slate-800 p-3 text-white focus:outline-none focus:border-brand-cyan font-mono"
+                      className="w-full rounded-xl bg-slate-50 dark:bg-slate-900 border border-slate-300 dark:border-slate-800 p-3 text-slate-900 dark:text-white focus:outline-none focus:border-brand-cyan font-mono"
                     />
                   </div>
 
                   {studentAuthMode === 'register' && (
                     <>
                       <div>
-                        <label className="block mb-1.5 font-semibold text-white">{t('رقم الموبايل / الواتساب', 'WhatsApp Number')}</label>
+                        <label className="block mb-1.5 font-semibold text-slate-800 dark:text-white">{t('رقم الموبايل / الواتساب', 'WhatsApp Number')}</label>
                         <input
                           type="tel"
                           required
                           placeholder="01010298878"
                           value={studentAuthForm.phone}
                           onChange={e => setStudentAuthForm({ ...studentAuthForm, phone: e.target.value })}
-                          className="w-full rounded-xl bg-slate-900 border border-slate-800 p-3 text-white focus:outline-none focus:border-brand-cyan font-mono"
+                          className="w-full rounded-xl bg-slate-50 dark:bg-slate-900 border border-slate-300 dark:border-slate-800 p-3 text-slate-900 dark:text-white focus:outline-none focus:border-brand-cyan font-mono"
                         />
                       </div>
 
                       <div>
-                        <label className="block mb-1.5 font-semibold text-white">{t('الصف الدراسي', 'Grade Level')}</label>
+                        <label className="block mb-1.5 font-semibold text-slate-800 dark:text-white">{t('الفرقة الدراسية', 'Academic Year')}</label>
                         <select
                           value={studentAuthForm.grade}
                           onChange={e => setStudentAuthForm({ ...studentAuthForm, grade: e.target.value })}
-                          className="w-full rounded-xl bg-slate-900 border border-slate-800 p-3 text-white focus:outline-none focus:border-brand-cyan"
+                          className="w-full rounded-xl bg-slate-50 dark:bg-slate-900 border border-slate-300 dark:border-slate-800 p-3 text-slate-900 dark:text-white focus:outline-none focus:border-brand-cyan"
                         >
                           {ACADEMIC_GRADES.map(g => (
                             <option key={g.id} value={g.id}>
@@ -2048,49 +2125,49 @@ function AcademyApp() {
                       </div>
 
                       <div>
-                        <label className="block mb-1.5 font-semibold text-white">{t('الشعبة / النظام الدراسي', 'Department / System')}</label>
+                        <label className="block mb-1.5 font-semibold text-slate-800 dark:text-white">{t('التخصص / المسار الدراسي', 'IT Department Track')}</label>
                         <select
                           value={studentAuthForm.department}
                           onChange={e => setStudentAuthForm({ ...studentAuthForm, department: e.target.value })}
-                          className="w-full rounded-xl bg-slate-900 border border-slate-800 p-3 text-white focus:outline-none focus:border-brand-cyan"
+                          className="w-full rounded-xl bg-slate-50 dark:bg-slate-900 border border-slate-300 dark:border-slate-800 p-3 text-slate-900 dark:text-white focus:outline-none focus:border-brand-cyan"
                         >
-                          <option value="general">{t('عربي / عام', 'General / Arabic')}</option>
-                          <option value="languages">{t('لغات / Integrated Science', 'Languages')}</option>
-                          <option value="stem">{t('مدارس STEM', 'STEM Schools')}</option>
+                          <option value="IT">{t('قسم تكنولوجيا المعلومات العام (IT)', 'General Information Technology (IT)')}</option>
+                          <option value="networks">{t('مسار الشبكات والأمن السيبراني', 'Networks & Cyber Security Track')}</option>
+                          <option value="software">{t('مسار البرمجيات وتطوير الأنظمة', 'Software & Systems Development')}</option>
                         </select>
                       </div>
                     </>
                   )}
 
                   <div>
-                    <label className="block mb-1.5 font-semibold text-white">{t('كلمة المرور الآمنة', 'Password')}</label>
+                    <label className="block mb-1.5 font-semibold text-slate-800 dark:text-white">{t('كلمة المرور الآمنة', 'Password')}</label>
                     <input
                       type="password"
                       required
                       placeholder="••••••••"
                       value={studentAuthForm.password}
                       onChange={e => setStudentAuthForm({ ...studentAuthForm, password: e.target.value })}
-                      className="w-full rounded-xl bg-slate-900 border border-slate-800 p-3 text-white focus:outline-none focus:border-brand-cyan font-mono"
+                      className="w-full rounded-xl bg-slate-50 dark:bg-slate-900 border border-slate-300 dark:border-slate-800 p-3 text-slate-900 dark:text-white focus:outline-none focus:border-brand-cyan font-mono"
                     />
                   </div>
 
                   <button
                     type="submit"
-                    className="w-full rounded-xl bg-brand-cyan text-brand-dark hover:bg-brand-cyan-light py-3 font-bold transition-all cursor-pointer shadow-lg shadow-cyan-950/20 text-xs"
+                    className="w-full rounded-xl bg-brand-cyan text-white dark:text-slate-950 hover:bg-brand-cyan-light py-3 font-bold transition-all cursor-pointer shadow-md text-xs"
                   >
                     {studentAuthMode === 'login' 
                       ? t('الدخول للأكاديمية وتفعيل الدروس', 'Login as Student') 
                       : t('تسجيل طالب جديد فورا', 'Register New Student')}
                   </button>
 
-                  <div className="text-center pt-3 border-t border-slate-800/60 flex justify-between text-[11px] text-slate-400">
+                  <div className="text-center pt-3 border-t border-slate-200 dark:border-slate-800/60 flex justify-between text-[11px] text-slate-500 dark:text-slate-400">
                     {studentAuthMode === 'login' ? (
                       <>
                         <span>{t('ليس لديك حساب؟', 'New Student?')}</span>
                         <button
                           type="button"
                           onClick={() => setStudentAuthMode('register')}
-                          className="text-brand-cyan hover:underline font-bold"
+                          className="text-brand-cyan hover:underline font-bold cursor-pointer"
                         >
                           {t('سجل الآن', 'Register Now')}
                         </button>
@@ -2101,7 +2178,7 @@ function AcademyApp() {
                         <button
                           type="button"
                           onClick={() => setStudentAuthMode('login')}
-                          className="text-brand-cyan hover:underline font-bold"
+                          className="text-brand-cyan hover:underline font-bold cursor-pointer"
                         >
                           {t('سجل دخولك', 'Login Here')}
                         </button>
@@ -2116,80 +2193,81 @@ function AcademyApp() {
         </div>
       )}
 
-      {/* Modal: Enroll Now checkout form */}
+      {/* Modal: Free Academic Course Activation Request */}
       {isEnrollModalOpen && enrollingCourse && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-brand-dark/95 backdrop-blur-md p-4 animate-fadeIn">
-          <div className="relative w-full max-w-sm rounded-2xl border border-slate-800 bg-slate-950 p-6 md:p-8 shadow-2xl">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/75 dark:bg-[#090d16]/90 backdrop-blur-md p-3 sm:p-4 animate-fadeIn">
+          <div className="relative w-full max-w-sm rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950 p-5 sm:p-7 shadow-2xl max-h-[90vh] overflow-y-auto">
             
             <button
+              type="button"
               onClick={() => setIsEnrollModalOpen(false)}
-              className="absolute top-4 left-4 rounded-lg bg-slate-900 p-2 text-slate-400 hover:text-white border border-slate-800 cursor-pointer"
+              className="absolute top-3.5 left-3.5 rounded-lg bg-slate-100 dark:bg-slate-900 p-2 text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white border border-slate-200 dark:border-slate-800 cursor-pointer"
             >
               <X className="h-4.5 w-4.5" />
             </button>
 
             {enrollSuccess ? (
               <div className="text-center py-6 space-y-3">
-                <span className="flex h-12 w-12 items-center justify-center rounded-full bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-xl mx-auto">
+                <span className="flex h-12 w-12 items-center justify-center rounded-full bg-emerald-500/10 border border-emerald-500/20 text-emerald-600 dark:text-emerald-400 text-xl mx-auto">
                   ✓
                 </span>
-                <h3 className="text-lg font-black text-white">{t('تم تسجيل طلب الحجز بنجاح!', 'Booking Registered Successfully!')}</h3>
-                <p className="text-xs text-slate-400 leading-relaxed">
+                <h3 className="text-lg font-black text-slate-900 dark:text-white">{t('تم إرسال طلب التفعيل المجاني!', 'Free Activation Request Sent!')}</h3>
+                <p className="text-xs text-slate-600 dark:text-slate-400 leading-relaxed">
                   {t(
-                    'تمت إضافة اشتراكك لقاعدة البيانات. سيقوم طاقم المساعدين لالمهندس بالتواصل معك لتفعيل حسابك ومتابعة المذاكرة فورا.',
-                    'Your reservation has been added to our databases. Eng/Mohamed abdal tawab’s assistants will contact you soon.'
+                    'تم تسجيل طلبك بنجاح (مجاني 100%). سيقوم طاقم إدارة المنصة بمراجعة وتفعيل حسابك للمقرر فوراً.',
+                    'Your 100% free course activation request is now queued for admin approval.'
                   )}
                 </p>
               </div>
             ) : (
-              <form onSubmit={handleEnrollSubmit} className="space-y-4 text-xs text-slate-300">
+              <form onSubmit={handleEnrollSubmit} className="space-y-4 text-xs text-slate-700 dark:text-slate-300 mt-4">
                 <div className="text-center mb-4">
-                  <span className="text-[10px] font-bold text-brand-cyan uppercase tracking-wider font-mono">Instant Booking</span>
-                  <h3 className="text-base font-black text-white mt-1">{t('نموذج الاشتراك الفوري بالكورس', 'Course Enrollment Form')}</h3>
-                  <p className="text-[11px] text-slate-400 mt-1 truncate max-w-xs mx-auto">
+                  <span className="text-[10px] font-bold text-brand-cyan uppercase tracking-wider font-mono">100% Free Academic Access</span>
+                  <h3 className="text-base font-black text-slate-900 dark:text-white mt-1">{t('طلب تفعيل المادة الأكاديمية', 'Request Free Course Activation')}</h3>
+                  <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-1 truncate max-w-xs mx-auto">
                     {t(enrollingCourse.titleAr, enrollingCourse.titleEn)}
                   </p>
                 </div>
 
                 <div>
-                  <label className="block mb-1.5 font-semibold text-white">{t('اسمك الثلاثي بالكامل', 'Your Full Name')}</label>
+                  <label className="block mb-1.5 font-semibold text-slate-800 dark:text-white">{t('اسم الطالب بالكامل', 'Your Full Name')}</label>
                   <input
                     type="text"
                     required
                     value={enrollForm.name}
                     onChange={e => setEnrollForm({ ...enrollForm, name: e.target.value })}
-                    className="w-full rounded-xl bg-slate-900 border border-slate-800 p-3 text-white focus:outline-none focus:border-brand-cyan"
+                    className="w-full rounded-xl bg-slate-50 dark:bg-slate-900 border border-slate-300 dark:border-slate-800 p-3 text-slate-900 dark:text-white focus:outline-none focus:border-brand-cyan"
                   />
                 </div>
 
                 <div>
-                  <label className="block mb-1.5 font-semibold text-white">{t('بريدك الإلكتروني (لتفعيل الحساب)', 'Your Email Address')}</label>
+                  <label className="block mb-1.5 font-semibold text-slate-800 dark:text-white">{t('البريد الإلكتروني الأكاديمي', 'Your Email Address')}</label>
                   <input
                     type="email"
                     required
                     value={enrollForm.email}
                     onChange={e => setEnrollForm({ ...enrollForm, email: e.target.value })}
-                    className="w-full rounded-xl bg-slate-900 border border-slate-800 p-3 text-white focus:outline-none focus:border-brand-cyan font-mono"
+                    className="w-full rounded-xl bg-slate-50 dark:bg-slate-900 border border-slate-300 dark:border-slate-800 p-3 text-slate-900 dark:text-white focus:outline-none focus:border-brand-cyan font-mono"
                   />
                 </div>
 
                 <div>
-                  <label className="block mb-1.5 font-semibold text-white">{t('رقم الموبايل للتنسيق والواتساب', 'Phone / WhatsApp Number')}</label>
+                  <label className="block mb-1.5 font-semibold text-slate-800 dark:text-white">{t('رقم الواتساب للتواصل السريع', 'Phone / WhatsApp Number')}</label>
                   <input
                     type="text"
                     required
                     value={enrollForm.phone}
                     onChange={e => setEnrollForm({ ...enrollForm, phone: e.target.value })}
-                    className="w-full rounded-xl bg-slate-900 border border-slate-800 p-3 text-white focus:outline-none focus:border-brand-cyan font-mono"
+                    className="w-full rounded-xl bg-slate-50 dark:bg-slate-900 border border-slate-300 dark:border-slate-800 p-3 text-slate-900 dark:text-white focus:outline-none focus:border-brand-cyan font-mono"
                   />
                 </div>
 
                 <button
                   type="submit"
                   disabled={submittingEnroll}
-                  className="w-full rounded-xl bg-brand-cyan text-brand-dark hover:bg-brand-cyan-light py-3 font-bold transition-all disabled:opacity-50 cursor-pointer shadow-lg shadow-cyan-950/20"
+                  className="w-full rounded-xl bg-brand-cyan text-white dark:text-slate-950 hover:bg-brand-cyan-light py-3 font-bold transition-all disabled:opacity-50 cursor-pointer shadow-md"
                 >
-                  {submittingEnroll ? t('جاري تأكيد الحجز ومزامنة الملفات...', 'Processing...') : t('تأكيد الحجز الفوري', 'Confirm Enrollment Booking')}
+                  {submittingEnroll ? t('جاري إرسال طلب التفعيل...', 'Submitting...') : t('إرسال طلب التفعيل المجاني', 'Submit Free Activation Request')}
                 </button>
               </form>
             )}
@@ -2200,9 +2278,10 @@ function AcademyApp() {
 
       {/* Protected Video Modal Overlay */}
       {activeVideoModalUrl && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/90 p-4 backdrop-blur-md">
-          <div className="relative w-full max-w-4xl rounded-2xl border border-slate-800 bg-slate-950 p-4 shadow-2xl">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/90 p-3 sm:p-4 backdrop-blur-md">
+          <div className="relative w-full max-w-4xl rounded-2xl border border-slate-800 bg-slate-950 p-3 sm:p-4 shadow-2xl">
             <button
+              type="button"
               onClick={() => setActiveVideoModalUrl(null)}
               className="absolute top-3 right-3 z-10 rounded-full bg-slate-800 p-2 text-slate-300 hover:bg-slate-700 hover:text-white transition-all cursor-pointer"
             >

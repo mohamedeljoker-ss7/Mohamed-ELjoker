@@ -3,8 +3,8 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>منصة Eng/Mohamed abdal tawab | الجامعة التكنولوجية - قسم تكنولوجيا المعلومات IT</title>
-    <meta name="description" content="منصة الجامعة التكنولوجية الرسمية لقسم تكنولوجيا المعلومات IT بإشراف Eng/Mohamed abdal tawab لنزول المحاضرات والسكاشن بصيغ PDF والوورد وملفات الشرح." />
+    <title>منصة MOHAMED ELJOKER التعليمية | الجامعة التكنولوجية - قسم تكنولوجيا المعلومات IT</title>
+    <meta name="description" content="منصة MOHAMED ELJOKER التعليمية المجانية بالكامل لتنظيم ونشر المحاضرات والسكاشن والامتحانات وشيتات قسم تكنولوجيا المعلومات IT." />
     <!-- Single Page Apps for GitHub Pages Routing Handler -->
     <script type="text/javascript">
       (function(l) {
@@ -27,6 +27,18 @@
           }
         }
       }(window.location));
+    </script>
+    <script>
+      (function () {
+        try {
+          var saved = localStorage.getItem('academy_theme');
+          var prefersDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+          var theme = (saved === 'light' || saved === 'dark') ? saved : (prefersDark ? 'dark' : 'light');
+          var root = document.documentElement;
+          root.classList.remove('light', 'dark');
+          root.classList.add(theme);
+        } catch (e) {}
+      })();
     </script>
   </head>
   <body>

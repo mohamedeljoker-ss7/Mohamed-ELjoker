@@ -1,11 +1,12 @@
 import React from 'react';
 import { Course, Category, UserAuth, Order } from '../types';
 import { useLanguage } from './LanguageContext';
-import { BookOpen, Clock, Award, Star, CheckCircle2 } from 'lucide-react';
+import { BookOpen, Clock, Award, CheckCircle2, ArrowUpRight, FileText } from 'lucide-react';
 import { motion } from 'motion/react';
 import { verifyCourseAccess } from '../utils/authAccess';
 import { authService } from '../firebase';
 import { getCourseDisplayTitle, getGradeName } from '../utils/gradeMatching';
+import { getCourseFallbackImage } from '../utils/platformAssets';
 
 interface CourseCardProps {
   course: Course;
@@ -20,135 +21,111 @@ export const CourseCard: React.FC<CourseCardProps> = ({ course, category, onSele
   const { language, t } = useLanguage();
   const activeUser = user !== undefined ? user : authService.getCurrentUser();
   const access = verifyCourseAccess(activeUser, course, orders);
+  const fallbackImg = getCourseFallbackImage(course.subjectEn || course.subject || course.titleEn);
+  const coverSrc =
+    course.bannerUrl && !course.bannerUrl.includes('unsplash.com')
+      ? course.bannerUrl
+      : course.thumbnailUrl && !course.thumbnailUrl.includes('unsplash.com')
+      ? course.thumbnailUrl
+      : fallbackImg;
 
-  const priceFormatted = (val: number) => {
-    return language === 'ar' ? `${val} ج.م` : `${val} EGP`;
-  };
-
-  const hasDiscount = course.discountPrice !== undefined && course.discountPrice < course.price;
+  const gradeText = category ? t(category.nameAr, category.nameEn) : getGradeName(course.grade, language);
 
   return (
     <motion.div
       onClick={() => onSelect(course)}
-      initial={{ opacity: 0, y: 20 }}
+      initial={{ opacity: 0, y: 16 }}
       animate={{ opacity: 1, y: 0 }}
-      whileHover={{ y: -6, scale: 1.02 }}
-      transition={{ duration: 0.3 }}
-      className="group relative cursor-pointer overflow-hidden rounded-2xl glass transition-all hover:border-brand-cyan/40 hover:shadow-lg hover:shadow-cyan-950/25 flex flex-col h-full"
+      whileHover={{ y: -4 }}
+      transition={{ duration: 0.25 }}
+      className="group relative cursor-pointer overflow-hidden rounded-2xl glass transition-all hover:border-brand-cyan/40 hover:shadow-xl hover:shadow-cyan-950/20 flex flex-col h-full"
     >
       {/* Thumbnail */}
-      <div className="relative aspect-video w-full overflow-hidden bg-slate-900">
+      <div className="relative aspect-[16/10] w-full overflow-hidden bg-slate-900">
         <img
-          src={course.bannerUrl || course.thumbnailUrl || 'https://images.unsplash.com/photo-1532094349884-543bc11b234d?auto=format&fit=crop&w=600&q=80'}
+          src={coverSrc}
           alt={t(course.titleAr, course.titleEn)}
-          referrerPolicy="no-referrer"
-          className="h-full w-full object-cover transition-transform duration-500 group-hover:scale-110"
+          className="h-full w-full object-cover transition-transform duration-500 group-hover:scale-105"
         />
-        <div className="absolute inset-0 bg-gradient-to-t from-brand-dark/90 via-transparent to-transparent" />
-        
-        {/* Category & Grade Badge */}
-        <span className="absolute top-3 left-3 rounded-full bg-brand-cyan/20 px-3 py-1 text-xs font-semibold text-brand-cyan-light backdrop-blur-md border border-brand-cyan/30">
-          {category ? t(category.nameAr, category.nameEn) : getGradeName(course.grade, language)}
-        </span>
+        <div className="absolute inset-0 bg-gradient-to-t from-slate-950/90 via-slate-950/25 to-transparent" />
 
-        {/* Featured / Popular Badge */}
-        <div className="absolute top-3 right-3 flex flex-col gap-1.5">
-          {course.featured && (
-            <span className="rounded-full bg-amber-500/20 px-3 py-1 text-[10px] font-bold uppercase tracking-wider text-amber-400 backdrop-blur-md border border-amber-500/30 flex items-center gap-1">
-              <Star className="h-3 w-3 fill-amber-400" />
-              {t('مميز', 'Featured')}
-            </span>
-          )}
-          {course.popular && (
-            <span className="rounded-full bg-violet-500/20 px-3 py-1 text-[10px] font-bold uppercase tracking-wider text-violet-400 backdrop-blur-md border border-violet-500/30">
-              {t('شائع', 'Popular')}
-            </span>
-          )}
+        {/* Single primary corner status when approved */}
+        {access.allowed && (
+          <div className="absolute bottom-3 left-3 flex items-center gap-1.5 text-[11px] font-bold text-emerald-300">
+            <CheckCircle2 className="h-3.5 w-3.5" />
+            <span>{t('متاح بالكامل', 'Unlocked')}</span>
+          </div>
+        )}
+
+        <div className="absolute bottom-3 right-3 text-[11px] font-mono font-bold text-cyan-200 tracking-wide">
+          {course.subject || 'IT'} · {t('مجاني 100%', '100% Free')}
         </div>
       </div>
 
       {/* Content */}
       <div className="flex flex-col flex-grow p-5">
-        <h3 className="line-clamp-2 text-lg font-bold text-white group-hover:text-brand-cyan transition-colors font-sans leading-snug">
+        <p className="text-[11px] font-semibold text-brand-cyan dark:text-brand-cyan-light mb-1 truncate">
+          {gradeText}
+        </p>
+
+        <h3 className="line-clamp-2 text-lg font-extrabold text-slate-900 dark:text-white group-hover:text-brand-cyan transition-colors leading-snug">
           {getCourseDisplayTitle(course, language)}
         </h3>
         
-        <p className="mt-2 line-clamp-2 text-xs text-slate-400 font-sans leading-relaxed">
+        <p className="mt-2 line-clamp-2 text-xs text-slate-600 dark:text-slate-400 leading-relaxed">
           {t(course.descriptionAr, course.descriptionEn)}
         </p>
 
-        {/* Course details */}
-        <div className="mt-4 flex flex-wrap items-center gap-3 border-t border-slate-800/60 pt-4 text-[11px] text-slate-400 font-sans">
-          <div className="flex items-center gap-1">
+        {/* Clean Unboxed Metadata */}
+        <div className="mt-4 flex flex-wrap items-center gap-x-3 gap-y-1.5 border-t border-slate-200/70 dark:border-slate-800/60 pt-3.5 text-[11px] text-slate-600 dark:text-slate-400 font-medium tabular-nums">
+          <span className="inline-flex items-center gap-1">
             <Clock className="h-3.5 w-3.5 text-brand-cyan" />
-            <span>{course.duration}</span>
-          </div>
-          <div className="flex items-center gap-1">
+            {course.duration}
+          </span>
+          <span className="text-slate-400">·</span>
+          <span className="inline-flex items-center gap-1">
             <BookOpen className="h-3.5 w-3.5 text-brand-cyan" />
-            <span>{course.lessonsCount} {t('محاضرة وسكشن', 'Lectures & Labs')}</span>
-          </div>
-          <div className="flex items-center gap-1">
-            <Award className="h-3.5 w-3.5 text-brand-cyan" />
-            <span className="truncate max-w-[100px]">{course.teacherName}</span>
-          </div>
-          <div className="flex items-center gap-1 text-blue-400 font-mono text-[10px] bg-blue-950/40 px-2 py-0.5 rounded border border-blue-900/50">
-            <span>📄 PDF & Word</span>
-          </div>
+            {course.lessonsCount} {t('مادة تعليمية', 'Items')}
+          </span>
+          <span className="text-slate-400">·</span>
+          <span className="inline-flex items-center gap-1">
+            <FileText className="h-3.5 w-3.5 text-brand-cyan" />
+            PDF & Word
+          </span>
         </div>
 
-        {/* Price & Action */}
+        {/* Footer & Action */}
         <div className="mt-auto pt-4 flex items-center justify-between gap-2">
-          <div className="flex flex-col">
-            {course.isFree ? (
-              <span className="text-lg font-black text-emerald-400">
-                {t('مجاني', 'Free')}
-              </span>
-            ) : hasDiscount ? (
-              <div className="flex flex-col">
-                <div className="flex items-center gap-1.5">
-                  <span className="text-xs text-slate-500 line-through">
-                    {priceFormatted(course.price)}
-                  </span>
-                  <span className="rounded bg-rose-500/20 px-1.5 py-0.5 text-[10px] font-bold text-rose-400 border border-rose-500/30">
-                    -{Math.round(((course.price - course.discountPrice!) / course.price) * 100)}%
-                  </span>
-                </div>
-                <span className="text-lg font-black text-brand-cyan-light">
-                  {priceFormatted(course.discountPrice!)}
-                </span>
-              </div>
-            ) : (
-              <span className="text-lg font-black text-white">
-                {priceFormatted(course.price)}
-              </span>
-            )}
-          </div>
+          <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-slate-500 dark:text-slate-400 truncate max-w-[140px]">
+            <Award className="h-3.5 w-3.5 text-brand-cyan shrink-0" />
+            {course.teacherName}
+          </span>
 
           {access.allowed ? (
             <button
               type="button"
               onClick={(e) => { e.stopPropagation(); onSelect(course); }}
-              className="rounded-xl bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 hover:bg-emerald-500/30 px-3.5 py-2 text-xs font-bold transition-all duration-200 cursor-pointer shadow-md active:scale-95 flex items-center gap-1.5"
+              className="rounded-xl bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border border-emerald-500/30 hover:bg-emerald-500/25 px-3.5 py-2 text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 whitespace-nowrap"
             >
-              <CheckCircle2 className="h-3.5 w-3.5 shrink-0" />
-              <span>✅ {t('مفعل (المحاضرات والسكاشن)', 'Activated (Lectures & Labs)')}</span>
+              <span>{t('فتح المحاضرات والسكاشن', 'Open Lectures & Labs')}</span>
+              <ArrowUpRight className="h-3.5 w-3.5 shrink-0" />
             </button>
           ) : access.reason === 'pending_approval' ? (
             <button
               type="button"
               onClick={(e) => { e.stopPropagation(); onSelect(course); }}
-              className="rounded-xl bg-amber-500/20 text-amber-300 border border-amber-500/30 hover:bg-amber-500/30 px-3.5 py-2 text-xs font-bold transition-all duration-200 cursor-pointer shadow-md flex items-center gap-1.5"
+              className="rounded-xl bg-amber-500/15 text-amber-700 dark:text-amber-300 border border-amber-500/30 hover:bg-amber-500/25 px-3.5 py-2 text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 whitespace-nowrap"
             >
               <Clock className="h-3.5 w-3.5 shrink-0" />
-              <span>⏳ {t('طلب التفعيل قيد المراجعة', 'Activation Pending')}</span>
+              <span>{t('حسابك قيد المراجعة', 'Pending Approval')}</span>
             </button>
           ) : (
             <button
               type="button"
               onClick={(e) => { e.stopPropagation(); onEnroll(course, e); }}
-              className="rounded-xl bg-brand-cyan text-brand-dark hover:bg-brand-cyan-light px-4 py-2 text-xs font-bold transition-all duration-200 cursor-pointer shadow-md shadow-cyan-950/20 active:scale-95"
+              className="rounded-xl bg-brand-cyan text-white dark:text-slate-950 hover:bg-brand-cyan-light px-4 py-2 text-xs font-extrabold transition-all cursor-pointer shadow-sm whitespace-nowrap"
             >
-              {t('طلب تفعيل المادة', 'Request Activation')}
+              {t('دخول / تفعيل المقرر', 'Access Course')}
             </button>
           )}
         </div>

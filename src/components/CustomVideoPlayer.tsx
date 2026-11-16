@@ -451,7 +451,7 @@ export const CustomVideoPlayer: React.FC<CustomVideoPlayerProps> = ({
                 </div>
               ) : (
                 <>
-                  <WifiOff className="h-12 w-12 text-rose-500 mb-3 animate-bounce" />
+                  <WifiOff className="h-12 w-12 text-rose-500 mb-3" />
                   <h4 className="font-black text-sm md:text-base text-white mb-1">
                     {isOffline ? t('انقطع الاتصال بالإنترنت', 'Internet Connection Disconnected') : t('تعذر تشغيل الفيديو', 'Video Playback Notice')}
                   </h4>

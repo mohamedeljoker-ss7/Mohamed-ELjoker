@@ -17,14 +17,7 @@ export const ACADEMIC_GRADES: AcademicGrade[] = [
   { id: 'year2', nameAr: 'الفرقة الثانية - IT', nameEn: '2nd Year - IT' },
   { id: 'year3', nameAr: 'الفرقة الثالثة - IT', nameEn: '3rd Year - IT' },
   { id: 'year4', nameAr: 'الفرقة الرابعة - IT', nameEn: '4th Year - IT' },
-  { id: 'general', nameAr: 'جميع الفرق الدراسية', nameEn: 'All Academic Years' },
-  // Backward compatibility aliases
-  { id: 'prep1', nameAr: 'الفرقة الأولى', nameEn: '1st Year' },
-  { id: 'prep2', nameAr: 'الفرقة الثانية', nameEn: '2nd Year' },
-  { id: 'prep3', nameAr: 'الفرقة الثالثة', nameEn: '3rd Year' },
-  { id: 'sec1', nameAr: 'الفرقة الأولى', nameEn: '1st Year' },
-  { id: 'sec2', nameAr: 'الفرقة الثانية', nameEn: '2nd Year' },
-  { id: 'sec3', nameAr: 'الفرقة الثالثة', nameEn: '3rd Year' },
+  { id: 'general', nameAr: 'جميع الفرق الدراسية', nameEn: 'All Academic Years' }
 ];
 
 export const ACADEMIC_SUBJECTS: AcademicSubject[] = [
@@ -44,14 +37,14 @@ export const ACADEMIC_SUBJECTS: AcademicSubject[] = [
 ];
 
 export function getGradeName(gradeCode?: string, lang: 'ar' | 'en' = 'ar'): string {
-  if (!gradeCode) return lang === 'ar' ? 'عام / جميع الصفوف' : 'General / All Grades';
+  if (!gradeCode) return lang === 'ar' ? 'جميع الفرق - قسم IT' : 'All Years - IT Dept';
   const norm = normalizeGradeCode(gradeCode);
   const found = ACADEMIC_GRADES.find(g => g.id === norm || g.nameAr === gradeCode || g.nameEn === gradeCode);
   if (found) {
     return lang === 'ar' ? found.nameAr : found.nameEn;
   }
   if (norm === 'all' || norm === 'general') {
-    return lang === 'ar' ? 'جميع الصفوف الدراسية' : 'All Academic Grades';
+    return lang === 'ar' ? 'جميع الفرق الدراسية' : 'All Academic Years';
   }
   return gradeCode;
 }
@@ -59,7 +52,7 @@ export function getGradeName(gradeCode?: string, lang: 'ar' | 'en' = 'ar'): stri
 export function getCourseDisplayTitle(course: Course, lang: 'ar' | 'en' = 'ar'): string {
   if (!course) return '';
   const gradeLabel = getGradeName(course.grade || course.categoryId, lang);
-  const subjectName = course.subject || course.subjectAr || (lang === 'ar' ? 'العلوم' : 'Science');
+  const subjectName = course.subject || course.subjectAr || (lang === 'ar' ? 'تكنولوجيا المعلومات IT' : 'Information Technology');
 
   if (course.subject || course.grade) {
     return `${subjectName} - ${gradeLabel}`;
@@ -156,11 +149,13 @@ export function doesCourseMatchStudent(
     }
   }
 
-  // Department matching
+  // Department matching (IT department umbrella covers networks, software, cybersecurity tracks)
   if (studentDepartment && studentDepartment !== 'all' && studentDepartment !== 'general') {
     const studentDep = studentDepartment.toLowerCase().trim();
     const courseDep = (course as any).department ? (course as any).department.toLowerCase().trim() : '';
-    if (courseDep && courseDep !== 'all' && courseDep !== 'general') {
+    const itTracks = ['it', 'networks', 'software', 'cybersecurity'];
+    const bothInIt = itTracks.includes(studentDep) && (courseDep === 'it' || itTracks.includes(courseDep));
+    if (courseDep && courseDep !== 'all' && courseDep !== 'general' && !bothInIt) {
       if (courseDep !== studentDep) {
         return false;
       }

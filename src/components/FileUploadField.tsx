@@ -97,7 +97,7 @@ export const FileUploadField: React.FC<FileUploadFieldProps> = ({
   };
 
   return (
-    <div className="bg-slate-900/80 border border-slate-800 rounded-2xl p-4 space-y-3 dir-rtl text-right">
+    <div className="bg-slate-50 dark:bg-slate-900/80 border border-slate-200 dark:border-slate-800 rounded-2xl p-4 space-y-3 dir-rtl text-right">
       <input
         ref={fileInputRef}
         type="file"
@@ -106,8 +106,8 @@ export const FileUploadField: React.FC<FileUploadFieldProps> = ({
         className="hidden"
       />
 
-      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-800 pb-2">
-        <label className="font-bold text-white text-xs flex items-center gap-2">
+      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 dark:border-slate-800 pb-2">
+        <label className="font-bold text-slate-900 dark:text-white text-xs flex items-center gap-2">
           <span>{isPdf ? '📄' : isImage ? '🖼️' : '📁'}</span>
           <span>{label}</span>
         </label>
@@ -116,7 +116,7 @@ export const FileUploadField: React.FC<FileUploadFieldProps> = ({
           type="button"
           onClick={() => fileInputRef.current?.click()}
           disabled={isUploading}
-          className="px-3 py-1 bg-brand-cyan/20 hover:bg-brand-cyan/30 text-brand-cyan border border-brand-cyan/40 rounded-xl text-xs font-bold transition-all disabled:opacity-50 cursor-pointer flex items-center gap-1"
+          className="px-3 py-1.5 bg-brand-cyan/15 hover:bg-brand-cyan/25 text-brand-cyan dark:text-brand-cyan-light border border-brand-cyan/40 rounded-xl text-xs font-bold transition-all disabled:opacity-50 cursor-pointer flex items-center gap-1"
         >
           <span>📤</span>
           <span>{t('رفع من الجهاز', 'Upload File')}</span>
@@ -130,14 +130,14 @@ export const FileUploadField: React.FC<FileUploadFieldProps> = ({
           value={value}
           onChange={(e) => onChange(e.target.value)}
           placeholder={placeholder || (isPdf ? 'https://.../file.pdf' : 'https://.../image.png')}
-          className="w-full rounded-xl bg-slate-950 border border-slate-800 p-2.5 pr-9 text-white text-xs font-mono focus:outline-none focus:border-brand-cyan text-left dir-ltr"
+          className="w-full rounded-xl bg-white dark:bg-slate-950 border border-slate-300 dark:border-slate-800 p-2.5 pr-9 text-slate-900 dark:text-white text-xs font-mono focus:outline-none focus:border-brand-cyan text-left dir-ltr"
         />
-        <span className="absolute right-3 top-2.5 text-slate-500 text-xs">🔗</span>
+        <span className="absolute right-3 top-2.5 text-slate-400 text-xs">🔗</span>
       </div>
 
       {/* Real Upload Progress UI */}
       {isUploading && progressInfo && (
-        <div className="bg-slate-950 rounded-xl p-3 border border-brand-cyan/30 space-y-2">
+        <div className="bg-white dark:bg-slate-950 rounded-xl p-3 border border-brand-cyan/30 space-y-2">
           <div className="flex items-center justify-between text-xs font-bold text-brand-cyan">
             <span className="flex items-center gap-2">
               <span className="h-2 w-2 rounded-full bg-brand-cyan animate-ping" />
@@ -145,23 +145,23 @@ export const FileUploadField: React.FC<FileUploadFieldProps> = ({
                 ? t('جاري المزامنة والحفظ السحابي...', 'Syncing to cloud...')
                 : t('جاري رفع الملف إلى التخزين السحابي (Firebase Storage)...', 'Uploading file to Cloud Storage (Firebase)...')}
             </span>
-            <span className="font-mono text-white">{Math.round(progressInfo.progress)}%</span>
+            <span className="font-mono text-slate-900 dark:text-white tabular-nums">{Math.round(progressInfo.progress)}%</span>
           </div>
 
-          <div className="w-full bg-slate-800 h-2 rounded-full overflow-hidden">
+          <div className="w-full bg-slate-200 dark:bg-slate-800 h-2 rounded-full overflow-hidden">
             <div
               className="bg-brand-cyan h-full transition-all duration-300"
               style={{ width: `${Math.min(100, Math.max(0, progressInfo.progress))}%` }}
             />
           </div>
 
-          <div className="flex items-center justify-between text-[10px] font-mono text-slate-400">
+          <div className="flex items-center justify-between text-[10px] font-mono text-slate-500 dark:text-slate-400">
             <span>{progressInfo.formattedSize}</span>
             <span>{progressInfo.speed}</span>
             <button
               type="button"
               onClick={handleCancel}
-              className="text-rose-400 hover:underline font-sans cursor-pointer"
+              className="text-rose-600 dark:text-rose-400 hover:underline font-sans cursor-pointer"
             >
               {t('إلغاء', 'Cancel')}
             </button>
@@ -171,39 +171,39 @@ export const FileUploadField: React.FC<FileUploadFieldProps> = ({
 
       {/* Live Preview Bar */}
       {value && value.trim().length > 0 && !isUploading && (
-        <div className="bg-slate-950 rounded-xl p-2.5 border border-slate-800 flex items-center justify-between gap-2">
-          <div className="flex items-center gap-3 overflow-hidden max-w-[80%]">
+        <div className="bg-white dark:bg-slate-950 rounded-xl p-2.5 border border-slate-200 dark:border-slate-800 flex items-center justify-between gap-2">
+          <div className="flex items-center gap-3 overflow-hidden min-w-0 flex-1">
             {isImage ? (
               <img
                 src={value}
                 alt="Preview"
-                className="w-10 h-10 rounded-lg object-cover border border-slate-700 shrink-0"
+                className="w-10 h-10 rounded-lg object-cover border border-slate-200 dark:border-slate-700 shrink-0"
                 onError={(e) => {
                   (e.target as HTMLImageElement).style.display = 'none';
                 }}
               />
             ) : isPdf ? (
-              <div className="w-10 h-10 rounded-lg bg-red-950/60 border border-red-800 text-red-400 flex items-center justify-center font-bold text-xs shrink-0">
+              <div className="w-10 h-10 rounded-lg bg-red-500/10 border border-red-500/30 text-red-600 dark:text-red-400 flex items-center justify-center font-bold text-xs shrink-0">
                 PDF
               </div>
             ) : isWord ? (
-              <div className="w-10 h-10 rounded-lg bg-blue-950/60 border border-blue-700 text-blue-400 flex items-center justify-center font-bold text-xs shrink-0">
+              <div className="w-10 h-10 rounded-lg bg-blue-500/10 border border-blue-500/30 text-blue-600 dark:text-blue-400 flex items-center justify-center font-bold text-xs shrink-0">
                 DOCX
               </div>
             ) : isPpt ? (
-              <div className="w-10 h-10 rounded-lg bg-orange-950/60 border border-orange-700 text-orange-400 flex items-center justify-center font-bold text-xs shrink-0">
+              <div className="w-10 h-10 rounded-lg bg-orange-500/10 border border-orange-500/30 text-orange-600 dark:text-orange-400 flex items-center justify-center font-bold text-xs shrink-0">
                 PPT
               </div>
             ) : isCode ? (
-              <div className="w-10 h-10 rounded-lg bg-emerald-950/60 border border-emerald-700 text-emerald-400 flex items-center justify-center font-bold text-xs shrink-0">
+              <div className="w-10 h-10 rounded-lg bg-emerald-500/10 border border-emerald-500/30 text-emerald-600 dark:text-emerald-400 flex items-center justify-center font-bold text-xs shrink-0">
                 CODE
               </div>
             ) : (
-              <div className="w-10 h-10 rounded-lg bg-slate-800 flex items-center justify-center text-slate-300 text-xs shrink-0">
+              <div className="w-10 h-10 rounded-lg bg-slate-100 dark:bg-slate-800 flex items-center justify-center text-slate-600 dark:text-slate-300 text-xs shrink-0">
                 FILE
               </div>
             )}
-            <div className="truncate text-xs font-mono text-slate-300 dir-ltr text-left">
+            <div className="truncate text-xs font-mono text-slate-700 dark:text-slate-300 dir-ltr text-left">
               {value}
             </div>
           </div>
@@ -211,7 +211,7 @@ export const FileUploadField: React.FC<FileUploadFieldProps> = ({
           <button
             type="button"
             onClick={() => onChange('')}
-            className="text-xs text-rose-400 hover:text-rose-300 underline shrink-0 cursor-pointer"
+            className="text-xs text-rose-600 dark:text-rose-400 hover:underline shrink-0 cursor-pointer font-bold"
           >
             {t('حذف', 'Remove')}
           </button>
@@ -220,12 +220,12 @@ export const FileUploadField: React.FC<FileUploadFieldProps> = ({
 
       {/* Error Message */}
       {errorMsg && (
-        <div className="p-2 bg-rose-950/50 border border-rose-500/30 rounded-xl text-xs text-rose-300 flex items-center justify-between">
+        <div className="p-2.5 bg-rose-500/10 border border-rose-500/30 rounded-xl text-xs text-rose-700 dark:text-rose-300 flex items-center justify-between gap-2">
           <span>⚠️ {errorMsg}</span>
           <button
             type="button"
             onClick={() => setErrorMsg(null)}
-            className="text-slate-400 hover:text-white underline text-[11px] cursor-pointer"
+            className="text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white underline text-[11px] cursor-pointer shrink-0"
           >
             {t('إغلاق', 'Close')}
           </button>

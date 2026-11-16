@@ -152,7 +152,7 @@ export const VideoHostingUploader: React.FC<VideoHostingUploaderProps> = ({
   };
 
   return (
-    <div className="bg-slate-900/90 border border-slate-800 rounded-2xl p-4 shadow-xl text-right dir-rtl space-y-4">
+    <div className="bg-slate-50 dark:bg-slate-900/90 border border-slate-200 dark:border-slate-800 rounded-2xl p-4 shadow-sm text-right dir-rtl space-y-4">
       {/* Hidden File Input */}
       <input
         ref={fileInputRef}
@@ -163,20 +163,20 @@ export const VideoHostingUploader: React.FC<VideoHostingUploaderProps> = ({
       />
 
       {/* Header & Mode Selector Tabs */}
-      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-800 pb-3">
-        <label className="font-bold text-white text-sm flex items-center gap-2">
+      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 dark:border-slate-800 pb-3">
+        <label className="font-bold text-slate-900 dark:text-white text-sm flex items-center gap-2">
           <span>🎬</span>
           <span>{label || t('فيديو الدرس', 'Lesson Video')}</span>
         </label>
 
-        <div className="flex bg-slate-950 p-1 rounded-xl border border-slate-800 text-xs font-semibold">
+        <div className="flex flex-wrap bg-slate-200/70 dark:bg-slate-950 p-1 rounded-xl border border-slate-200 dark:border-slate-800 text-xs font-semibold gap-1">
           <button
             type="button"
             onClick={() => setActiveTab('device')}
             className={`px-3 py-1.5 rounded-lg transition-all cursor-pointer ${
               activeTab === 'device'
-                ? 'bg-brand-cyan text-brand-dark font-bold shadow-md'
-                : 'text-slate-400 hover:text-white'
+                ? 'bg-brand-cyan text-white dark:text-slate-950 font-bold shadow-sm'
+                : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
             }`}
           >
             📱 {t('رفع من الجهاز', 'Upload from Device')}
@@ -186,8 +186,8 @@ export const VideoHostingUploader: React.FC<VideoHostingUploaderProps> = ({
             onClick={() => setActiveTab('url')}
             className={`px-3 py-1.5 rounded-lg transition-all cursor-pointer ${
               activeTab === 'url'
-                ? 'bg-brand-cyan text-brand-dark font-bold shadow-md'
-                : 'text-slate-400 hover:text-white'
+                ? 'bg-brand-cyan text-white dark:text-slate-950 font-bold shadow-sm'
+                : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
             }`}
           >
             🔗 {t('رابط YouTube / مستضاف', 'YouTube / Hosted Link')}
@@ -201,15 +201,15 @@ export const VideoHostingUploader: React.FC<VideoHostingUploaderProps> = ({
           {!isUploading && (
             <div
               onClick={() => fileInputRef.current?.click()}
-              className="border-2 border-dashed border-slate-700 hover:border-brand-cyan/60 rounded-2xl p-5 text-center bg-slate-950/60 hover:bg-slate-950 transition-all cursor-pointer group"
+              className="border-2 border-dashed border-slate-300 dark:border-slate-700 hover:border-brand-cyan/60 rounded-2xl p-5 text-center bg-white dark:bg-slate-950/60 hover:bg-slate-50 dark:hover:bg-slate-950 transition-all cursor-pointer group"
             >
               <div className="text-3xl mb-1.5 group-hover:scale-110 transition-transform">📤</div>
-              <p className="font-bold text-white text-sm mb-0.5">
+              <p className="font-bold text-slate-900 dark:text-white text-sm mb-0.5">
                 {value
                   ? t('اضغط هنا لاختيار فيديو جديد وتغيير الحالي', 'Click here to select a new video file to replace current')
                   : t('اضغط هنا لاختيار فيديو من جهازك ورفعه على Firebase Storage', 'Click here to select a video file and upload to Firebase Storage')}
               </p>
-              <p className="text-slate-400 text-xs">
+              <p className="text-slate-500 dark:text-slate-400 text-xs">
                 {t('يدعم صيغ: MP4, MOV, WEBM, MKV (يتم حساب النسبة والسرعة بشكل حقيقي)', 'Supports MP4, MOV, WEBM, MKV with real progress tracking')}
               </p>
             </div>
@@ -217,19 +217,19 @@ export const VideoHostingUploader: React.FC<VideoHostingUploaderProps> = ({
 
           {/* Real Active Uploading Progress UI */}
           {isUploading && progressInfo && (
-            <div className="bg-slate-950 rounded-xl p-4 border border-brand-cyan/40 space-y-3 shadow-inner">
-              <div className="flex items-center justify-between text-xs font-bold text-white">
+            <div className="bg-white dark:bg-slate-950 rounded-xl p-4 border border-brand-cyan/40 space-y-3 shadow-inner">
+              <div className="flex items-center justify-between text-xs font-bold text-slate-900 dark:text-white">
                 <span className="flex items-center gap-2 text-brand-cyan">
                   <span className="h-2 w-2 rounded-full bg-brand-cyan animate-ping" />
                   {progressInfo.speed.includes('سحابياً') || progressInfo.speed.includes('البيانات') 
                     ? t('جاري الحفظ والمزامنة السحابية للفيديو...', 'Syncing video to cloud storage...')
                     : t('جاري رفع الفيديو إلى التخزين السحابي (Firebase Storage)...', 'Uploading video to Cloud Storage (Firebase)...')}
                 </span>
-                <span className="font-mono text-brand-cyan text-sm">{Math.round(progressInfo.progress)}%</span>
+                <span className="font-mono text-brand-cyan text-sm tabular-nums">{Math.round(progressInfo.progress)}%</span>
               </div>
 
               {/* Progress Bar */}
-              <div className="w-full bg-slate-800 h-2.5 rounded-full overflow-hidden p-0.5 border border-slate-700">
+              <div className="w-full bg-slate-200 dark:bg-slate-800 h-2.5 rounded-full overflow-hidden p-0.5 border border-slate-300 dark:border-slate-700">
                 <div
                   className="bg-gradient-to-r from-brand-cyan to-blue-500 h-full rounded-full transition-all duration-300"
                   style={{ width: `${Math.min(100, Math.max(0, progressInfo.progress))}%` }}
@@ -237,10 +237,10 @@ export const VideoHostingUploader: React.FC<VideoHostingUploaderProps> = ({
               </div>
 
               {/* Upload Stats */}
-              <div className="grid grid-cols-3 gap-2 text-[11px] font-mono text-slate-300 bg-slate-900/80 p-2.5 rounded-lg border border-slate-800 text-center">
+              <div className="grid grid-cols-3 gap-2 text-[11px] font-mono text-slate-600 dark:text-slate-300 bg-slate-50 dark:bg-slate-900/80 p-2.5 rounded-lg border border-slate-200 dark:border-slate-800 text-center">
                 <div>
                   <span className="block text-slate-500 text-[10px]">{t('الحجم المرفوع', 'Transferred')}</span>
-                  <span className="text-white font-bold">{progressInfo.formattedSize}</span>
+                  <span className="text-slate-900 dark:text-white font-bold">{progressInfo.formattedSize}</span>
                 </div>
                 <div>
                   <span className="block text-slate-500 text-[10px]">{t('سرعة الرفع الحقيقية', 'Real Speed')}</span>
@@ -248,7 +248,7 @@ export const VideoHostingUploader: React.FC<VideoHostingUploaderProps> = ({
                 </div>
                 <div>
                   <span className="block text-slate-500 text-[10px]">{t('الوقت المتبقي', 'Remaining')}</span>
-                  <span className="text-amber-400 font-bold">{progressInfo.remainingTime}</span>
+                  <span className="text-amber-600 dark:text-amber-400 font-bold">{progressInfo.remainingTime}</span>
                 </div>
               </div>
 
@@ -257,7 +257,7 @@ export const VideoHostingUploader: React.FC<VideoHostingUploaderProps> = ({
                 <button
                   type="button"
                   onClick={handleCancelUpload}
-                  className="px-3 py-1 bg-rose-500/20 hover:bg-rose-500/30 text-rose-400 border border-rose-500/40 rounded-lg text-xs font-bold transition-all cursor-pointer"
+                  className="px-3 py-1 bg-rose-500/15 hover:bg-rose-500/25 text-rose-600 dark:text-rose-400 border border-rose-500/40 rounded-lg text-xs font-bold transition-all cursor-pointer"
                 >
                   🛑 {t('إلغاء عملية الرفع', 'Cancel Upload')}
                 </button>
@@ -280,28 +280,28 @@ export const VideoHostingUploader: React.FC<VideoHostingUploaderProps> = ({
                 onChange(newVal);
                 if (onPreviewUrl) onPreviewUrl(newVal);
               }}
-              className="w-full rounded-xl bg-slate-950 border border-slate-800 p-3 pr-10 text-white focus:outline-none focus:border-brand-cyan font-mono text-xs text-left dir-ltr"
+              className="w-full rounded-xl bg-white dark:bg-slate-950 border border-slate-300 dark:border-slate-800 p-3 pr-10 text-slate-900 dark:text-white focus:outline-none focus:border-brand-cyan font-mono text-xs text-left dir-ltr"
             />
-            <span className="absolute right-3 text-slate-500 text-sm">🔗</span>
+            <span className="absolute right-3 text-slate-400 text-sm">🔗</span>
           </div>
 
           {/* Real-time YouTube Detection Badge */}
           {detectedYouTubeId && (
-            <div className="bg-red-950/40 border border-red-500/30 rounded-xl p-2.5 flex items-center gap-2 text-xs text-red-200">
+            <div className="bg-red-500/10 border border-red-500/30 rounded-xl p-2.5 flex items-center gap-2 text-xs text-red-700 dark:text-red-200">
               <span className="text-base">▶️</span>
-              <div className="flex-1">
+              <div className="flex-1 min-w-0">
                 <span className="font-bold">{t('تم التعرف على فيديو YouTube بنجاح!', 'YouTube Video Detected Successfully!')}</span>
-                <span className="font-mono text-slate-400 text-[11px] block mt-0.5">ID: {detectedYouTubeId} • {t('سيتم تشغيل الفيديو داخل المنصة', 'Will play in-platform')}</span>
+                <span className="font-mono text-slate-500 dark:text-slate-400 text-[11px] block mt-0.5 truncate">ID: {detectedYouTubeId} • {t('سيتم تشغيل الفيديو داخل المنصة', 'Will play in-platform')}</span>
               </div>
             </div>
           )}
 
-          <p className="text-[11px] text-slate-400 leading-relaxed bg-slate-950/50 p-2.5 rounded-xl border border-slate-800/80">
+          <p className="text-[11px] text-slate-600 dark:text-slate-400 leading-relaxed bg-white dark:bg-slate-950/50 p-2.5 rounded-xl border border-slate-200 dark:border-slate-800/80">
             💡 {t('يدعم روابط YouTube (watch, shorts, youtu.be, embed) أو Google Drive أو روابط MP4 المباشرة. يتم تشغيل الفيديو بالكامل داخل صفحة الكورس بدون فتح نوافذ خارجية.', 'Supports YouTube (watch, shorts, youtu.be, embed), Google Drive, or direct MP4 links. Video plays fully inside the course page without opening external tabs.')}
           </p>
 
-          <div className="bg-amber-950/30 border border-amber-500/20 rounded-xl p-2.5 text-[11px] text-amber-300 leading-relaxed flex items-start gap-2">
-            <span className="text-amber-400 mt-0.5">⚠️</span>
+          <div className="bg-amber-500/10 border border-amber-500/25 rounded-xl p-2.5 text-[11px] text-amber-800 dark:text-amber-300 leading-relaxed flex items-start gap-2">
+            <span className="text-amber-500 dark:text-amber-400 mt-0.5">⚠️</span>
             <div>
               <span className="font-bold">{t('نصيحة لمنع ظهور "المحتوى محظور": ', 'Tip to prevent "Content Blocked": ')}</span>
               <span>{t('تأكد من تفعيل خيار "السماح بالتضمين (Allow embedding)" في إعدادات الفيديو على YouTube Studio ليتمكن الطلاب من المشاهدة بسلاسة.', 'Ensure "Allow embedding" is enabled in YouTube Studio settings so students can watch seamlessly.')}</span>
@@ -312,9 +312,9 @@ export const VideoHostingUploader: React.FC<VideoHostingUploaderProps> = ({
 
       {/* Successfully Uploaded / Attached Video Link Indicator */}
       {value && value.trim().length > 0 && !isUploading && (
-        <div className="bg-emerald-950/40 border border-emerald-500/30 rounded-xl p-3 space-y-2">
+        <div className="bg-emerald-500/10 border border-emerald-500/30 rounded-xl p-3 space-y-2">
           <div className="flex flex-wrap items-center justify-between gap-2">
-            <div className="flex items-center gap-2 text-xs font-bold text-emerald-400 truncate max-w-[80%]">
+            <div className="flex items-center gap-2 text-xs font-bold text-emerald-700 dark:text-emerald-400 truncate max-w-[80%]">
               <span>✅</span>
               <span className="truncate">{t('تم ربط الفيديو بنجاح وجاهز للحفظ:', 'Video attached and ready to save:')}</span>
             </div>
@@ -324,7 +324,7 @@ export const VideoHostingUploader: React.FC<VideoHostingUploaderProps> = ({
                 <button
                   type="button"
                   onClick={() => onPreviewUrl(value)}
-                  className="bg-slate-800 hover:bg-slate-700 text-brand-cyan border border-slate-700 px-2.5 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer"
+                  className="bg-white dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-700 text-brand-cyan border border-slate-200 dark:border-slate-700 px-2.5 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer"
                 >
                   👁️ {t('معاينة داخلية', 'Preview')}
                 </button>
@@ -336,35 +336,35 @@ export const VideoHostingUploader: React.FC<VideoHostingUploaderProps> = ({
                   setSelectedFile(null);
                   if (fileInputRef.current) fileInputRef.current.value = '';
                 }}
-                className="text-xs text-rose-400 hover:text-rose-300 underline cursor-pointer"
+                className="text-xs text-rose-600 dark:text-rose-400 hover:underline font-bold cursor-pointer"
               >
                 {t('حذف', 'Remove')}
               </button>
             </div>
           </div>
 
-          <div className="bg-slate-950/70 p-2 rounded-lg border border-emerald-500/20 text-[11px] font-mono text-slate-300 break-all">
+          <div className="bg-white dark:bg-slate-950/70 p-2 rounded-lg border border-emerald-500/20 text-[11px] font-mono text-slate-700 dark:text-slate-300 break-all">
             {detectedYouTubeId ? (
               <div className="space-y-1">
-                <span className="text-red-400 font-bold">▶️ {t('فيديو YouTube مدمج داخل المنصة (ID: ' + detectedYouTubeId + ')', 'Embedded YouTube Video in Platform (ID: ' + detectedYouTubeId + ')')}</span>
-                <p className="text-slate-400 text-[10px] truncate">{value}</p>
+                <span className="text-red-600 dark:text-red-400 font-bold">▶️ {t('فيديو YouTube مدمج داخل المنصة (ID: ' + detectedYouTubeId + ')', 'Embedded YouTube Video in Platform (ID: ' + detectedYouTubeId + ')')}</span>
+                <p className="text-slate-500 dark:text-slate-400 text-[10px] truncate">{value}</p>
               </div>
             ) : value.startsWith('indexeddb://') ? (
               <div className="space-y-1">
-                <span className="text-cyan-400 font-bold">📦 {t('تخزين الجهاز المحلي (IndexedDB)', 'Local Browser Store (IndexedDB)')}</span>
-                <p className="text-slate-400 text-[10px] font-sans">
+                <span className="text-brand-cyan font-bold">📦 {t('تخزين الجهاز المحلي (IndexedDB)', 'Local Browser Store (IndexedDB)')}</span>
+                <p className="text-slate-500 dark:text-slate-400 text-[10px] font-sans">
                   {t('💡 عند النشر على الموقع، يمكنك لصق رابط YouTube (عام أو غير مدرج Unlisted) أو Google Drive ليعمل لجميع الطلاب عبر الإنترنت.', '💡 For public deployment, you can also paste a YouTube Unlisted or Google Drive link in the Manual Hosted tab.')}
                 </p>
               </div>
             ) : value.startsWith('https://firebasestorage.googleapis.com') ? (
               <div className="space-y-1">
-                <span className="text-emerald-400 font-bold">☁️ {t('تخزين Firebase السحابي (Cloud Storage) - يعمل للجميع', 'Firebase Cloud Storage - Works globally')}</span>
-                <p className="text-slate-400 text-[10px] truncate">{value}</p>
+                <span className="text-emerald-700 dark:text-emerald-400 font-bold">☁️ {t('تخزين Firebase السحابي (Cloud Storage) - يعمل للجميع', 'Firebase Cloud Storage - Works globally')}</span>
+                <p className="text-slate-500 dark:text-slate-400 text-[10px] truncate">{value}</p>
               </div>
             ) : (
               <div className="space-y-1">
                 <span className="text-brand-cyan font-bold">🌐 {t('رابط مباشر مستضاف (تشغيل مدمج داخل المنصة)', 'Hosted Link (Embedded In-Platform)')}</span>
-                <p className="text-slate-400 text-[10px] truncate">{value}</p>
+                <p className="text-slate-500 dark:text-slate-400 text-[10px] truncate">{value}</p>
               </div>
             )}
           </div>
@@ -373,14 +373,14 @@ export const VideoHostingUploader: React.FC<VideoHostingUploaderProps> = ({
 
       {/* Error Message */}
       {errorMsg && (
-        <div className="bg-rose-950/50 border border-rose-500/40 rounded-xl p-3 text-xs text-rose-300 flex items-center justify-between gap-2">
+        <div className="bg-rose-500/10 border border-rose-500/40 rounded-xl p-3 text-xs text-rose-700 dark:text-rose-300 flex items-center justify-between gap-2">
           <span>⚠️ {errorMsg}</span>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 shrink-0">
             {selectedFile && (
               <button
                 type="button"
                 onClick={() => startRealUpload(selectedFile)}
-                className="bg-rose-500/20 hover:bg-rose-500/30 text-rose-300 px-2.5 py-1 rounded-lg text-xs font-bold cursor-pointer"
+                className="bg-rose-500/15 hover:bg-rose-500/25 text-rose-700 dark:text-rose-300 px-2.5 py-1 rounded-lg text-xs font-bold cursor-pointer"
               >
                 🔄 {t('إعادة المحاولة', 'Retry')}
               </button>
@@ -388,7 +388,7 @@ export const VideoHostingUploader: React.FC<VideoHostingUploaderProps> = ({
             <button
               type="button"
               onClick={() => setErrorMsg(null)}
-              className="text-slate-400 hover:text-white underline text-[11px] cursor-pointer"
+              className="text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white underline text-[11px] cursor-pointer"
             >
               {t('إغلاق', 'Close')}
             </button>

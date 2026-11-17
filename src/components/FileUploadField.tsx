@@ -32,8 +32,8 @@ export const FileUploadField: React.FC<FileUploadFieldProps> = ({
   const isImage = accept.includes('image') || (value && /\.(jpg|jpeg|png|webp|gif|svg)(\?.*)?$/i.test(value));
   const isPdf = accept.includes('pdf') || (value && /\.pdf(\?.*)?$/i.test(value));
   const isWord = accept.includes('word') || accept.includes('doc') || (value && /\.(docx?|doc)(\?.*)?$/i.test(value));
-  const isPpt = (value && /\.(pptx?|ppt)(\?.*)?$/i.test(value));
-  const isCode = (value && /\.(py|ipynb|json|sql|cpp|js|ts)(\?.*)?$/i.test(value));
+  const isPpt = accept.includes('ppt') || (value && /\.(pptx?|ppt)(\?.*)?$/i.test(value));
+  const isCode = (value && /\.(py|ipynb|json|sql|cpp|c|h|js|ts|tsx|html|css|txt|zip|rar)(\?.*)?$/i.test(value));
 
   const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -47,7 +47,6 @@ export const FileUploadField: React.FC<FileUploadFieldProps> = ({
     cancelControlHolder.current = holder;
 
     try {
-      console.log(`=== [FileUploadField] Uploading ${folder} file to Firebase Storage ===`);
       const downloadUrl = await uploadFileToFirebaseStorage({
         file,
         folder,
@@ -56,7 +55,6 @@ export const FileUploadField: React.FC<FileUploadFieldProps> = ({
         cancelControlHolder: holder
       });
 
-      console.log(`=== [FileUploadField] Upload complete: ===`, downloadUrl);
       setProgressInfo({
         progress: 100,
         bytesTransferred: file.size,
@@ -76,11 +74,10 @@ export const FileUploadField: React.FC<FileUploadFieldProps> = ({
       setIsUploading(false);
       setProgressInfo(null);
       if (err?.isCanceled || err?.code === 'storage/canceled' || err?.message?.includes('إلغاء')) {
-        console.log('[FileUploadField] Upload canceled by user.');
         return;
       }
       console.error('FileUploadField error:', err);
-      setErrorMsg(err?.message || t('حدث خطأ أثناء رفع الملف إلى Firebase Storage.', 'Error uploading file.'));
+      setErrorMsg(err?.message || t('حدث خطأ أثناء رفع الملف.', 'Error uploading file.'));
     } finally {
       setIsUploading(false);
       if (e.target) e.target.value = '';
@@ -108,7 +105,7 @@ export const FileUploadField: React.FC<FileUploadFieldProps> = ({
 
       <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 dark:border-slate-800 pb-2">
         <label className="font-bold text-slate-900 dark:text-white text-xs flex items-center gap-2">
-          <span>{isPdf ? '📄' : isImage ? '🖼️' : '📁'}</span>
+          <span>{isPdf ? '📄' : isImage ? '🖼️' : isPpt ? '📊' : isWord ? '📝' : '📁'}</span>
           <span>{label}</span>
         </label>
 
@@ -116,7 +113,7 @@ export const FileUploadField: React.FC<FileUploadFieldProps> = ({
           type="button"
           onClick={() => fileInputRef.current?.click()}
           disabled={isUploading}
-          className="px-3 py-1.5 bg-brand-cyan/15 hover:bg-brand-cyan/25 text-brand-cyan dark:text-brand-cyan-light border border-brand-cyan/40 rounded-xl text-xs font-bold transition-all disabled:opacity-50 cursor-pointer flex items-center gap-1"
+          className="px-3 py-1.5 min-h-[40px] bg-brand-cyan/15 hover:bg-brand-cyan/25 text-brand-cyan dark:text-brand-cyan-light border border-brand-cyan/40 rounded-xl text-xs font-bold transition-all disabled:opacity-50 cursor-pointer flex items-center gap-1.5 whitespace-nowrap shrink-0"
         >
           <span>📤</span>
           <span>{t('رفع من الجهاز', 'Upload File')}</span>
@@ -129,7 +126,7 @@ export const FileUploadField: React.FC<FileUploadFieldProps> = ({
           type="text"
           value={value}
           onChange={(e) => onChange(e.target.value)}
-          placeholder={placeholder || (isPdf ? 'https://.../file.pdf' : 'https://.../image.png')}
+          placeholder={placeholder || (isPdf ? 'https://.../file.pdf' : 'https://.../file')}
           className="w-full rounded-xl bg-white dark:bg-slate-950 border border-slate-300 dark:border-slate-800 p-2.5 pr-9 text-slate-900 dark:text-white text-xs font-mono focus:outline-none focus:border-brand-cyan text-left dir-ltr"
         />
         <span className="absolute right-3 top-2.5 text-slate-400 text-xs">🔗</span>
@@ -139,11 +136,10 @@ export const FileUploadField: React.FC<FileUploadFieldProps> = ({
       {isUploading && progressInfo && (
         <div className="bg-white dark:bg-slate-950 rounded-xl p-3 border border-brand-cyan/30 space-y-2">
           <div className="flex items-center justify-between text-xs font-bold text-brand-cyan">
-            <span className="flex items-center gap-2">
-              <span className="h-2 w-2 rounded-full bg-brand-cyan animate-ping" />
-              {progressInfo.speed.includes('سحابياً') || progressInfo.speed.includes('البيانات') 
+            <span>
+              {progressInfo.speed.includes('سحابياً') || progressInfo.speed.includes('البيانات')
                 ? t('جاري المزامنة والحفظ السحابي...', 'Syncing to cloud...')
-                : t('جاري رفع الملف إلى التخزين السحابي (Firebase Storage)...', 'Uploading file to Cloud Storage (Firebase)...')}
+                : t('جاري رفع الملف من الجهاز...', 'Uploading file...')}
             </span>
             <span className="font-mono text-slate-900 dark:text-white tabular-nums">{Math.round(progressInfo.progress)}%</span>
           </div>

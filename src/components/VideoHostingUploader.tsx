@@ -297,7 +297,7 @@ export const VideoHostingUploader: React.FC<VideoHostingUploaderProps> = ({
           )}
 
           <p className="text-[11px] text-slate-600 dark:text-slate-400 leading-relaxed bg-white dark:bg-slate-950/50 p-2.5 rounded-xl border border-slate-200 dark:border-slate-800/80">
-            💡 {t('يدعم روابط YouTube (watch, shorts, youtu.be, embed) أو Google Drive أو روابط MP4 المباشرة. يتم تشغيل الفيديو بالكامل داخل صفحة الكورس بدون فتح نوافذ خارجية.', 'Supports YouTube (watch, shorts, youtu.be, embed), Google Drive, or direct MP4 links. Video plays fully inside the course page without opening external tabs.')}
+            💡 {t('يدعم روابط YouTube (watch, shorts, youtu.be, embed) أو Google Drive أو روابط MP4 المباشرة. يتم تشغيل الفيديو بالكامل داخل صفحة المقرر بدون فتح نوافذ خارجية.', 'Supports YouTube (watch, shorts, youtu.be, embed), Google Drive, or direct MP4 links. Video plays fully inside the subject page without opening external tabs.')}
           </p>
 
           <div className="bg-amber-500/10 border border-amber-500/25 rounded-xl p-2.5 text-[11px] text-amber-800 dark:text-amber-300 leading-relaxed flex items-start gap-2">

@@ -403,7 +403,31 @@ export async function uploadFileToFirebaseStorage(options: UploadOptions): Promi
     const { getStorage, ref, uploadBytesResumable, getDownloadURL } = await import('firebase/storage');
     const storageInstance = getStorage(app);
     const fileRef = ref(storageInstance, storagePath);
-    const contentType = uploadTargetFile.type || 'video/mp4';
+    const ext = (uploadTargetFile.name.split('.').pop() || '').toLowerCase();
+    const mimeByExt: Record<string, string> = {
+      pdf: 'application/pdf',
+      doc: 'application/msword',
+      docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      ppt: 'application/vnd.ms-powerpoint',
+      pptx: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+      zip: 'application/zip',
+      rar: 'application/vnd.rar',
+      py: 'text/x-python',
+      js: 'application/javascript',
+      c: 'text/x-c',
+      cpp: 'text/x-c++src',
+      html: 'text/html',
+      css: 'text/css',
+      sql: 'application/sql',
+      json: 'application/json',
+      txt: 'text/plain',
+      png: 'image/png',
+      jpg: 'image/jpeg',
+      jpeg: 'image/jpeg',
+      webp: 'image/webp',
+      mp4: 'video/mp4'
+    };
+    const contentType = uploadTargetFile.type || mimeByExt[ext] || 'application/octet-stream';
     const metadata = {
       contentType,
       cacheControl: 'public,max-age=31536000'

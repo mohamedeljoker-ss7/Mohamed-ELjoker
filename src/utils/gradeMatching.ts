@@ -20,6 +20,12 @@ export const ACADEMIC_GRADES: AcademicGrade[] = [
   { id: 'general', nameAr: 'جميع الفرق الدراسية', nameEn: 'All Academic Years' }
 ];
 
+export const ACADEMIC_SEMESTERS: AcademicGrade[] = [
+  { id: 'term1', nameAr: 'الفصل الدراسي الأول (الترم الأول)', nameEn: 'First Semester (Term 1)' },
+  { id: 'term2', nameAr: 'الفصل الدراسي الثاني (الترم الثاني)', nameEn: 'Second Semester (Term 2)' },
+  { id: 'all', nameAr: 'كلا الفصلين الدراسيين', nameEn: 'Both Semesters' }
+];
+
 export const ACADEMIC_SUBJECTS: AcademicSubject[] = [
   { id: 'Physics', nameAr: 'الفيزياء – Physics', nameEn: 'Physics' },
   { id: 'Python Programming', nameAr: 'برمجة بايثون – Python Programming', nameEn: 'Python Programming' },
@@ -27,14 +33,54 @@ export const ACADEMIC_SUBJECTS: AcademicSubject[] = [
   { id: 'Mathematics', nameAr: 'الرياضيات – Mathematics', nameEn: 'Mathematics' },
   { id: 'Cyber Security', nameAr: 'الأمن السيبراني – Cyber Security', nameEn: 'Cyber Security' },
   { id: 'English', nameAr: 'اللغة الإنجليزية – English', nameEn: 'English' },
-  // Short Arabic aliases
-  { id: 'الفيزياء', nameAr: 'الفيزياء', nameEn: 'Physics' },
-  { id: 'برمجة بايثون', nameAr: 'برمجة بايثون', nameEn: 'Python Programming' },
-  { id: 'أساسيات تكنولوجيا المعلومات', nameAr: 'أساسيات تكنولوجيا المعلومات', nameEn: 'IT Essentials' },
-  { id: 'الرياضيات', nameAr: 'الرياضيات', nameEn: 'Mathematics' },
-  { id: 'الأمن السيبراني', nameAr: 'الأمن السيبراني', nameEn: 'Cyber Security' },
-  { id: 'اللغة الإنجليزية', nameAr: 'اللغة الإنجليزية', nameEn: 'English' },
 ];
+
+export function normalizeSemesterCode(code?: string): string {
+  if (!code) return 'all';
+  const c = code.toLowerCase().trim();
+  if (c === 'term1' || c === 'sem1' || c === 'semester1' || c === '1' || c.includes('أول') || c.includes('اول') || c.includes('first')) return 'term1';
+  if (c === 'term2' || c === 'sem2' || c === 'semester2' || c === '2' || c.includes('ثان') || c.includes('تاني') || c.includes('second')) return 'term2';
+  return 'all';
+}
+
+export function getSemesterName(semCode?: string, lang: 'ar' | 'en' = 'ar'): string {
+  const norm = normalizeSemesterCode(semCode);
+  const found = ACADEMIC_SEMESTERS.find(s => s.id === norm);
+  if (found) return lang === 'ar' ? found.nameAr : found.nameEn;
+  return lang === 'ar' ? 'كلا الفصلين' : 'All Semesters';
+}
+
+export function isContentPublished(item: { status?: string; published?: boolean } | null | undefined): boolean {
+  if (!item) return false;
+  if (item.status === 'draft') return false;
+  if (item.published === false) return false;
+  return true;
+}
+
+export function doesItemMatchYearAndSemester(
+  item: { academicYear?: string; semester?: string; courseId?: string },
+  yearFilter: string,
+  semesterFilter: string,
+  courses?: Course[]
+): boolean {
+  if (yearFilter && yearFilter !== 'all' && yearFilter !== 'general') {
+    const targetYear = normalizeGradeCode(yearFilter);
+    let itemYear = item.academicYear ? normalizeGradeCode(item.academicYear) : '';
+    if ((!itemYear || itemYear === 'all') && item.courseId && courses) {
+      const c = courses.find(cr => cr.id === item.courseId);
+      if (c?.grade) itemYear = normalizeGradeCode(c.grade);
+    }
+    if (itemYear && itemYear !== 'all' && itemYear !== targetYear) return false;
+  }
+
+  if (semesterFilter && semesterFilter !== 'all') {
+    const targetSem = normalizeSemesterCode(semesterFilter);
+    const itemSem = normalizeSemesterCode(item.semester);
+    if (itemSem !== 'all' && itemSem !== targetSem) return false;
+  }
+
+  return true;
+}
 
 export function getGradeName(gradeCode?: string, lang: 'ar' | 'en' = 'ar'): string {
   if (!gradeCode) return lang === 'ar' ? 'جميع الفرق - قسم IT' : 'All Years - IT Dept';
@@ -66,13 +112,6 @@ export function getCourseDisplayTitle(course: Course, lang: 'ar' | 'en' = 'ar'):
   return `${subjectName} - ${gradeLabel}`;
 }
 
-/**
- * Normalizes grade codes across different representations:
- * '1prep', 'prep1', '1st Prep', 'الصف الأول الإعدادي' -> 'prep1'
- * '2prep', 'prep2', '2nd Prep', 'الصف الثاني الإعدادي' -> 'prep2'
- * '3prep', 'prep3', '3rd Prep', 'الصف الثالث الإعدادي' -> 'prep3'
- * '1sec', 'sec1', '1st Secondary', 'الصف الأول الثانوي' -> 'sec1'
- */
 export function normalizeGradeCode(code?: string): string {
   if (!code) return '';
   const c = code.toLowerCase().trim();

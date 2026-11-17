@@ -1,8 +1,8 @@
 import { initializeApp, getApps, getApp } from 'firebase/app';
 import { initializeFirestore, getFirestore, collection, doc, getDocs, getDoc, getDocFromServer, setDoc, updateDoc, deleteDoc, addDoc, query, where, orderBy, onSnapshot, deleteField, increment } from 'firebase/firestore';
-import { getAuth, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut, onAuthStateChanged, User } from 'firebase/auth';
+import { getAuth, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut, onAuthStateChanged, GoogleAuthProvider, signInWithPopup, User } from 'firebase/auth';
 import firebaseAppletConfig from '../firebase-applet-config.json';
-import { Course, Category, Student, NewsItem, Article, UserReview, Message, Admin, WebsiteSettings, Teacher, Coupon, Order, Quiz, QuizSubmission, UserAuth, Assignment, AssignmentSubmission, Certificate, ChatMessage, ChatThread, LessonComment, Notification, LessonAccess, CourseAccess, CourseRequest, LectureItem, SectionItem, ExamItem, SheetItem, QuestionBankItem, OnlineExamQuestion, ExamSubmission, ScheduleItem, StudentInquiry, ActivityLogItem } from './types';
+import { Course, Category, Student, NewsItem, Article, UserReview, Message, Admin, WebsiteSettings, Teacher, Coupon, Order, Quiz, QuizSubmission, UserAuth, Assignment, AssignmentSubmission, Certificate, ChatMessage, ChatThread, LessonComment, Notification, LessonAccess, CourseAccess, CourseRequest, LectureItem, SectionItem, ExamItem, SheetItem, SheetSubmission, QuestionBankItem, OnlineExamQuestion, ExamSubmission, ScheduleItem, StudentInquiry, ActivityLogItem } from './types';
 import { normalizeCourseLessons } from './utils/authAccess';
 import { saveVideoToIndexedDB } from './utils/videoStorage';
 import { uploadFileToFirebaseStorage } from './utils/firebaseUploadService';
@@ -58,623 +58,9 @@ const defaultCategories: Category[] = [
   }
 ];
 
-// Pre-seeded 6 IT Department University Courses
-export const IT_UNIVERSITY_COURSES: Course[] = [
-  {
-    id: 'course_physics_it',
-    titleAr: 'Physics – الفيزياء',
-    titleEn: 'Physics – General & Applied Physics for IT',
-    descriptionAr: 'مقرر مادة الفيزياء العامة والتطبيقية لطلاب قسم تكنولوجيا المعلومات (IT) بالجامعة التكنولوجية. يشمل المحاضرات النظرية كاملة بصيغ PDF وسلايدز، وسكاشن المعامل والكهربية وشيتات المسائل والتقارير المعملية بصيغ Word (.docx) و PDF.',
-    descriptionEn: 'General & Applied Physics course for Information Technology department at the Technological University. Includes lectures (PDF) and practical sections (Word/PDF).',
-    teacherName: 'م. محمد عبد التواب',
-    categoryId: 'year1',
-    grade: 'year1',
-    subject: 'Physics',
-    subjectAr: 'الفيزياء',
-    subjectEn: 'Physics',
-    department: 'IT',
-    price: 0,
-    isFree: true,
-    isPremium: false,
-    duration: '24 ساعة معتمدة',
-    lessonsCount: 6,
-    featured: true,
-    popular: true,
-    published: true,
-    status: 'published',
-    thumbnailUrl: COURSE_HARDWARE_PHYSICS_IMG,
-    imageUrls: [COURSE_HARDWARE_PHYSICS_IMG],
-    pdfUrl: 'https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf',
-    units: [
-      {
-        id: 'unit_phys_lec',
-        title: 'المحاضرات النظرية (Theoretical Lectures - PDF)',
-        description: 'سلايدز ومذكرات محاضرات الفيزياء للجامعة التكنولوجية بصيغة PDF',
-        order: 1,
-        lessons: [
-          {
-            id: 'phys_lec_1',
-            title: 'المحاضرة 1: الكهربية الساكنة والشحنات وقانون كولوم (PDF)',
-            duration: '50:00',
-            type: 'pdf',
-            pdfUrl: 'https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf',
-            isSection: false,
-            order: 1
-          },
-          {
-            id: 'phys_lec_2',
-            title: 'المحاضرة 2: التيار الكهربي والمقاومة وقانون أوم وقوانين كيرشوف (PDF)',
-            duration: '45:00',
-            type: 'pdf',
-            pdfUrl: 'https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf',
-            isSection: false,
-            order: 2
-          },
-          {
-            id: 'phys_lec_3',
-            title: 'المحاضرة 3: أشباه الموصلات والدايود والترانزستور في عتاد الحاسب (PDF)',
-            duration: '55:00',
-            type: 'pdf',
-            pdfUrl: 'https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf',
-            isSection: false,
-            order: 3
-          }
-        ]
-      },
-      {
-        id: 'unit_phys_sec',
-        title: 'السكاشن العملية والمعامل (Lab Sections & Word Sheets)',
-        description: 'شيتات وتجارب معمل الفيزياء بصيغة Word (.docx) و PDF',
-        order: 2,
-        lessons: [
-          {
-            id: 'phys_sec_1',
-            title: 'سكشن عملي 1: تجربة تحقيق قانون أوم وتعيين المقاومة النوعية (Word DOCX)',
-            duration: '40:00',
-            type: 'word',
-            wordUrl: 'https://calibre-ebook.com/downloads/demos/demo.docx',
-            pdfUrl: 'https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf',
-            isSection: true,
-            order: 1
-          },
-          {
-            id: 'phys_sec_2',
-            title: 'سكشن عملي 2: توصيل المقاومات على التوالي والتوازي وشيت الحل (Word DOCX)',
-            duration: '45:00',
-            type: 'word',
-            wordUrl: 'https://calibre-ebook.com/downloads/demos/demo.docx',
-            pdfUrl: 'https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf',
-            isSection: true,
-            order: 2
-          },
-          {
-            id: 'phys_sec_3',
-            title: 'شيت مسائل الفيزياء الشامل ونماذج امتحانات الميدترم والفاينل (Word + PDF)',
-            duration: '35:00',
-            type: 'word',
-            wordUrl: 'https://calibre-ebook.com/downloads/demos/demo.docx',
-            pdfUrl: 'https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf',
-            isSection: true,
-            order: 3
-          }
-        ]
-      }
-    ],
-    createdAt: '2026-09-01'
-  },
-  {
-    id: 'course_python_it',
-    titleAr: 'Python Programming – برمجة بايثون',
-    titleEn: 'Python Programming – Core & Practical IT Programming',
-    descriptionAr: 'كورس برمجة بايثون الشامل لطلاب قسم تكنولوجيا المعلومات بالجامعة التكنولوجية. يغطي أساسيات البرمجة، هياكل البيانات، البرمجة كائنية التوجه OOP، وتطبيقات الخوارزميات. يشمل محاضرات PDF وسكاشن تطبيقية وشيتات تمارين Word مع أكواد بايثون كاملة.',
-    descriptionEn: 'Complete Python Programming course for IT students. Includes lectures, lab exercises, and assignment sheets in Word and PDF.',
-    teacherName: 'م. محمد عبد التواب',
-    categoryId: 'year1',
-    grade: 'year1',
-    subject: 'Python Programming',
-    subjectAr: 'برمجة بايثون',
-    subjectEn: 'Python Programming',
-    department: 'IT',
-    price: 0,
-    isFree: true,
-    isPremium: false,
-    duration: '32 ساعة معتمدة',
-    lessonsCount: 6,
-    featured: true,
-    popular: true,
-    published: true,
-    status: 'published',
-    thumbnailUrl: COURSE_PROGRAMMING_CYBER_IMG,
-    imageUrls: [COURSE_PROGRAMMING_CYBER_IMG],
-    pdfUrl: 'https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf',
-    units: [
-      {
-        id: 'unit_py_lec',
-        title: 'محاضرات بايثون النظرية (Python Lectures - PDF)',
-        description: 'مذكرات وسلايدز محاضرات بايثون بصيغة PDF',
-        order: 1,
-        lessons: [
-          {
-            id: 'py_lec_1',
-            title: 'المحاضرة 1: مقدمة في بايثون، بيئة التشغيل، والمتغيرات Variables (PDF)',
-            duration: '45:00',
-            type: 'pdf',
-            pdfUrl: 'https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf',
-            isSection: false,
-            order: 1
-          },
-          {
-            id: 'py_lec_2',
-            title: 'المحاضرة 2: الشروط والتحكم وسلاسل التكرار Loops & Conditionals (PDF)',
-            duration: '50:00',
-            type: 'pdf',
-            pdfUrl: 'https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf',
-            isSection: false,
-            order: 2
-          },
-          {
-            id: 'py_lec_3',
-            title: 'المحاضرة 3: هياكل البيانات والقوائم والقواميس Lists, Tuples & Dictionaries (PDF)',
-            duration: '60:00',
-            type: 'pdf',
-            pdfUrl: 'https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf',
-            isSection: false,
-            order: 3
-          }
-        ]
-      },
-      {
-        id: 'unit_py_sec',
-        title: 'سكاشن العملي والتطبيقات البرمجية (Lab Sections & Word Sheets)',
-        description: 'شيتات التمارين والتكليفات والأكواد المعملية بصيغة Word (.docx)',
-        order: 2,
-        lessons: [
-          {
-            id: 'py_sec_1',
-            title: 'سكشن عملي 1: إعداد VS Code وحل شيت البرامج الحسابية (Word DOCX)',
-            duration: '45:00',
-            type: 'word',
-            wordUrl: 'https://calibre-ebook.com/downloads/demos/demo.docx',
-            pdfUrl: 'https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf',
-            isSection: true,
-            order: 1
-          },
-          {
-            id: 'py_sec_2',
-            title: 'سكشن عملي 2: تدريبات معملية على بناء الدوال Functions وكتابة الكود (Word DOCX)',
-            duration: '50:00',
-            type: 'word',
-            wordUrl: 'https://calibre-ebook.com/downloads/demos/demo.docx',
-            pdfUrl: 'https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf',
-            isSection: true,
-            order: 2
-          },
-          {
-            id: 'py_sec_3',
-            title: 'شيت مشروع التيرم العملي لبايثون ونماذج امتحانات اللاب (Word DOCX)',
-            duration: '40:00',
-            type: 'word',
-            wordUrl: 'https://calibre-ebook.com/downloads/demos/demo.docx',
-            pdfUrl: 'https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf',
-            isSection: true,
-            order: 3
-          }
-        ]
-      }
-    ],
-    createdAt: '2026-09-01'
-  },
-  {
-    id: 'course_it_essentials',
-    titleAr: 'IT Essentials – أساسيات تكنولوجيا المعلومات',
-    titleEn: 'IT Essentials – Hardware, Systems & Networking',
-    descriptionAr: 'مقرر أساسيات تكنولوجيا المعلومات وعمارة الحاسب لطلاب قسم IT بالجامعة التكنولوجية. يشمل محاضرات PDF عن المكونات المادية والعتاد وأنظمة التشغيل، وسكاشن عملية لتجميع الحواسيب وتثبيت البرمجيات وشيتات التقارير الفنية بصيغة Word.',
-    descriptionEn: 'IT Essentials course covering computer architecture, hardware components, operating systems, and troubleshooting. Lectures in PDF and practical labs in Word.',
-    teacherName: 'م. محمد عبد التواب',
-    categoryId: 'year1',
-    grade: 'year1',
-    subject: 'IT Essentials',
-    subjectAr: 'أساسيات تكنولوجيا المعلومات',
-    subjectEn: 'IT Essentials',
-    department: 'IT',
-    price: 0,
-    isFree: true,
-    isPremium: false,
-    duration: '28 ساعة معتمدة',
-    lessonsCount: 6,
-    featured: true,
-    popular: true,
-    published: true,
-    status: 'published',
-    thumbnailUrl: COURSE_HARDWARE_PHYSICS_IMG,
-    imageUrls: [COURSE_HARDWARE_PHYSICS_IMG],
-    pdfUrl: 'https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf',
-    units: [
-      {
-        id: 'unit_it_lec',
-        title: 'محاضرات عتاد ونظم تكنولوجيا المعلومات (Lectures - PDF)',
-        description: 'المحاضرات المعتمدة لمكونات ونظم الحاسب بصيغة PDF',
-        order: 1,
-        lessons: [
-          {
-            id: 'it_lec_1',
-            title: 'المحاضرة 1: المعالجات واللوحة الأم ووحدات الذاكرة CPU & RAM (PDF)',
-            duration: '50:00',
-            type: 'pdf',
-            pdfUrl: 'https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf',
-            isSection: false,
-            order: 1
-          },
-          {
-            id: 'it_lec_2',
-            title: 'المحاضرة 2: أنظمة التخزين، وحدات الإمداد بالطاقة، ومنافذ الإدخال/الإخراج (PDF)',
-            duration: '45:00',
-            type: 'pdf',
-            pdfUrl: 'https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf',
-            isSection: false,
-            order: 2
-          },
-          {
-            id: 'it_lec_3',
-            title: 'المحاضرة 3: تثبيت أنظمة التشغيل Windows/Linux وإدارة الـ BIOS/UEFI (PDF)',
-            duration: '55:00',
-            type: 'pdf',
-            pdfUrl: 'https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf',
-            isSection: false,
-            order: 3
-          }
-        ]
-      },
-      {
-        id: 'unit_it_sec',
-        title: 'سكاشن المعامل والتدريب العملي (Lab Sections & Word Reports)',
-        description: 'شيتات تقارير معمل الحاسب وتثبيت الأنظمة بصيغة Word (.docx)',
-        order: 2,
-        lessons: [
-          {
-            id: 'it_sec_1',
-            title: 'سكشن عملي 1: التجميع اليدوي لمكونات الكيسة وفحص التوافق (Word DOCX)',
-            duration: '45:00',
-            type: 'word',
-            wordUrl: 'https://calibre-ebook.com/downloads/demos/demo.docx',
-            pdfUrl: 'https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf',
-            isSection: true,
-            order: 1
-          },
-          {
-            id: 'it_sec_2',
-            title: 'سكشن عملي 2: إعداد الشبكة السلكية وكابلات UTP وإعداد الآي بي IP (Word DOCX)',
-            duration: '50:00',
-            type: 'word',
-            wordUrl: 'https://calibre-ebook.com/downloads/demos/demo.docx',
-            pdfUrl: 'https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf',
-            isSection: true,
-            order: 2
-          },
-          {
-            id: 'it_sec_3',
-            title: 'شيت صيانة الأعطال واستكشاف الأخطاء Troubleshooting Sheet (Word DOCX)',
-            duration: '40:00',
-            type: 'word',
-            wordUrl: 'https://calibre-ebook.com/downloads/demos/demo.docx',
-            pdfUrl: 'https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf',
-            isSection: true,
-            order: 3
-          }
-        ]
-      }
-    ],
-    createdAt: '2026-09-01'
-  },
-  {
-    id: 'course_mathematics_it',
-    titleAr: 'Mathematics – الرياضيات',
-    titleEn: 'Mathematics – Calculus & Discrete Math for IT',
-    descriptionAr: 'مقرر الرياضيات لطلاب قسم تكنولوجيا المعلومات بالجامعة التكنولوجية. يشمل الجبر الخطي والمصفوفات، التفاضل والتكامل، والرياضيات المتقطعة لعلوم الحاسب. يتضمن مذكرات محاضرات PDF وسكاشن مسائل وتطبيقات محلولة بصيغ Word و PDF.',
-    descriptionEn: 'Applied Mathematics and Discrete Mathematics for Computer Science & IT students. Comprehensive lectures in PDF and solved problem sheets in Word.',
-    teacherName: 'م. محمد عبد التواب',
-    categoryId: 'year1',
-    grade: 'year1',
-    subject: 'Mathematics',
-    subjectAr: 'الرياضيات',
-    subjectEn: 'Mathematics',
-    department: 'IT',
-    price: 0,
-    isFree: true,
-    isPremium: false,
-    duration: '30 ساعة معتمدة',
-    lessonsCount: 6,
-    featured: true,
-    popular: true,
-    published: true,
-    status: 'published',
-    thumbnailUrl: COURSE_HARDWARE_PHYSICS_IMG,
-    imageUrls: [COURSE_HARDWARE_PHYSICS_IMG],
-    pdfUrl: 'https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf',
-    units: [
-      {
-        id: 'unit_math_lec',
-        title: 'محاضرات الرياضيات والتفاضل والمصفوفات (Lectures - PDF)',
-        description: 'المحاضرات النظرية للرياضيات بصيغة PDF',
-        order: 1,
-        lessons: [
-          {
-            id: 'math_lec_1',
-            title: 'المحاضرة 1: المصفوفات والمحددات وحل المعادلات الخطية Matrices (PDF)',
-            duration: '50:00',
-            type: 'pdf',
-            pdfUrl: 'https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf',
-            isSection: false,
-            order: 1
-          },
-          {
-            id: 'math_lec_2',
-            title: 'المحاضرة 2: النهايات والاشتقاق وتطبيقات التفاضل Calculus (PDF)',
-            duration: '55:00',
-            type: 'pdf',
-            pdfUrl: 'https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf',
-            isSection: false,
-            order: 2
-          },
-          {
-            id: 'math_lec_3',
-            title: 'المحاضرة 3: الرياضيات المتقطعة ونظرية المجموعات والمنطق Discrete Math (PDF)',
-            duration: '50:00',
-            type: 'pdf',
-            pdfUrl: 'https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf',
-            isSection: false,
-            order: 3
-          }
-        ]
-      },
-      {
-        id: 'unit_math_sec',
-        title: 'سكاشن التمارين وشيتات المسائل المحلولة (Math Sections & Word Sheets)',
-        description: 'شيتات التمارين والواجبات بصيغة Word (.docx) و PDF',
-        order: 2,
-        lessons: [
-          {
-            id: 'math_sec_1',
-            title: 'سكشن 1: تمارين محلولة على ضرب وتدوير ومعكوس المصفوفات (Word DOCX)',
-            duration: '45:00',
-            type: 'word',
-            wordUrl: 'https://calibre-ebook.com/downloads/demos/demo.docx',
-            pdfUrl: 'https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf',
-            isSection: true,
-            order: 1
-          },
-          {
-            id: 'math_sec_2',
-            title: 'سكشن 2: شيت تدريبات قواعد الاشتقاق وقاعدة السلسلة (Word DOCX)',
-            duration: '40:00',
-            type: 'word',
-            wordUrl: 'https://calibre-ebook.com/downloads/demos/demo.docx',
-            pdfUrl: 'https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf',
-            isSection: true,
-            order: 2
-          },
-          {
-            id: 'math_sec_3',
-            title: 'شيت بنك أسئلة الرياضيات وامتحانات السنوات السابقة (Word DOCX)',
-            duration: '45:00',
-            type: 'word',
-            wordUrl: 'https://calibre-ebook.com/downloads/demos/demo.docx',
-            pdfUrl: 'https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf',
-            isSection: true,
-            order: 3
-          }
-        ]
-      }
-    ],
-    createdAt: '2026-09-01'
-  },
-  {
-    id: 'course_cyber_security',
-    titleAr: 'Cyber Security – الأمن السيبراني',
-    titleEn: 'Cyber Security – Defense, Cryptography & Systems Security',
-    descriptionAr: 'مقرر الأمن السيبراني وحماية الشبكات لطلاب قسم تكنولوجيا المعلومات. يتناول أسس أمن المعلومات CIA، التشفير، الجدران النارية، تحليل الثغرات، واختبار الاختراق الأخلاقي. يشمل سلايدز ومحاضرات PDF وسكاشن معامل أمنية وشيتات تقارير Word.',
-    descriptionEn: 'Cyber Security and network defense course for IT students. Covers encryption, vulnerabilities, and practical security labs with Word and PDF files.',
-    teacherName: 'م. محمد عبد التواب',
-    categoryId: 'year2',
-    grade: 'year2',
-    subject: 'Cyber Security',
-    subjectAr: 'الأمن السيبراني',
-    subjectEn: 'Cyber Security',
-    department: 'IT',
-    price: 0,
-    isFree: true,
-    isPremium: false,
-    duration: '26 ساعة معتمدة',
-    lessonsCount: 6,
-    featured: true,
-    popular: true,
-    published: true,
-    status: 'published',
-    thumbnailUrl: COURSE_PROGRAMMING_CYBER_IMG,
-    imageUrls: [COURSE_PROGRAMMING_CYBER_IMG],
-    pdfUrl: 'https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf',
-    units: [
-      {
-        id: 'unit_cyber_lec',
-        title: 'محاضرات الأمن السيبراني والتشفير (Lectures - PDF)',
-        description: 'المحاضرات المعتمدة لمقرر الأمن السيبراني بصيغة PDF',
-        order: 1,
-        lessons: [
-          {
-            id: 'cyber_lec_1',
-            title: 'المحاضرة 1: مدخل إلى الأمن السيبراني وثالوث الأمان CIA Triad (PDF)',
-            duration: '45:00',
-            type: 'pdf',
-            pdfUrl: 'https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf',
-            isSection: false,
-            order: 1
-          },
-          {
-            id: 'cyber_lec_2',
-            title: 'المحاضرة 2: أنواع الهجمات السيبرانية، الفيروسات والهندسة الاجتماعية (PDF)',
-            duration: '50:00',
-            type: 'pdf',
-            pdfUrl: 'https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf',
-            isSection: false,
-            order: 2
-          },
-          {
-            id: 'cyber_lec_3',
-            title: 'المحاضرة 3: أسس التشفير Symmetric & Asymmetric Cryptography (PDF)',
-            duration: '55:00',
-            type: 'pdf',
-            pdfUrl: 'https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf',
-            isSection: false,
-            order: 3
-          }
-        ]
-      },
-      {
-        id: 'unit_cyber_sec',
-        title: 'سكاشن المعامل الأمنية واختبار الاختراق (Cyber Labs & Word Sheets)',
-        description: 'شيتات وتجارب معمل أمن المعلومات بصيغة Word (.docx) و PDF',
-        order: 2,
-        lessons: [
-          {
-            id: 'cyber_sec_1',
-            title: 'سكشن عملي 1: إعداد بيئة Kali Linux وفحص المنافذ باستخدام Nmap (Word DOCX)',
-            duration: '45:00',
-            type: 'word',
-            wordUrl: 'https://calibre-ebook.com/downloads/demos/demo.docx',
-            pdfUrl: 'https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf',
-            isSection: true,
-            order: 1
-          },
-          {
-            id: 'cyber_sec_2',
-            title: 'سكشن عملي 2: التقاط وتحليل حزم الشبكة باستخدام Wireshark (Word DOCX)',
-            duration: '50:00',
-            type: 'word',
-            wordUrl: 'https://calibre-ebook.com/downloads/demos/demo.docx',
-            pdfUrl: 'https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf',
-            isSection: true,
-            order: 2
-          },
-          {
-            id: 'cyber_sec_3',
-            title: 'شيت إعداد تقرير الثغرات الأمنية Vulnerability Assessment Report (Word DOCX)',
-            duration: '40:00',
-            type: 'word',
-            wordUrl: 'https://calibre-ebook.com/downloads/demos/demo.docx',
-            pdfUrl: 'https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf',
-            isSection: true,
-            order: 3
-          }
-        ]
-      }
-    ],
-    createdAt: '2026-09-01'
-  },
-  {
-    id: 'course_english_it',
-    titleAr: 'English – اللغة الإنجليزية',
-    titleEn: 'English – Technical English for Information Technology',
-    descriptionAr: 'مقرر اللغة الإنجليزية التقنية التخصصية لطلاب قسم تكنولوجيا المعلومات بالجامعة التكنولوجية. يركز على مصطلحات تكنولوجيا المعلومات، قراءة المستندات الفنية، كتابة التقارير البرمجية، والتواصل المهني في بيئة العمل التقني. يشمل محاضرات PDF وسكاشن تمارين Word.',
-    descriptionEn: 'Technical English course tailored for IT students. Focuses on technical terminology, IT documentation, and professional communication with PDF and Word files.',
-    teacherName: 'م. محمد عبد التواب',
-    categoryId: 'year1',
-    grade: 'year1',
-    subject: 'English',
-    subjectAr: 'اللغة الإنجليزية',
-    subjectEn: 'English',
-    department: 'IT',
-    price: 0,
-    isFree: true,
-    isPremium: false,
-    duration: '20 ساعة معتمدة',
-    lessonsCount: 6,
-    featured: true,
-    popular: true,
-    published: true,
-    status: 'published',
-    thumbnailUrl: HERO_IT_UNIVERSITY_IMG,
-    imageUrls: [HERO_IT_UNIVERSITY_IMG],
-    pdfUrl: 'https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf',
-    units: [
-      {
-        id: 'unit_eng_lec',
-        title: 'محاضرات اللغة الإنجليزية التقنية (Lectures - PDF)',
-        description: 'سلايدز ومذكرات محاضرات اللغة الإنجليزية بصيغة PDF',
-        order: 1,
-        lessons: [
-          {
-            id: 'eng_lec_1',
-            title: 'المحاضرة 1: المصطلحات التقنية الأساسية للحاسب والشبكات Essential IT Vocab (PDF)',
-            duration: '40:00',
-            type: 'pdf',
-            pdfUrl: 'https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf',
-            isSection: false,
-            order: 1
-          },
-          {
-            id: 'eng_lec_2',
-            title: 'المحاضرة 2: قراءة وتفسير الوثائق البرمجية Reading Documentation (PDF)',
-            duration: '45:00',
-            type: 'pdf',
-            pdfUrl: 'https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf',
-            isSection: false,
-            order: 2
-          },
-          {
-            id: 'eng_lec_3',
-            title: 'المحاضرة 3: كتابة الإيميلات والتقارير الفنية Professional Email & Tech Writing (PDF)',
-            duration: '40:00',
-            type: 'pdf',
-            pdfUrl: 'https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf',
-            isSection: false,
-            order: 3
-          }
-        ]
-      },
-      {
-        id: 'unit_eng_sec',
-        title: 'سكاشن التدريبات وورش العمل (Worksheets & Word Sheets)',
-        description: 'شيتات تمارين وتطبيقات اللغة الإنجليزية التقنية بصيغة Word (.docx)',
-        order: 2,
-        lessons: [
-          {
-            id: 'eng_sec_1',
-            title: 'سكشن 1: ورقة عمل ترجمة وتطبيق المصطلحات التقنية (Word DOCX)',
-            duration: '35:00',
-            type: 'word',
-            wordUrl: 'https://calibre-ebook.com/downloads/demos/demo.docx',
-            pdfUrl: 'https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf',
-            isSection: true,
-            order: 1
-          },
-          {
-            id: 'eng_sec_2',
-            title: 'سكشن 2: تدريب كتابة تقرير فني عن مشكلة تقنية Technical Report Template (Word DOCX)',
-            duration: '40:00',
-            type: 'word',
-            wordUrl: 'https://calibre-ebook.com/downloads/demos/demo.docx',
-            pdfUrl: 'https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf',
-            isSection: true,
-            order: 2
-          },
-          {
-            id: 'eng_sec_3',
-            title: 'شيت معجم مصطلحات IT ونماذج امتحانات الميدترم والفاينل (Word DOCX)',
-            duration: '35:00',
-            type: 'word',
-            wordUrl: 'https://calibre-ebook.com/downloads/demos/demo.docx',
-            pdfUrl: 'https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf',
-            isSection: true,
-            order: 3
-          }
-        ]
-      }
-    ],
-    createdAt: '2026-09-01'
-  }
-];
+export const IT_UNIVERSITY_COURSES: Course[] = [];
 
-const defaultCourses: Course[] = IT_UNIVERSITY_COURSES;
+const defaultCourses: Course[] = [];
 
 const defaultStudents: Student[] = [];
 
@@ -684,21 +70,41 @@ const defaultArticles: Article[] = [];
 
 const defaultReviews: UserReview[] = [];
 
-// One-time migration to clear out old demo/sample local storage data
+// One-time migration to clear out all demo/sample data and pre-seeded courses
 try {
-  const clearedKey = 'tech_university_it_v1';
+  const clearedKey = 'purge_demo_and_courses_v2';
   if (typeof window !== 'undefined' && window.localStorage && localStorage.getItem(clearedKey) !== 'true') {
-    localStorage.removeItem('academy_courses');
-    localStorage.removeItem('courses');
-    localStorage.removeItem('academy_categories');
-    localStorage.removeItem('categories');
-    localStorage.removeItem('academy_settings');
-    localStorage.removeItem('settings');
+    const keysToRemove = [
+      'academy_courses',
+      'courses',
+      'academy_lectures',
+      'lectures',
+      'academy_sections',
+      'sections',
+      'academy_exams',
+      'exams',
+      'academy_sheets',
+      'sheets',
+      'academy_question_bank',
+      'question_bank',
+      'academy_schedule',
+      'schedule',
+      'academy_inquiries',
+      'inquiries',
+      'academy_exam_submissions',
+      'exam_submissions',
+      'academy_activity_logs',
+      'activity_logs',
+      'academy_quizzes',
+      'academy_assignment_tasks',
+      'academy_lessonAccess',
+      'academy_orders'
+    ];
+    keysToRemove.forEach((k) => localStorage.removeItem(k));
     localStorage.setItem(clearedKey, 'true');
-    console.log("Successfully wiped previous local storage data to load IT University Platform.");
   }
 } catch (e) {
-  console.error("Failed to execute one-time local storage demo data purge:", e);
+  console.error("Failed to execute one-time local storage demo & courses purge:", e);
 }
 
 const defaultMessages: Message[] = [];
@@ -721,348 +127,13 @@ const defaultSettings: WebsiteSettings = {
   forceLogoutVersion: 0
 };
 
-export const defaultLectures: LectureItem[] = [
-  {
-    id: 'lec_physics_1',
-    courseId: 'course_physics_it',
-    courseTitle: 'Physics – الفيزياء',
-    number: 1,
-    title: 'المحاضرة 1: الكهربية الساكنة وقانون كولوم Electrostatics & Coulomb\'s Law',
-    description: 'شرح تفصيلي للمجال الكهربي وقانون كولوم وتوزيع الشحنات في أشباه الموصلات والدوائر الإلكترونية.',
-    youtubeUrl: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ',
-    pdfUrl: 'https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf',
-    createdAt: '2026-09-01'
-  },
-  {
-    id: 'lec_python_1',
-    courseId: 'course_python_it',
-    courseTitle: 'Python Programming – برمجة بايثون',
-    number: 1,
-    title: 'المحاضرة 1: مقدمة بايثون وهياكل البيانات الأساسية Variables & Data Types',
-    description: 'تثبيت بيئة التطوير، المتغيرات، الجمل الشرطية والدوال البرمجية في بايثون لطلاب تكنولوجيا المعلومات.',
-    youtubeUrl: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ',
-    pdfUrl: 'https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf',
-    createdAt: '2026-09-02'
-  },
-  {
-    id: 'lec_it_1',
-    courseId: 'course_it_essentials',
-    courseTitle: 'IT Essentials – أساسيات تكنولوجيا المعلومات',
-    number: 1,
-    title: 'المحاضرة 1: المعالجات واللوحة الأم ووحدات الذاكرة CPU & RAM',
-    description: 'المفاهيم الأساسية لمعمارية الحاسب والعتاد الصلب وطرق نقل البيانات عبر ممرات النواقل Buses.',
-    youtubeUrl: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ',
-    pdfUrl: 'https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf',
-    createdAt: '2026-09-03'
-  },
-  {
-    id: 'lec_math_1',
-    courseId: 'course_mathematics_it',
-    courseTitle: 'Mathematics – الرياضيات',
-    number: 1,
-    title: 'المحاضرة 1: المصفوفات والمحددات وحل المعادلات الخطية Matrices',
-    description: 'العمليات على المصفوفات، المحددات، وطرق حل أنظمة المعادلات الخطية المستخدمة في خوارزميات الحاسب.',
-    youtubeUrl: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ',
-    pdfUrl: 'https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf',
-    createdAt: '2026-09-04'
-  },
-  {
-    id: 'lec_cyber_1',
-    courseId: 'course_cyber_security_it',
-    courseTitle: 'Cyber Security – الأمن السيبراني',
-    number: 1,
-    title: 'المحاضرة 1: مبادئ أمن المعلومات وثالوث السرية CIA Triad',
-    description: 'مفاهيم Confidentiality, Integrity, Availability ونماذج التهديدات الرقمية والهجمات السيبرانية الشائعة.',
-    youtubeUrl: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ',
-    pdfUrl: 'https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf',
-    createdAt: '2026-09-05'
-  },
-  {
-    id: 'lec_english_1',
-    courseId: 'course_english_tech_it',
-    courseTitle: 'English – اللغة الإنجليزية',
-    number: 1,
-    title: 'المحاضرة 1: المصطلحات التقنية الأساسية للحاسب والشبكات Essential IT Vocab',
-    description: 'قراءة الوثائق والمصطلحات الإنجليزية الخاصة بعتاد الحاسب ونظم التشغيل والبرمجيات.',
-    youtubeUrl: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ',
-    pdfUrl: 'https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf',
-    createdAt: '2026-09-06'
-  }
-];
+export const defaultLectures: LectureItem[] = [];
 
-export const defaultSections: SectionItem[] = [
-  {
-    id: 'sec_physics_1',
-    courseId: 'course_physics_it',
-    courseTitle: 'Physics – الفيزياء',
-    number: 1,
-    title: 'سكشن 1: القياسات العملية في معمل الفيزياء وقانون أوم (Word DOCX)',
-    description: 'شيت التجارب العملية لقياس المقاومة وفرق الجهد الكهربي ورسم المنحنيات بصيغة Word.',
-    youtubeUrl: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ',
-    fileUrl: 'https://calibre-ebook.com/downloads/demos/demo.docx',
-    createdAt: '2026-09-01'
-  },
-  {
-    id: 'sec_python_1',
-    courseId: 'course_python_it',
-    courseTitle: 'Python Programming – برمجة بايثون',
-    number: 1,
-    title: 'سكشن عملي 1: كتابة أول سكريبت بايثون وحل تمارين المعمل (Word DOCX)',
-    description: 'حل تدريبات معمل البرمجة الأول وتمارين الإدخال والطباعة الحسابية بصيغة Word قابلة للتعديل.',
-    youtubeUrl: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ',
-    fileUrl: 'https://calibre-ebook.com/downloads/demos/demo.docx',
-    createdAt: '2026-09-02'
-  },
-  {
-    id: 'sec_it_1',
-    courseId: 'course_it_essentials',
-    courseTitle: 'IT Essentials – أساسيات تكنولوجيا المعلومات',
-    number: 1,
-    title: 'سكشن عملي 1: التجميع اليدوي لمكونات الكيسة وفحص التوافق (Word DOCX)',
-    description: 'تقرير معمل صيانة الحاسب: خطوات فك وتركيب اللوحة الأم والمعالج ومزود الطاقة.',
-    youtubeUrl: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ',
-    fileUrl: 'https://calibre-ebook.com/downloads/demos/demo.docx',
-    createdAt: '2026-09-03'
-  },
-  {
-    id: 'sec_math_1',
-    courseId: 'course_mathematics_it',
-    courseTitle: 'Mathematics – الرياضيات',
-    number: 1,
-    title: 'سكشن 1: تمارين محلولة على ضرب وتدوير ومعكوس المصفوفات (Word DOCX)',
-    description: 'شيت المسائل التدريبية المحلولة خطوة بخطوة للتحضير لكويزات الرياضيات بصيغة Word و PDF.',
-    youtubeUrl: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ',
-    fileUrl: 'https://calibre-ebook.com/downloads/demos/demo.docx',
-    createdAt: '2026-09-04'
-  },
-  {
-    id: 'sec_cyber_1',
-    courseId: 'course_cyber_security_it',
-    courseTitle: 'Cyber Security – الأمن السيبراني',
-    number: 1,
-    title: 'سكشن عملي 1: فحص وتحليل حزم الشبكة باستخدام Wireshark (Word DOCX)',
-    description: 'دليل التدريب العملي لالتقاط وفحص بيانات بروتوكولات TCP/UDP وتحديد نقاط الضعف.',
-    youtubeUrl: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ',
-    fileUrl: 'https://calibre-ebook.com/downloads/demos/demo.docx',
-    createdAt: '2026-09-05'
-  },
-  {
-    id: 'sec_english_1',
-    courseId: 'course_english_tech_it',
-    courseTitle: 'English – اللغة الإنجليزية',
-    number: 1,
-    title: 'سكشن 1: ورقة عمل ترجمة وتطبيق المصطلحات التقنية (Word DOCX)',
-    description: 'شيت تدريبات المصطلحات المهنية والتقارير الفنية باللغة الإنجليزية بصيغة Word قابلة للتعديل والحل.',
-    youtubeUrl: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ',
-    fileUrl: 'https://calibre-ebook.com/downloads/demos/demo.docx',
-    createdAt: '2026-09-06'
-  }
-];
+export const defaultSections: SectionItem[] = [];
 
-export const defaultExams: ExamItem[] = [
-  {
-    id: 'exam_physics_midterm',
-    courseId: 'course_physics_it',
-    courseTitle: 'Physics – الفيزياء',
-    number: 'Midterm 2026',
-    title: 'امتحان الميدترم لمقرر الفيزياء للجامعة التكنولوجية',
-    description: 'أسئلة امتحان الميدترم الشامل لقوانين الكهربية والدوائر والمجالات المغناطيسية.',
-    questionsFileUrl: 'https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf',
-    answersFileUrl: 'https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf',
-    examDate: '2026-11-15',
-    createdAt: '2026-09-10'
-  },
-  {
-    id: 'exam_python_midterm',
-    courseId: 'course_python_it',
-    courseTitle: 'Python Programming – برمجة بايثون',
-    number: 'Midterm 2026',
-    title: 'امتحان منتصف الفصل في برمجة بايثون العملي والنظري',
-    description: 'نماذج أسئلة تتبع الكود ومخرجات البرامج وكتابة الدوال البرمجية في بايثون.',
-    questionsFileUrl: 'https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf',
-    answersFileUrl: 'https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf',
-    examDate: '2026-11-18',
-    createdAt: '2026-09-10'
-  },
-  {
-    id: 'exam_it_final',
-    courseId: 'course_it_essentials',
-    courseTitle: 'IT Essentials – أساسيات تكنولوجيا المعلومات',
-    number: 'Archive 2025/2026',
-    title: 'بنك أسئلة وامتحانات سابقة في عتاد وصيانة الحاسب',
-    description: 'تجميعة شاملة لنماذج امتحانات السنوات السابقة ونماذج الإجابة المعتمدة.',
-    questionsFileUrl: 'https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf',
-    examDate: '2026-12-01',
-    createdAt: '2026-09-10'
-  },
-  {
-    id: 'exam_python_online_quiz',
-    courseId: 'course_python_it',
-    courseTitle: 'Python Programming – برمجة بايثون',
-    number: 'Quiz 1 (Online)',
-    title: 'امتحان تفاعلي أونلاين: أساسيات لغة بايثون والدوال البرمجية',
-    description: 'امتحان إلكتروني تفاعلي يتم تصحيحه ذاتياً وفورياً. يشمل أسئلة اختيار من متعدد وصح أو خطأ مع توقيت زمني.',
-    isOnlineExam: true,
-    durationMinutes: 20,
-    totalPoints: 100,
-    showResultsImmediately: true,
-    published: true,
-    examDate: '2026-11-20',
-    createdAt: '2026-09-12',
-    questions: [
-      {
-        id: 'q_py_1',
-        questionText: 'ما هي الكلمة المفتاحية المستخدمة لتعريف دالة (Function) في لغة بايثون؟',
-        type: 'multiple_choice',
-        options: ['func', 'def', 'function', 'define'],
-        correctAnswerIndex: 1,
-        points: 20,
-        explanation: 'الكلمة المفتاحية المعتمدة في بايثون لتعريف الدوال هي def متبوعة باسم الدالة والقوسين.'
-      },
-      {
-        id: 'q_py_2',
-        questionText: 'في لغة بايثون، تعتبر القوائم Lists غير قابلة للتعديل (Immutable).',
-        type: 'true_false',
-        options: ['صواب', 'خطأ'],
-        correctAnswerIndex: 1,
-        points: 20,
-        explanation: 'القوائم (Lists) في بايثون قابلة للتعديل (Mutable)، بينما الـ Tuples هي غير القابلة للتعديل.'
-      },
-      {
-        id: 'q_py_3',
-        questionText: 'ما ناتج تنفيذ الأمر: print(type(10.5)) ؟',
-        type: 'multiple_choice',
-        options: ['<class \'int\'>', '<class \'float\'>', '<class \'double\'>', '<class \'number\'>'],
-        correctAnswerIndex: 1,
-        points: 20,
-        explanation: 'الأرقام العشرية في بايثون تنتمي لنوع float.'
-      },
-      {
-        id: 'q_py_4',
-        questionText: 'أي من الرموز التالية يمثل معامل المقارنة "يساوي تماماً" في لغة بايثون؟',
-        type: 'multiple_choice',
-        options: ['=', '==', '===', 'equals'],
-        correctAnswerIndex: 1,
-        points: 20,
-        explanation: 'الرمز == يستخدم للمقارنة والتحقق من التساوي، بينما = يستخدم للإسناد Assignment.'
-      },
-      {
-        id: 'q_py_5',
-        questionText: 'المسافات البادئة (Indentation) في بايثون تعتبر جزءاً أساسياً لتحديد كتل الأكواد (Code Blocks).',
-        type: 'true_false',
-        options: ['صواب', 'خطأ'],
-        correctAnswerIndex: 0,
-        points: 20,
-        explanation: 'صحيح، بايثون تعتمد كلياً على المسافات البادئة لتحديد نطاق الدوال وحلقات التكرار والجمل الشرطية.'
-      }
-    ]
-  },
-  {
-    id: 'exam_cyber_sec_quiz',
-    courseId: 'course_cyber_sec',
-    courseTitle: 'Cyber Security – الأمن السيبراني',
-    number: 'Quiz 2 (Online)',
-    title: 'امتحان إلكتروني أونلاين: أمن الشبكات والتشفير وثالوث السرية CIA',
-    description: 'امتحان تفاعلي مصحح ذاتياً لقياس استيعاب مفاهيم أمن المعلومات CIA، التشفير المتماثل وغير المتماثل، وهجمات حجب الخدمة.',
-    isOnlineExam: true,
-    durationMinutes: 25,
-    totalPoints: 100,
-    showResultsImmediately: true,
-    published: true,
-    examDate: '2026-11-25',
-    createdAt: '2026-09-15',
-    questions: [
-      {
-        id: 'q_cs_1',
-        questionText: 'ما هي العناصر الثلاثة التي تشكل ثالوث أمن المعلومات (CIA Triad)؟',
-        type: 'multiple_choice',
-        options: [
-          'Confidentiality, Integrity, Availability',
-          'Cyber, Internet, Authentication',
-          'Control, Identification, Access',
-          'Certificate, Inspection, Authorization'
-        ],
-        correctAnswerIndex: 0,
-        points: 25,
-        explanation: 'ثالوث أمن المعلومات يتكون من: السرية (Confidentiality)، وسلامة البيانات (Integrity)، وتوافر الخدمة (Availability).'
-      },
-      {
-        id: 'q_cs_2',
-        questionText: 'في التشفير غير المتماثل (Asymmetric Encryption)، يُستخدم مفتاح واحد فقط للتشفير وفك التشفير.',
-        type: 'true_false',
-        options: ['صواب', 'خطأ'],
-        correctAnswerIndex: 1,
-        points: 25,
-        explanation: 'خطأ، التشفير غير المتماثل يستخدم زوجاً من المفاتيح (مفتاح عام Public Key ومفتاح خاص Private Key).'
-      },
-      {
-        id: 'q_cs_3',
-        questionText: 'أي من الهجمات التالية تهدف إلى حجب الخدمة عن المستخدمين الشرعيين بإغراق السيرفر بالطلبات؟',
-        type: 'multiple_choice',
-        options: ['Phishing', 'DDoS Attack', 'SQL Injection', 'Cross-Site Scripting'],
-        correctAnswerIndex: 1,
-        points: 25,
-        explanation: 'هجمات حجب الخدمة الموزعة (DDoS) تغرق الخادم بحركة مرور وهمية لتعطيله.'
-      },
-      {
-        id: 'q_cs_4',
-        questionText: 'بروتوكول HTTPS يعتبر أكثر أماناً من HTTP لأنه يعتمد على تشفير SSL/TLS لنقل البيانات.',
-        type: 'true_false',
-        options: ['صواب', 'خطأ'],
-        correctAnswerIndex: 0,
-        points: 25,
-        explanation: 'صحيح، HTTPS يشفر حركة البيانات بين المتصفح والخادم لمنع التنصت أو التلاعب.'
-      }
-    ]
-  }
-];
+export const defaultExams: ExamItem[] = [];
 
-export const defaultSheets: SheetItem[] = [
-  {
-    id: 'sheet_lec_phys_1',
-    courseId: 'course_physics_it',
-    courseTitle: 'Physics – الفيزياء',
-    sheetType: 'lecture_sheet',
-    referenceNumber: 1,
-    title: 'شيت تدريبات المحاضرة الأولى: مسائل قانون كولوم والمجال الكهربي',
-    description: 'شيت مسائل واجبات المحاضرة الأولى للمذاكرة والحل.',
-    fileUrl: 'https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf',
-    createdAt: '2026-09-01'
-  },
-  {
-    id: 'sheet_sec_phys_1',
-    courseId: 'course_physics_it',
-    courseTitle: 'Physics – الفيزياء',
-    sheetType: 'section_sheet',
-    referenceNumber: 1,
-    title: 'شيت سكشن معمل الفيزياء 1: تقرير قياس المقاومات وقانون أوم (DOCX)',
-    description: 'نموذج تقرير المعمل الأسبوعي لتسليم السكشن بصيغة Word.',
-    fileUrl: 'https://calibre-ebook.com/downloads/demos/demo.docx',
-    createdAt: '2026-09-01'
-  },
-  {
-    id: 'sheet_lec_py_1',
-    courseId: 'course_python_it',
-    courseTitle: 'Python Programming – برمجة بايثون',
-    sheetType: 'lecture_sheet',
-    referenceNumber: 1,
-    title: 'شيت تدريبات المحاضرة الأولى: تمارين المتغيرات والعمليات الحسابية',
-    description: 'مسائل برمجية وتتبع كود بايثون.',
-    fileUrl: 'https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf',
-    createdAt: '2026-09-02'
-  },
-  {
-    id: 'sheet_sec_py_1',
-    courseId: 'course_python_it',
-    courseTitle: 'Python Programming – برمجة بايثون',
-    sheetType: 'section_sheet',
-    referenceNumber: 1,
-    title: 'شيت السكشن العملي 1: مهام معمل بايثون وحل الإشكالات (DOCX)',
-    description: 'شيت تسليم مهام المعمل الأسبوعي بالوورد.',
-    fileUrl: 'https://calibre-ebook.com/downloads/demos/demo.docx',
-    createdAt: '2026-09-02'
-  }
-];
+export const defaultSheets: SheetItem[] = [];
 
 const defaultAdmins: Admin[] = [];
 
@@ -1074,311 +145,15 @@ const defaultOrders: Order[] = [];
 
 const defaultQuizzes: Quiz[] = [];
 
-export const defaultQuestionBank: QuestionBankItem[] = [
-  {
-    id: 'qb_py_1',
-    courseId: 'course_python_it',
-    courseTitle: 'Python Programming – برمجة بايثون',
-    subject: 'برمجة بايثون',
-    topic: 'المحاضرة 1: المتغيرات وأنواع البيانات',
-    questionText: 'أي مما يلي يعتبر اسماً غير صالح لمتغير في بايثون؟',
-    type: 'multiple_choice',
-    options: ['user_name', '_myVar', '2nd_student', 'student2'],
-    correctAnswerIndex: 2,
-    points: 10,
-    explanation: 'أسماء المتغيرات في بايثون لا يجوز أن تبدأ برقم.',
-    createdAt: '2026-09-01'
-  },
-  {
-    id: 'qb_py_2',
-    courseId: 'course_python_it',
-    courseTitle: 'Python Programming – برمجة بايثون',
-    subject: 'برمجة بايثون',
-    topic: 'المحاضرة 2: القوائم وهياكل البيانات',
-    questionText: 'الدالة len() تستخدم لحساب عدد العناصر في القوائم والنصوص.',
-    type: 'true_false',
-    options: ['صواب', 'خطأ'],
-    correctAnswerIndex: 0,
-    points: 10,
-    explanation: 'الدالة len() ترجع طول الكائن أو عدد عناصره.',
-    createdAt: '2026-09-02'
-  },
-  {
-    id: 'qb_phys_1',
-    courseId: 'course_physics_it',
-    courseTitle: 'Physics – الفيزياء',
-    subject: 'الفيزياء',
-    topic: 'المحاضرة 1: الكهربية والمجال الكهربي',
-    questionText: 'وحدة قياس الشحنة الكهربية في النظام الدولي للوحدات (SI) هي:',
-    type: 'multiple_choice',
-    options: ['الفولت (Volt)', 'الأمبير (Ampere)', 'الكولوم (Coulomb)', 'الأوم (Ohm)'],
-    correctAnswerIndex: 2,
-    points: 10,
-    explanation: 'الشحنة الكهربية تقاس بوحدة الكولوم (C).',
-    createdAt: '2026-09-01'
-  },
-  {
-    id: 'qb_phys_2',
-    courseId: 'course_physics_it',
-    courseTitle: 'Physics – الفيزياء',
-    subject: 'الفيزياء',
-    topic: 'المحاضرة 2: قانون أوم والمقاومة',
-    questionText: 'قانون أوم ينص على أن فرق الجهد يتناسب طردياً مع شدة التيار عند ثبوت درجة الحرارة (V = I * R).',
-    type: 'true_false',
-    options: ['صواب', 'خطأ'],
-    correctAnswerIndex: 0,
-    points: 10,
-    explanation: 'صحيح، قانون أوم هو V = I * R.',
-    createdAt: '2026-09-02'
-  },
-  {
-    id: 'qb_it_1',
-    courseId: 'course_it_essentials',
-    courseTitle: 'IT Essentials – أساسيات تكنولوجيا المعلومات',
-    subject: 'أساسيات تكنولوجيا المعلومات',
-    topic: 'المحاضرة 1: المعالج ووحدة الحساب والمنطق',
-    questionText: 'الجزء المسؤول عن تنفيذ العمليات الرياضية والمنطقية داخل المعالج المركزي CPU هو:',
-    type: 'multiple_choice',
-    options: ['ALU (Arithmetic Logic Unit)', 'Control Unit (CU)', 'Registers', 'Cache Memory'],
-    correctAnswerIndex: 0,
-    points: 10,
-    explanation: 'وحدة الحساب والمنطق ALU هي المسؤولة عن العمليات الرياضية والمنطقية.',
-    createdAt: '2026-09-01'
-  },
-  {
-    id: 'qb_cs_1',
-    courseId: 'course_cyber_sec',
-    courseTitle: 'Cyber Security – الأمن السيبراني',
-    subject: 'الأمن السيبراني',
-    topic: 'المحاضرة 1: مبادئ أمن المعلومات',
-    questionText: 'الهندسة الاجتماعية (Social Engineering) تعتمد على استغلال الثغرات البشرية بدلاً من الثغرات البرمجية للحصول على بيانات سرية.',
-    type: 'true_false',
-    options: ['صواب', 'خطأ'],
-    correctAnswerIndex: 0,
-    points: 10,
-    explanation: 'صحيح، الهندسة الاجتماعية تستهدف خداع العنصر البشري.',
-    createdAt: '2026-09-03'
-  },
-  {
-    id: 'qb_math_1',
-    courseId: 'course_mathematics_it',
-    courseTitle: 'Mathematics – الرياضيات',
-    subject: 'الرياضيات',
-    topic: 'المحاضرة 1: الجبر الخطي والمصفوفات',
-    questionText: 'مصفوفة الوحدة (Identity Matrix) هي مصفوفة مربعة تكون جميع عناصر قطرها الرئيسي تساوي 1 وباقي العناصر أصفار.',
-    type: 'true_false',
-    options: ['صواب', 'خطأ'],
-    correctAnswerIndex: 0,
-    points: 10,
-    explanation: 'صحيح، مصفوفة الوحدة I تتميز بقطر رئيسي من الآحاد وباقي العناصر أصفار.',
-    createdAt: '2026-09-04'
-  },
-  {
-    id: 'qb_eng_1',
-    courseId: 'course_english_tech_it',
-    courseTitle: 'English – اللغة الإنجليزية',
-    subject: 'اللغة الإنجليزية',
-    topic: 'المحاضرة 1: المصطلحات التقنية',
-    questionText: 'What does the acronym "API" stand for in Software Engineering?',
-    type: 'multiple_choice',
-    options: [
-      'Application Programming Interface',
-      'Advanced Program Instruction',
-      'Automated Protocol Integration',
-      'Applied Process Identifier'
-    ],
-    correctAnswerIndex: 0,
-    points: 10,
-    explanation: 'API stands for Application Programming Interface.',
-    createdAt: '2026-09-05'
-  }
-];
+export const defaultQuestionBank: QuestionBankItem[] = [];
 
-export const defaultSchedule: ScheduleItem[] = [
-  {
-    id: 'sch_1',
-    title: 'محاضرة برمجة بايثون – Python Programming',
-    courseId: 'course_python_it',
-    courseTitle: 'Python Programming – برمجة بايثون',
-    itemType: 'lecture',
-    dayOfWeek: 'Sunday',
-    dayOfWeekAr: 'الأحد',
-    startTime: '09:00 ص',
-    endTime: '11:00 ص',
-    location: 'مدرج IT 1 - المبنى الأكاديمي',
-    instructor: 'م. محمد عبد التواب',
-    notes: 'يرجى إحضار اللابتوب لمتابعة كتابة الأكواد والتطبيقات العملية.',
-    active: true
-  },
-  {
-    id: 'sch_2',
-    title: 'سكشن معمل برمجة بايثون العملي',
-    courseId: 'course_python_it',
-    courseTitle: 'Python Programming – برمجة بايثون',
-    itemType: 'section',
-    dayOfWeek: 'Sunday',
-    dayOfWeekAr: 'الأحد',
-    startTime: '11:30 ص',
-    endTime: '01:30 م',
-    location: 'معمل الحاسب والبرمجيات 2',
-    instructor: 'م. محمد عبد التواب',
-    notes: 'تسليم الشيت العملي رقم 1 وكتابة برامج بايثون.',
-    active: true
-  },
-  {
-    id: 'sch_3',
-    title: 'محاضرة الأمن السيبراني – Cyber Security',
-    courseId: 'course_cyber_sec',
-    courseTitle: 'Cyber Security – الأمن السيبراني',
-    itemType: 'lecture',
-    dayOfWeek: 'Monday',
-    dayOfWeekAr: 'الإثنين',
-    startTime: '10:00 ص',
-    endTime: '12:00 م',
-    location: 'مدرج IT 2',
-    instructor: 'م. محمد عبد التواب',
-    notes: 'شرح أساسيات ثالوث أمن المعلومات والتشفير ونماذج الهجمات.',
-    active: true
-  },
-  {
-    id: 'sch_4',
-    title: 'محاضرة الفيزياء العامة والتطبيقية – Physics',
-    courseId: 'course_physics_it',
-    courseTitle: 'Physics – الفيزياء',
-    itemType: 'lecture',
-    dayOfWeek: 'Tuesday',
-    dayOfWeekAr: 'الثلاثاء',
-    startTime: '09:00 ص',
-    endTime: '11:00 ص',
-    location: 'مدرج 3',
-    instructor: 'م. محمد عبد التواب',
-    notes: 'دراسة قوانين الكهربية الساكنة والمجال الكهرومغناطيسي.',
-    active: true
-  },
-  {
-    id: 'sch_5',
-    title: 'سكشن معمل الفيزياء والدوائر الكهربية',
-    courseId: 'course_physics_it',
-    courseTitle: 'Physics – الفيزياء',
-    itemType: 'section',
-    dayOfWeek: 'Tuesday',
-    dayOfWeekAr: 'الثلاثاء',
-    startTime: '11:30 ص',
-    endTime: '01:30 م',
-    location: 'معمل الفيزياء التطبيقية',
-    instructor: 'م. محمد عبد التواب',
-    notes: 'تجربة قانون أوم وقياس المقاومات مع تسليم تقرير المعمل Word.',
-    active: true
-  },
-  {
-    id: 'sch_6',
-    title: 'محاضرة أساسيات تكنولوجيا المعلومات – IT Essentials',
-    courseId: 'course_it_essentials',
-    courseTitle: 'IT Essentials – أساسيات تكنولوجيا المعلومات',
-    itemType: 'lecture',
-    dayOfWeek: 'Wednesday',
-    dayOfWeekAr: 'الأربعاء',
-    startTime: '10:00 ص',
-    endTime: '12:00 م',
-    location: 'مدرج IT 1',
-    instructor: 'م. محمد عبد التواب',
-    notes: 'معمارية الحاسب وعتاد المعالجات وأنظمة التشغيل.',
-    active: true
-  },
-  {
-    id: 'sch_7',
-    title: 'محاضرة الرياضيات – Mathematics',
-    courseId: 'course_mathematics_it',
-    courseTitle: 'Mathematics – الرياضيات',
-    itemType: 'lecture',
-    dayOfWeek: 'Thursday',
-    dayOfWeekAr: 'الخميس',
-    startTime: '09:00 ص',
-    endTime: '11:00 ص',
-    location: 'مدرج 2',
-    instructor: 'م. محمد عبد التواب',
-    notes: 'الجبر الخطي والمصفوفات وتطبيقاتها في علوم الحاسب.',
-    active: true
-  },
-  {
-    id: 'sch_8',
-    title: 'سكشن اللغة الإنجليزية التقنية – Technical English',
-    courseId: 'course_english_tech_it',
-    courseTitle: 'English – اللغة الإنجليزية',
-    itemType: 'section',
-    dayOfWeek: 'Thursday',
-    dayOfWeekAr: 'الخميس',
-    startTime: '11:30 ص',
-    endTime: '01:00 م',
-    location: 'قاعة اللغات والتقارير الفنية 4',
-    instructor: 'م. محمد عبد التواب',
-    notes: 'قراءة وفهم الوثائق الفنية وكتابة التقارير البرمجية.',
-    active: true
-  }
-];
+export const defaultSchedule: ScheduleItem[] = [];
 
-export const defaultInquiries: StudentInquiry[] = [
-  {
-    id: 'inq_1',
-    studentId: 'sample_student_1',
-    studentName: 'أحمد محمود علي',
-    studentEmail: 'ahmed.student@it.university.edu',
-    studentPhone: '01012345678',
-    courseId: 'course_python_it',
-    courseTitle: 'Python Programming – برمجة بايثون',
-    category: 'lecture',
-    title: 'استفسار حول بيئة العمل المستخدمة في بايثون',
-    question: 'السلام عليكم يا بشمهندس، هل يفضل تثبيت Anaconda و Jupyter Notebook أم العمل على VS Code لمقرر بايثون في المعمل؟',
-    status: 'answered',
-    reply: 'وعليكم السلام يا أحمد، سنعتمد في المحاضرات والسكاشن على VS Code مع إضافة Python Extension لأنه الأقرب لبيئة العمل الاحترافية في سوق العمل.',
-    repliedBy: 'Eng/Mohamed abdal tawab',
-    repliedAt: '2026-09-08T14:30:00.000Z',
-    createdAt: '2026-09-08T10:15:00.000Z'
-  }
-];
+export const defaultInquiries: StudentInquiry[] = [];
 
-export const defaultExamSubmissions: ExamSubmission[] = [
-  {
-    id: 'sub_sample_1',
-    studentId: 'sample_student_1',
-    studentName: 'أحمد محمود علي',
-    studentEmail: 'ahmed.student@it.university.edu',
-    examId: 'exam_python_online_quiz',
-    examTitle: 'امتحان تفاعلي أونلاين: أساسيات لغة بايثون والدوال البرمجية',
-    courseId: 'course_python_it',
-    courseTitle: 'Python Programming – برمجة بايثون',
-    score: 100,
-    totalPoints: 100,
-    percentage: 100,
-    answers: { 0: 1, 1: 1, 2: 1, 3: 1, 4: 0 },
-    submittedAt: '2026-09-15T12:00:00.000Z'
-  }
-];
+export const defaultExamSubmissions: ExamSubmission[] = [];
 
-export const defaultActivityLogs: ActivityLogItem[] = [
-  {
-    id: 'act_1',
-    adminEmail: 'mhmdbdaltwabalsdawy7@gmail.com',
-    adminName: 'Eng/Mohamed abdal tawab',
-    action: 'create',
-    targetType: 'lecture',
-    targetTitle: 'المحاضرة 1: مقدمة في بنية لغة بايثون والبيئة البرمجية',
-    details: 'تم نشر المحاضرة مع ملف PDF ورابط YouTube الرسمي',
-    timestamp: Date.now() - 86400000,
-    date: new Date(Date.now() - 86400000).toISOString().split('T')[0]
-  },
-  {
-    id: 'act_2',
-    adminEmail: 'mhmdbdaltwabalsdawy7@gmail.com',
-    adminName: 'Eng/Mohamed abdal tawab',
-    action: 'create',
-    targetType: 'exam',
-    targetTitle: 'امتحان تفاعلي أونلاين: أساسيات لغة بايثون',
-    details: 'تم تجهيز الامتحان الإلكتروني ونشر الأسئلة والتصحيح التلقائي',
-    timestamp: Date.now() - 3600000,
-    date: new Date().toISOString().split('T')[0]
-  }
-];
+export const defaultActivityLogs: ActivityLogItem[] = [];
 
 const defaultUsers: UserAuth[] = [];
 
@@ -1428,7 +203,7 @@ if (firebaseConfig.apiKey && firebaseConfig.projectId) {
     }
     firebaseAuth = getAuth(app);
     isFirebaseConfigured = true;
-    console.log("Firebase initialized successfully inside Eng/Mohamed abdal tawab Academy with database ID:", dbId || "(default)");
+    console.log("Firebase initialized successfully inside MOHAMED ELJOKER IT University Platform with database ID:", dbId || "(default)");
 
     // Validate Firestore connection on boot (non-blocking)
     (async () => {
@@ -1444,7 +219,7 @@ if (firebaseConfig.apiKey && firebaseConfig.projectId) {
     console.warn("Firebase initialization failed, falling back to local simulation:", error);
   }
 } else {
-  console.log("No Firebase config variables found. Running Eng/Mohamed abdal tawab Academy in offline-first localStorage simulated database.");
+  console.log("No Firebase config variables found. Running MOHAMED ELJOKER IT University Platform in offline-first localStorage simulated database.");
 }
 
 export const waitForFirebaseAuth = async (): Promise<void> => {
@@ -1453,6 +228,26 @@ export const waitForFirebaseAuth = async (): Promise<void> => {
       await firebaseAuth.authStateReady();
     } catch {}
   }
+};
+
+const isFirebaseSignedInAdmin = (): boolean => {
+  return Boolean(firebaseAuth?.currentUser && isAdminEmail(firebaseAuth.currentUser.email || ''));
+};
+
+const canReadApprovedContentFromFirestore = (): boolean => {
+  if (!firebaseAuth?.currentUser) return false;
+  if (isAdminEmail(firebaseAuth.currentUser.email || '')) return true;
+  try {
+    const saved = typeof localStorage !== 'undefined' ? localStorage.getItem('academy_active_user') : null;
+    if (saved) {
+      const parsed = JSON.parse(saved);
+      if (parsed?.role === 'admin' || isAdminEmail(parsed?.email || '')) return true;
+      if (parsed?.status && parsed.status !== 'active') return false;
+      if (parsed?.isApproved === false) return false;
+      return parsed?.status === 'active' && parsed?.isApproved === true;
+    }
+  } catch {}
+  return false;
 };
 
 export enum OperationType {
@@ -2038,24 +833,21 @@ export const dbService = {
         const snap = await getDocs(collection(firestoreDb, 'courses'));
         const list: Course[] = [];
         snap.forEach(d => list.push({ id: d.id, ...d.data() } as Course));
-
-        if (list.length > 0) {
-          const normalized = list.map(c => normalizeCourseLessons(c));
-          setStorageItem('courses', normalized);
-          return normalized;
-        }
+        const normalized = list.map(c => normalizeCourseLessons(c));
+        setStorageItem('courses', normalized);
+        return normalized;
       } catch (err: any) {
         console.warn("Firestore getCourses notice:", err);
       }
     }
     const localCourses = getStorageItem<Course[]>('courses', defaultCourses).map(c => normalizeCourseLessons(c));
-    return (localCourses && localCourses.length > 0) ? localCourses : defaultCourses;
+    return localCourses || [];
   },
 
   listenToCourses: (onUpdate: (courses: Course[]) => void) => {
     // Immediate initial local emit
     const initial = getStorageItem<Course[]>('courses', defaultCourses).map(c => normalizeCourseLessons(c));
-    onUpdate(initial.length > 0 ? initial : defaultCourses);
+    onUpdate(initial);
 
     if (isFirebaseConfigured) {
       const unsubCourses = onSnapshot(collection(firestoreDb, 'courses'), (snap) => {
@@ -2065,18 +857,13 @@ export const dbService = {
           coursesList.push(item);
         });
 
-        if (coursesList.length > 0) {
-          const normalized = coursesList.map(c => normalizeCourseLessons(c));
-          setStorageItem('courses', normalized);
-          onUpdate(normalized);
-        } else {
-          const local = getStorageItem<Course[]>('courses', defaultCourses).map(c => normalizeCourseLessons(c));
-          onUpdate(local.length > 0 ? local : defaultCourses);
-        }
+        const normalized = coursesList.map(c => normalizeCourseLessons(c));
+        setStorageItem('courses', normalized);
+        onUpdate(normalized);
       }, (err) => {
         console.warn("Courses Firestore listener notice:", err);
         const local = getStorageItem<Course[]>('courses', defaultCourses).map(c => normalizeCourseLessons(c));
-        onUpdate(local.length > 0 ? local : defaultCourses);
+        onUpdate(local);
       });
 
       return () => {
@@ -2085,7 +872,7 @@ export const dbService = {
     } else {
       const loadLocal = () => {
         const localCourses = getStorageItem<Course[]>('courses', defaultCourses).map(c => normalizeCourseLessons(c));
-        onUpdate(localCourses.length > 0 ? localCourses : defaultCourses);
+        onUpdate(localCourses);
       };
       loadLocal();
       const interval = setInterval(loadLocal, 1500);
@@ -2262,7 +1049,7 @@ export const dbService = {
         for (const d of snap.docs) {
           try {
             await deleteDoc(d.ref);
-          } catch (e) {}
+          } catch {}
         }
       } catch (err: any) {
         console.error("Firestore deleteAllCourses error:", err);
@@ -2271,36 +1058,85 @@ export const dbService = {
     setStorageItem('courses', []);
   },
 
-  seedITUniversityCourses: async (): Promise<Course[]> => {
-    checkAdminWrite('seed_it_courses', {});
-    setStorageItem('courses', IT_UNIVERSITY_COURSES);
-    if (isFirebaseConfigured) {
-      try {
-        for (const c of IT_UNIVERSITY_COURSES) {
-          const sanitized = sanitizeForFirestore(c);
-          await setDoc(doc(firestoreDb, 'courses', c.id), sanitized);
-        }
-      } catch (err: any) {
-        console.warn("Firestore seedITUniversityCourses notice:", err);
-      }
+  runOneTimeDemoAndCoursesPurge: async (): Promise<{ ran: boolean }> => {
+    if (!isFirebaseConfigured || !isFirebaseSignedInAdmin()) {
+      return { ran: false };
     }
-    return IT_UNIVERSITY_COURSES;
+    try {
+      const settingsRef = doc(firestoreDb, 'settings', 'global');
+      const settingsSnap = await getDoc(settingsRef);
+      if (settingsSnap.exists() && settingsSnap.data()?.demoAndCoursesClearedV2 === true) {
+        return { ran: false };
+      }
+
+      // 1. Delete all existing course documents
+      const courseSnap = await getDocs(collection(firestoreDb, 'courses'));
+      await Promise.all(courseSnap.docs.map(d => deleteDoc(d.ref).catch(() => {})));
+
+      // 2. Delete known seeded demo documents & docs referencing placeholder URLs
+      const demoIdsByCollection: Record<string, string[]> = {
+        lectures: ['lec_physics_1', 'lec_python_1', 'lec_it_1', 'lec_math_1', 'lec_cyber_1', 'lec_english_1'],
+        sections: ['sec_physics_1', 'sec_python_1', 'sec_it_1', 'sec_math_1', 'sec_cyber_1', 'sec_english_1'],
+        exams: ['exam_physics_midterm', 'exam_python_midterm', 'exam_it_final', 'exam_python_online_quiz', 'exam_cyber_sec_quiz'],
+        sheets: ['sheet_lec_phys_1', 'sheet_sec_phys_1', 'sheet_lec_py_1', 'sheet_sec_py_1'],
+        question_bank: ['qb_py_1', 'qb_py_2', 'qb_phys_1', 'qb_phys_2', 'qb_it_1', 'qb_cs_1', 'qb_math_1', 'qb_eng_1'],
+        schedule: ['sch_1', 'sch_2', 'sch_3', 'sch_4', 'sch_5', 'sch_6', 'sch_7', 'sch_8'],
+        inquiries: ['inq_1'],
+        exam_submissions: ['sub_sample_1'],
+        activity_logs: ['act_1', 'act_2']
+      };
+
+      const isDemoDocData = (data: any): boolean => {
+        if (!data || typeof data !== 'object') return false;
+        const serialized = JSON.stringify(data);
+        return (
+          serialized.includes('dummy.pdf') ||
+          serialized.includes('demo.docx') ||
+          serialized.includes('dQw4w9WgXcQ') ||
+          serialized.includes('sample_student_1')
+        );
+      };
+
+      for (const [colName, knownIds] of Object.entries(demoIdsByCollection)) {
+        try {
+          const snap = await getDocs(collection(firestoreDb, colName));
+          await Promise.all(
+            snap.docs
+              .filter(d => knownIds.includes(d.id) || isDemoDocData(d.data()))
+              .map(d => deleteDoc(d.ref).catch(() => {}))
+          );
+        } catch {}
+      }
+
+      // 3. Clear localStorage caches
+      ['courses', 'lectures', 'sections', 'exams', 'sheets', 'question_bank', 'schedule', 'inquiries', 'exam_submissions', 'activity_logs'].forEach(k => {
+        setStorageItem(k, []);
+      });
+
+      // 4. Persist one-time completion marker in Firestore
+      await setDoc(settingsRef, { demoAndCoursesClearedV2: true }, { merge: true });
+      return { ran: true };
+    } catch (err) {
+      console.warn("runOneTimeDemoAndCoursesPurge notice:", err);
+      return { ran: false };
+    }
   },
 
   // --- Lectures (المحاضرات) ---
   getLectures: async (courseId?: string): Promise<LectureItem[]> => {
     if (isFirebaseConfigured) {
-      try {
-        const snap = await getDocs(collection(firestoreDb, 'lectures'));
-        const list: LectureItem[] = [];
-        snap.forEach(d => list.push({ id: d.id, ...d.data() } as LectureItem));
-        if (list.length > 0) {
+      await waitForFirebaseAuth();
+      if (canReadApprovedContentFromFirestore()) {
+        try {
+          const snap = await getDocs(collection(firestoreDb, 'lectures'));
+          const list: LectureItem[] = [];
+          snap.forEach(d => list.push({ id: d.id, ...d.data() } as LectureItem));
           list.sort((a, b) => a.number - b.number);
           setStorageItem('lectures', list);
           return courseId ? list.filter(l => l.courseId === courseId) : list;
+        } catch (err) {
+          console.warn("Firestore getLectures notice:", err);
         }
-      } catch (err) {
-        console.warn("Firestore getLectures notice:", err);
       }
     }
     const local = getStorageItem<LectureItem[]>('lectures', defaultLectures);
@@ -2311,20 +1147,21 @@ export const dbService = {
     const initial = getStorageItem<LectureItem[]>('lectures', defaultLectures);
     onUpdate(courseId ? initial.filter(l => l.courseId === courseId) : initial);
 
-    if (isFirebaseConfigured) {
+    if (isFirebaseConfigured && canReadApprovedContentFromFirestore()) {
       const unsub = onSnapshot(collection(firestoreDb, 'lectures'), (snap) => {
         const list: LectureItem[] = [];
         snap.forEach(d => list.push({ id: d.id, ...d.data() } as LectureItem));
-        const res = list.length > 0 ? list : defaultLectures;
-        res.sort((a, b) => a.number - b.number);
-        setStorageItem('lectures', res);
-        onUpdate(courseId ? res.filter(l => l.courseId === courseId) : res);
+        list.sort((a, b) => a.number - b.number);
+        setStorageItem('lectures', list);
+        onUpdate(courseId ? list.filter(l => l.courseId === courseId) : list);
       }, (err) => {
         console.warn("Lectures listener notice:", err);
         const local = getStorageItem<LectureItem[]>('lectures', defaultLectures);
         onUpdate(courseId ? local.filter(l => l.courseId === courseId) : local);
       });
       return () => unsub();
+    } else if (isFirebaseConfigured) {
+      return () => {};
     } else {
       const load = () => {
         const local = getStorageItem<LectureItem[]>('lectures', defaultLectures);
@@ -2390,17 +1227,18 @@ export const dbService = {
   // --- Sections (السكاشن) ---
   getSections: async (courseId?: string): Promise<SectionItem[]> => {
     if (isFirebaseConfigured) {
-      try {
-        const snap = await getDocs(collection(firestoreDb, 'sections'));
-        const list: SectionItem[] = [];
-        snap.forEach(d => list.push({ id: d.id, ...d.data() } as SectionItem));
-        if (list.length > 0) {
+      await waitForFirebaseAuth();
+      if (canReadApprovedContentFromFirestore()) {
+        try {
+          const snap = await getDocs(collection(firestoreDb, 'sections'));
+          const list: SectionItem[] = [];
+          snap.forEach(d => list.push({ id: d.id, ...d.data() } as SectionItem));
           list.sort((a, b) => a.number - b.number);
           setStorageItem('sections', list);
           return courseId ? list.filter(s => s.courseId === courseId) : list;
+        } catch (err) {
+          console.warn("Firestore getSections notice:", err);
         }
-      } catch (err) {
-        console.warn("Firestore getSections notice:", err);
       }
     }
     const local = getStorageItem<SectionItem[]>('sections', defaultSections);
@@ -2411,20 +1249,21 @@ export const dbService = {
     const initial = getStorageItem<SectionItem[]>('sections', defaultSections);
     onUpdate(courseId ? initial.filter(s => s.courseId === courseId) : initial);
 
-    if (isFirebaseConfigured) {
+    if (isFirebaseConfigured && canReadApprovedContentFromFirestore()) {
       const unsub = onSnapshot(collection(firestoreDb, 'sections'), (snap) => {
         const list: SectionItem[] = [];
         snap.forEach(d => list.push({ id: d.id, ...d.data() } as SectionItem));
-        const res = list.length > 0 ? list : defaultSections;
-        res.sort((a, b) => a.number - b.number);
-        setStorageItem('sections', res);
-        onUpdate(courseId ? res.filter(s => s.courseId === courseId) : res);
+        list.sort((a, b) => a.number - b.number);
+        setStorageItem('sections', list);
+        onUpdate(courseId ? list.filter(s => s.courseId === courseId) : list);
       }, (err) => {
         console.warn("Sections listener notice:", err);
         const local = getStorageItem<SectionItem[]>('sections', defaultSections);
         onUpdate(courseId ? local.filter(s => s.courseId === courseId) : local);
       });
       return () => unsub();
+    } else if (isFirebaseConfigured) {
+      return () => {};
     } else {
       const load = () => {
         const local = getStorageItem<SectionItem[]>('sections', defaultSections);
@@ -2490,16 +1329,17 @@ export const dbService = {
   // --- Exams (الامتحانات) ---
   getExams: async (courseId?: string): Promise<ExamItem[]> => {
     if (isFirebaseConfigured) {
-      try {
-        const snap = await getDocs(collection(firestoreDb, 'exams'));
-        const list: ExamItem[] = [];
-        snap.forEach(d => list.push({ id: d.id, ...d.data() } as ExamItem));
-        if (list.length > 0) {
+      await waitForFirebaseAuth();
+      if (canReadApprovedContentFromFirestore()) {
+        try {
+          const snap = await getDocs(collection(firestoreDb, 'exams'));
+          const list: ExamItem[] = [];
+          snap.forEach(d => list.push({ id: d.id, ...d.data() } as ExamItem));
           setStorageItem('exams', list);
           return courseId ? list.filter(e => e.courseId === courseId) : list;
+        } catch (err) {
+          console.warn("Firestore getExams notice:", err);
         }
-      } catch (err) {
-        console.warn("Firestore getExams notice:", err);
       }
     }
     const local = getStorageItem<ExamItem[]>('exams', defaultExams);
@@ -2510,19 +1350,20 @@ export const dbService = {
     const initial = getStorageItem<ExamItem[]>('exams', defaultExams);
     onUpdate(courseId ? initial.filter(e => e.courseId === courseId) : initial);
 
-    if (isFirebaseConfigured) {
+    if (isFirebaseConfigured && canReadApprovedContentFromFirestore()) {
       const unsub = onSnapshot(collection(firestoreDb, 'exams'), (snap) => {
         const list: ExamItem[] = [];
         snap.forEach(d => list.push({ id: d.id, ...d.data() } as ExamItem));
-        const res = list.length > 0 ? list : defaultExams;
-        setStorageItem('exams', res);
-        onUpdate(courseId ? res.filter(e => e.courseId === courseId) : res);
+        setStorageItem('exams', list);
+        onUpdate(courseId ? list.filter(e => e.courseId === courseId) : list);
       }, (err) => {
         console.warn("Exams listener notice:", err);
         const local = getStorageItem<ExamItem[]>('exams', defaultExams);
         onUpdate(courseId ? local.filter(e => e.courseId === courseId) : local);
       });
       return () => unsub();
+    } else if (isFirebaseConfigured) {
+      return () => {};
     } else {
       const load = () => {
         const local = getStorageItem<ExamItem[]>('exams', defaultExams);
@@ -2588,20 +1429,21 @@ export const dbService = {
   // --- Sheets (الشيتات) ---
   getSheets: async (courseId?: string, sheetType?: 'lecture_sheet' | 'section_sheet'): Promise<SheetItem[]> => {
     if (isFirebaseConfigured) {
-      try {
-        const snap = await getDocs(collection(firestoreDb, 'sheets'));
-        const list: SheetItem[] = [];
-        snap.forEach(d => list.push({ id: d.id, ...d.data() } as SheetItem));
-        if (list.length > 0) {
+      await waitForFirebaseAuth();
+      if (canReadApprovedContentFromFirestore()) {
+        try {
+          const snap = await getDocs(collection(firestoreDb, 'sheets'));
+          const list: SheetItem[] = [];
+          snap.forEach(d => list.push({ id: d.id, ...d.data() } as SheetItem));
           list.sort((a, b) => a.referenceNumber - b.referenceNumber);
           setStorageItem('sheets', list);
           let res = list;
           if (courseId) res = res.filter(s => s.courseId === courseId);
           if (sheetType) res = res.filter(s => s.sheetType === sheetType);
           return res;
+        } catch (err) {
+          console.warn("Firestore getSheets notice:", err);
         }
-      } catch (err) {
-        console.warn("Firestore getSheets notice:", err);
       }
     }
     let local = getStorageItem<SheetItem[]>('sheets', defaultSheets);
@@ -2614,20 +1456,21 @@ export const dbService = {
     const initial = getStorageItem<SheetItem[]>('sheets', defaultSheets);
     onUpdate(courseId ? initial.filter(s => s.courseId === courseId) : initial);
 
-    if (isFirebaseConfigured) {
+    if (isFirebaseConfigured && canReadApprovedContentFromFirestore()) {
       const unsub = onSnapshot(collection(firestoreDb, 'sheets'), (snap) => {
         const list: SheetItem[] = [];
         snap.forEach(d => list.push({ id: d.id, ...d.data() } as SheetItem));
-        const res = list.length > 0 ? list : defaultSheets;
-        res.sort((a, b) => a.referenceNumber - b.referenceNumber);
-        setStorageItem('sheets', res);
-        onUpdate(courseId ? res.filter(s => s.courseId === courseId) : res);
+        list.sort((a, b) => a.referenceNumber - b.referenceNumber);
+        setStorageItem('sheets', list);
+        onUpdate(courseId ? list.filter(s => s.courseId === courseId) : list);
       }, (err) => {
         console.warn("Sheets listener notice:", err);
         const local = getStorageItem<SheetItem[]>('sheets', defaultSheets);
         onUpdate(courseId ? local.filter(s => s.courseId === courseId) : local);
       });
       return () => unsub();
+    } else if (isFirebaseConfigured) {
+      return () => {};
     } else {
       const load = () => {
         const local = getStorageItem<SheetItem[]>('sheets', defaultSheets);
@@ -2693,16 +1536,17 @@ export const dbService = {
   // --- Question Bank (بنك الأسئلة) ---
   getQuestionBank: async (courseId?: string): Promise<QuestionBankItem[]> => {
     if (isFirebaseConfigured) {
-      try {
-        const snap = await getDocs(collection(firestoreDb, 'question_bank'));
-        const list: QuestionBankItem[] = [];
-        snap.forEach(d => list.push({ id: d.id, ...d.data() } as QuestionBankItem));
-        if (list.length > 0) {
+      await waitForFirebaseAuth();
+      if (canReadApprovedContentFromFirestore()) {
+        try {
+          const snap = await getDocs(collection(firestoreDb, 'question_bank'));
+          const list: QuestionBankItem[] = [];
+          snap.forEach(d => list.push({ id: d.id, ...d.data() } as QuestionBankItem));
           setStorageItem('question_bank', list);
           return courseId ? list.filter(q => q.courseId === courseId) : list;
+        } catch (err) {
+          console.warn("Firestore getQuestionBank notice:", err);
         }
-      } catch (err) {
-        console.warn("Firestore getQuestionBank notice:", err);
       }
     }
     const local = getStorageItem<QuestionBankItem[]>('question_bank', defaultQuestionBank);
@@ -2713,19 +1557,20 @@ export const dbService = {
     const initial = getStorageItem<QuestionBankItem[]>('question_bank', defaultQuestionBank);
     onUpdate(courseId ? initial.filter(q => q.courseId === courseId) : initial);
 
-    if (isFirebaseConfigured) {
+    if (isFirebaseConfigured && canReadApprovedContentFromFirestore()) {
       const unsub = onSnapshot(collection(firestoreDb, 'question_bank'), (snap) => {
         const list: QuestionBankItem[] = [];
         snap.forEach(d => list.push({ id: d.id, ...d.data() } as QuestionBankItem));
-        const res = list.length > 0 ? list : defaultQuestionBank;
-        setStorageItem('question_bank', res);
-        onUpdate(courseId ? res.filter(q => q.courseId === courseId) : res);
+        setStorageItem('question_bank', list);
+        onUpdate(courseId ? list.filter(q => q.courseId === courseId) : list);
       }, (err) => {
         console.warn("QuestionBank listener notice:", err);
         const local = getStorageItem<QuestionBankItem[]>('question_bank', defaultQuestionBank);
         onUpdate(courseId ? local.filter(q => q.courseId === courseId) : local);
       });
       return () => unsub();
+    } else if (isFirebaseConfigured) {
+      return () => {};
     } else {
       const load = () => {
         const local = getStorageItem<QuestionBankItem[]>('question_bank', defaultQuestionBank);
@@ -2825,14 +1670,12 @@ export const dbService = {
           const snap = await getDocs(qRef);
           const list: ExamSubmission[] = [];
           snap.forEach(d => list.push({ id: d.id, ...d.data() } as ExamSubmission));
-          if (list.length > 0) {
-            list.sort((a, b) => new Date(b.submittedAt).getTime() - new Date(a.submittedAt).getTime());
-            if (!effectiveStudentId) setStorageItem('exam_submissions', list);
-            let res = list;
-            if (examId) res = res.filter(s => s.examId === examId);
-            if (effectiveStudentId) res = res.filter(s => s.studentId === effectiveStudentId);
-            return res;
-          }
+          list.sort((a, b) => new Date(b.submittedAt).getTime() - new Date(a.submittedAt).getTime());
+          if (!effectiveStudentId) setStorageItem('exam_submissions', list);
+          let res = list;
+          if (examId) res = res.filter(s => s.examId === examId);
+          if (effectiveStudentId) res = res.filter(s => s.studentId === effectiveStudentId);
+          return res;
         } catch (err) {
           console.warn("Firestore getExamSubmissions notice:", err);
         }
@@ -2865,10 +1708,9 @@ export const dbService = {
       const unsub = onSnapshot(qRef, (snap) => {
         const list: ExamSubmission[] = [];
         snap.forEach(d => list.push({ id: d.id, ...d.data() } as ExamSubmission));
-        const res = list.length > 0 ? list : (effectiveStudentId ? [] : defaultExamSubmissions);
-        res.sort((a, b) => new Date(b.submittedAt).getTime() - new Date(a.submittedAt).getTime());
-        if (!effectiveStudentId) setStorageItem('exam_submissions', res);
-        onUpdate(filterList(res));
+        list.sort((a, b) => new Date(b.submittedAt).getTime() - new Date(a.submittedAt).getTime());
+        if (!effectiveStudentId) setStorageItem('exam_submissions', list);
+        onUpdate(filterList(list));
       }, (err) => {
         console.warn("ExamSubmissions listener notice:", err);
         const local = getStorageItem<ExamSubmission[]>('exam_submissions', defaultExamSubmissions);
@@ -2888,19 +1730,120 @@ export const dbService = {
     }
   },
 
+  updateExamSubmission: async (id: string, patch: Partial<ExamSubmission>): Promise<void> => {
+    checkAdminWrite('update_exam_submission', { id, patch });
+    const current = getStorageItem<ExamSubmission[]>('exam_submissions', defaultExamSubmissions);
+    const updated = current.map(s => s.id === id ? { ...s, ...patch } : s);
+    setStorageItem('exam_submissions', updated);
+
+    if (isFirebaseConfigured) {
+      try {
+        await setDoc(doc(firestoreDb, 'exam_submissions', id), sanitizeForFirestore(patch), { merge: true });
+      } catch (e) {
+        console.warn("updateExamSubmission sync notice:", e);
+      }
+    }
+  },
+
+  // --- Sheet Submissions (تسليمات وتقييم الشيتات الجامعية) ---
+  submitSheetSolution: async (submission: Omit<SheetSubmission, 'id' | 'submittedAt'>): Promise<SheetSubmission> => {
+    const newId = 'sheetsub_' + Date.now() + '_' + Math.random().toString(36).substring(2, 6);
+    const item: SheetSubmission = {
+      id: newId,
+      ...submission,
+      submittedAt: new Date().toISOString()
+    };
+    const current = getStorageItem<SheetSubmission[]>('sheet_submissions', []);
+    setStorageItem('sheet_submissions', [item, ...current.filter(s => s.id !== newId)]);
+
+    if (isFirebaseConfigured) {
+      try {
+        await setDoc(doc(firestoreDb, 'sheet_submissions', newId), sanitizeForFirestore(item));
+      } catch (e) {
+        console.warn("submitSheetSolution sync notice:", e);
+      }
+    }
+    return item;
+  },
+
+  gradeSheetSubmission: async (id: string, score: number | undefined, feedback: string, gradedBy: string): Promise<void> => {
+    checkAdminWrite('grade_sheet_submission', { id, score, feedback });
+    const patch: Partial<SheetSubmission> = {
+      status: 'graded',
+      score,
+      feedback,
+      gradedBy,
+      gradedAt: new Date().toISOString()
+    };
+    const current = getStorageItem<SheetSubmission[]>('sheet_submissions', []);
+    setStorageItem('sheet_submissions', current.map(s => s.id === id ? { ...s, ...patch } : s));
+
+    if (isFirebaseConfigured) {
+      try {
+        await setDoc(doc(firestoreDb, 'sheet_submissions', id), sanitizeForFirestore(patch), { merge: true });
+      } catch (e) {
+        console.warn("gradeSheetSubmission sync notice:", e);
+      }
+    }
+  },
+
+  listenToSheetSubmissions: (onUpdate: (subs: SheetSubmission[]) => void, sheetId?: string, studentId?: string) => {
+    const filterList = (items: SheetSubmission[]) => {
+      let res = items;
+      if (sheetId) res = res.filter(s => s.sheetId === sheetId);
+      if (studentId) res = res.filter(s => s.studentId === studentId);
+      return res;
+    };
+    const initial = getStorageItem<SheetSubmission[]>('sheet_submissions', []);
+    onUpdate(filterList(initial));
+
+    if (isFirebaseConfigured && firebaseAuth?.currentUser) {
+      const effectiveStudentId = isAdminEmail(firebaseAuth.currentUser.email || '')
+        ? studentId
+        : (studentId || firebaseAuth.currentUser.uid);
+      const colRef = collection(firestoreDb, 'sheet_submissions');
+      const qRef = effectiveStudentId
+        ? query(colRef, where('studentId', '==', effectiveStudentId))
+        : colRef;
+      const unsub = onSnapshot(qRef, (snap) => {
+        const list: SheetSubmission[] = [];
+        snap.forEach(d => list.push({ id: d.id, ...d.data() } as SheetSubmission));
+        list.sort((a, b) => new Date(b.submittedAt).getTime() - new Date(a.submittedAt).getTime());
+        if (!effectiveStudentId) setStorageItem('sheet_submissions', list);
+        onUpdate(filterList(list));
+      }, (err) => {
+        console.warn("SheetSubmissions listener notice:", err);
+        const local = getStorageItem<SheetSubmission[]>('sheet_submissions', []);
+        onUpdate(filterList(local));
+      });
+      return () => unsub();
+    } else if (isFirebaseConfigured) {
+      return () => {};
+    } else {
+      const load = () => {
+        const local = getStorageItem<SheetSubmission[]>('sheet_submissions', []);
+        onUpdate(filterList(local));
+      };
+      load();
+      const interval = setInterval(load, 2000);
+      return () => clearInterval(interval);
+    }
+  },
+
   // --- Schedule (جدول المحاضرات والسكاشن) ---
   getSchedule: async (courseId?: string): Promise<ScheduleItem[]> => {
     if (isFirebaseConfigured) {
-      try {
-        const snap = await getDocs(collection(firestoreDb, 'schedule'));
-        const list: ScheduleItem[] = [];
-        snap.forEach(d => list.push({ id: d.id, ...d.data() } as ScheduleItem));
-        if (list.length > 0) {
+      await waitForFirebaseAuth();
+      if (canReadApprovedContentFromFirestore()) {
+        try {
+          const snap = await getDocs(collection(firestoreDb, 'schedule'));
+          const list: ScheduleItem[] = [];
+          snap.forEach(d => list.push({ id: d.id, ...d.data() } as ScheduleItem));
           setStorageItem('schedule', list);
           return courseId ? list.filter(s => s.courseId === courseId) : list;
+        } catch (err) {
+          console.warn("Firestore getSchedule notice:", err);
         }
-      } catch (err) {
-        console.warn("Firestore getSchedule notice:", err);
       }
     }
     const local = getStorageItem<ScheduleItem[]>('schedule', defaultSchedule);
@@ -2911,19 +1854,20 @@ export const dbService = {
     const initial = getStorageItem<ScheduleItem[]>('schedule', defaultSchedule);
     onUpdate(courseId ? initial.filter(s => s.courseId === courseId) : initial);
 
-    if (isFirebaseConfigured) {
+    if (isFirebaseConfigured && canReadApprovedContentFromFirestore()) {
       const unsub = onSnapshot(collection(firestoreDb, 'schedule'), (snap) => {
         const list: ScheduleItem[] = [];
         snap.forEach(d => list.push({ id: d.id, ...d.data() } as ScheduleItem));
-        const res = list.length > 0 ? list : defaultSchedule;
-        setStorageItem('schedule', res);
-        onUpdate(courseId ? res.filter(s => s.courseId === courseId) : res);
+        setStorageItem('schedule', list);
+        onUpdate(courseId ? list.filter(s => s.courseId === courseId) : list);
       }, (err) => {
         console.warn("Schedule listener notice:", err);
         const local = getStorageItem<ScheduleItem[]>('schedule', defaultSchedule);
         onUpdate(courseId ? local.filter(s => s.courseId === courseId) : local);
       });
       return () => unsub();
+    } else if (isFirebaseConfigured) {
+      return () => {};
     } else {
       const load = () => {
         const local = getStorageItem<ScheduleItem[]>('schedule', defaultSchedule);
@@ -3001,11 +1945,9 @@ export const dbService = {
           const snap = await getDocs(qRef);
           const list: StudentInquiry[] = [];
           snap.forEach(d => list.push({ id: d.id, ...d.data() } as StudentInquiry));
-          if (list.length > 0) {
-            list.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-            if (!effectiveStudentId) setStorageItem('inquiries', list);
-            return effectiveStudentId ? list.filter(i => i.studentId === effectiveStudentId) : list;
-          }
+          list.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+          if (!effectiveStudentId) setStorageItem('inquiries', list);
+          return effectiveStudentId ? list.filter(i => i.studentId === effectiveStudentId) : list;
         } catch (err) {
           console.warn("Firestore getInquiries notice:", err);
         }
@@ -3035,10 +1977,9 @@ export const dbService = {
       const unsub = onSnapshot(qRef, (snap) => {
         const list: StudentInquiry[] = [];
         snap.forEach(d => list.push({ id: d.id, ...d.data() } as StudentInquiry));
-        const res = list.length > 0 ? list : (effectiveStudentId ? [] : defaultInquiries);
-        res.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-        if (!effectiveStudentId) setStorageItem('inquiries', res);
-        onUpdate(filterList(res));
+        list.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+        if (!effectiveStudentId) setStorageItem('inquiries', list);
+        onUpdate(filterList(list));
       }, (err) => {
         console.warn("Inquiries listener notice:", err);
         const local = getStorageItem<StudentInquiry[]>('inquiries', defaultInquiries);
@@ -3118,17 +2059,18 @@ export const dbService = {
   // --- Activity Logs (سجل العمليات والتدقيق الإداري) ---
   getActivityLogs: async (): Promise<ActivityLogItem[]> => {
     if (isFirebaseConfigured) {
-      try {
-        const snap = await getDocs(collection(firestoreDb, 'activity_logs'));
-        const list: ActivityLogItem[] = [];
-        snap.forEach(d => list.push({ id: d.id, ...d.data() } as ActivityLogItem));
-        if (list.length > 0) {
+      await waitForFirebaseAuth();
+      if (isFirebaseSignedInAdmin()) {
+        try {
+          const snap = await getDocs(collection(firestoreDb, 'activity_logs'));
+          const list: ActivityLogItem[] = [];
+          snap.forEach(d => list.push({ id: d.id, ...d.data() } as ActivityLogItem));
           list.sort((a, b) => b.timestamp - a.timestamp);
           setStorageItem('activity_logs', list);
           return list;
+        } catch (err) {
+          console.warn("Firestore getActivityLogs notice:", err);
         }
-      } catch (err) {
-        console.warn("Firestore getActivityLogs notice:", err);
       }
     }
     return getStorageItem<ActivityLogItem[]>('activity_logs', defaultActivityLogs);
@@ -3138,20 +2080,21 @@ export const dbService = {
     const initial = getStorageItem<ActivityLogItem[]>('activity_logs', defaultActivityLogs);
     onUpdate(initial);
 
-    if (isFirebaseConfigured) {
+    if (isFirebaseConfigured && isFirebaseSignedInAdmin()) {
       const unsub = onSnapshot(collection(firestoreDb, 'activity_logs'), (snap) => {
         const list: ActivityLogItem[] = [];
         snap.forEach(d => list.push({ id: d.id, ...d.data() } as ActivityLogItem));
-        const res = list.length > 0 ? list : defaultActivityLogs;
-        res.sort((a, b) => b.timestamp - a.timestamp);
-        setStorageItem('activity_logs', res);
-        onUpdate(res);
+        list.sort((a, b) => b.timestamp - a.timestamp);
+        setStorageItem('activity_logs', list);
+        onUpdate(list);
       }, (err) => {
         console.warn("ActivityLogs listener notice:", err);
         const local = getStorageItem<ActivityLogItem[]>('activity_logs', defaultActivityLogs);
         onUpdate(local);
       });
       return () => unsub();
+    } else if (isFirebaseConfigured) {
+      return () => {};
     } else {
       const load = () => {
         const local = getStorageItem<ActivityLogItem[]>('activity_logs', defaultActivityLogs);
@@ -3249,7 +2192,7 @@ export const dbService = {
           list.push({
             id: id,
             uid: id,
-            name: data.name || 'طالب الأكاديمية',
+            name: data.name || 'طالب تكنولوجيا المعلومات',
             email: email,
             phone: data.phone || '',
             purchasedCourseIds: data.purchasedCourseIds || [],
@@ -3334,7 +2277,7 @@ export const dbService = {
           list.push({
             id: item.id,
             uid: item.id,
-            name: item.name || 'طالب الأكاديمية',
+            name: item.name || 'طالب تكنولوجيا المعلومات',
             email: email,
             phone: item.phone || '',
             purchasedCourseIds: item.purchasedCourseIds || [],
@@ -4007,13 +2950,17 @@ export const dbService = {
   // --- Admins ---
   getAdmins: async (): Promise<Admin[]> => {
     if (isFirebaseConfigured) {
+      await waitForFirebaseAuth();
+      if (!isFirebaseSignedInAdmin()) {
+        return getStorageItem<Admin[]>('admins', defaultAdmins);
+      }
       try {
         const snap = await getDocs(collection(firestoreDb, 'admins'));
         const list: Admin[] = [];
         snap.forEach(d => list.push({ id: d.id, ...d.data() } as Admin));
         return list;
       } catch (err) {
-        console.error("Firebase admins read failed, using fallback:", err);
+        console.warn("Firebase admins read fallback:", err);
       }
     }
     return getStorageItem<Admin[]>('admins', defaultAdmins);
@@ -4125,13 +3072,17 @@ export const dbService = {
   // --- Coupons ---
   getCoupons: async (): Promise<Coupon[]> => {
     if (isFirebaseConfigured) {
+      await waitForFirebaseAuth();
+      if (!isFirebaseSignedInAdmin()) {
+        return getStorageItem<Coupon[]>('coupons', defaultCoupons);
+      }
       try {
         const snap = await getDocs(collection(firestoreDb, 'coupons'));
         const list: Coupon[] = [];
         snap.forEach(d => list.push({ id: d.id, ...d.data() } as Coupon));
         return list;
       } catch (err) {
-        console.error("Firebase coupons read failed, using fallback:", err);
+        console.warn("Firebase coupons read fallback:", err);
       }
     }
     return getStorageItem<Coupon[]>('coupons', defaultCoupons);
@@ -4496,14 +3447,17 @@ export const dbService = {
   getLessonAccess: async (studentId: string, courseId: string): Promise<Record<string, boolean>> => {
     const docId = `${studentId}_${courseId}`;
     if (isFirebaseConfigured) {
-      try {
-        const ref = doc(firestoreDb, 'lessonAccess', docId);
-        const snap = await getDoc(ref);
-        if (snap.exists()) {
-          return snap.data().unlockedItems || {};
+      await waitForFirebaseAuth();
+      if (firebaseAuth?.currentUser && (isFirebaseSignedInAdmin() || firebaseAuth.currentUser.uid === studentId)) {
+        try {
+          const ref = doc(firestoreDb, 'lessonAccess', docId);
+          const snap = await getDoc(ref);
+          if (snap.exists()) {
+            return snap.data().unlockedItems || {};
+          }
+        } catch (err) {
+          console.warn("Notice fetching lesson access:", err);
         }
-      } catch (err) {
-        console.error("Error fetching lesson access:", err);
       }
     }
     const current = getStorageItem<LessonAccess[]>('lessonAccess', []);
@@ -4514,6 +3468,12 @@ export const dbService = {
   listenToLessonAccess: (studentId: string, courseId: string, onUpdate: (unlockedItems: Record<string, boolean>) => void) => {
     const docId = `${studentId}_${courseId}`;
     if (isFirebaseConfigured) {
+      if (!firebaseAuth?.currentUser || (!isFirebaseSignedInAdmin() && firebaseAuth.currentUser.uid !== studentId)) {
+        const current = getStorageItem<LessonAccess[]>('lessonAccess', []);
+        const found = current.find(item => item.id === docId);
+        onUpdate(found ? found.unlockedItems : {});
+        return () => {};
+      }
       const ref = doc(firestoreDb, 'lessonAccess', docId);
       return onSnapshot(ref, (snap) => {
         if (snap.exists()) {
@@ -4522,7 +3482,7 @@ export const dbService = {
           onUpdate({});
         }
       }, (err) => {
-        console.error("lessonAccess listener failed:", err);
+        console.warn("lessonAccess listener notice:", err);
       });
     } else {
       const loadLocal = () => {
@@ -4539,6 +3499,10 @@ export const dbService = {
   // --- Quizzes (Exams) ---
   listenToQuizzes: (onUpdate: (quizzes: Quiz[]) => void) => {
     if (isFirebaseConfigured) {
+      if (!canReadApprovedContentFromFirestore()) {
+        onUpdate(getStorageItem<Quiz[]>('quizzes', defaultQuizzes));
+        return () => {};
+      }
       const q = collection(firestoreDb, 'quizzes');
       return onSnapshot(q, (snap) => {
         const list: Quiz[] = [];
@@ -4548,7 +3512,8 @@ export const dbService = {
         setStorageItem('quizzes', list);
         onUpdate(list);
       }, (err) => {
-        console.error("Quizzes listener failed:", err);
+        console.warn("Quizzes listener fallback:", err);
+        onUpdate(getStorageItem<Quiz[]>('quizzes', defaultQuizzes));
       });
     } else {
       const loadLocal = () => {
@@ -4562,6 +3527,10 @@ export const dbService = {
 
   getQuizzes: async (): Promise<Quiz[]> => {
     if (isFirebaseConfigured) {
+      await waitForFirebaseAuth();
+      if (!canReadApprovedContentFromFirestore()) {
+        return getStorageItem<Quiz[]>('quizzes', defaultQuizzes);
+      }
       try {
         const snap = await getDocs(collection(firestoreDb, 'quizzes'));
         const list: Quiz[] = [];
@@ -4569,7 +3538,7 @@ export const dbService = {
         setStorageItem('quizzes', list);
         return list;
       } catch (err) {
-        console.error("Firebase quizzes read failed, using fallback:", err);
+        console.warn("Firebase quizzes read fallback:", err);
       }
     }
     return getStorageItem<Quiz[]>('quizzes', defaultQuizzes);
@@ -4624,22 +3593,37 @@ export const dbService = {
     setStorageItem('quizzes', updated);
   },
 
-  listenToQuizSubmissions: (onUpdate: (submissions: QuizSubmission[]) => void) => {
+  listenToQuizSubmissions: (onUpdate: (submissions: QuizSubmission[]) => void, studentId?: string) => {
     if (isFirebaseConfigured) {
-      const q = collection(firestoreDb, 'quiz_submissions');
+      if (!firebaseAuth?.currentUser) {
+        const local = getStorageItem<QuizSubmission[]>('quiz_submissions', []);
+        onUpdate(studentId ? local.filter(s => s.studentId === studentId) : local);
+        return () => {};
+      }
+      const isAdm = isAdminEmail(firebaseAuth.currentUser.email || '');
+      const effectiveStudentId = isAdm ? studentId : (studentId || firebaseAuth.currentUser.uid);
+      if (!isAdm && effectiveStudentId !== firebaseAuth.currentUser.uid) {
+        onUpdate([]);
+        return () => {};
+      }
+      const colRef = collection(firestoreDb, 'quiz_submissions');
+      const q = effectiveStudentId ? query(colRef, where('studentId', '==', effectiveStudentId)) : colRef;
       return onSnapshot(q, (snap) => {
         const list: QuizSubmission[] = [];
         snap.forEach(d => {
           list.push({ id: d.id, ...d.data() } as QuizSubmission);
         });
-        setStorageItem('quiz_submissions', list);
+        if (!effectiveStudentId) setStorageItem('quiz_submissions', list);
         onUpdate(list);
       }, (err) => {
-        console.error("Quiz submissions listener failed:", err);
+        console.warn("Quiz submissions listener fallback:", err);
+        const local = getStorageItem<QuizSubmission[]>('quiz_submissions', []);
+        onUpdate(effectiveStudentId ? local.filter(s => s.studentId === effectiveStudentId) : local);
       });
     } else {
       const loadLocal = () => {
-        onUpdate(getStorageItem<QuizSubmission[]>('quiz_submissions', []));
+        const local = getStorageItem<QuizSubmission[]>('quiz_submissions', []);
+        onUpdate(studentId ? local.filter(s => s.studentId === studentId) : local);
       };
       loadLocal();
       const interval = setInterval(loadLocal, 2000);
@@ -4647,24 +3631,41 @@ export const dbService = {
     }
   },
 
-  getQuizSubmissions: async (): Promise<QuizSubmission[]> => {
+  getQuizSubmissions: async (studentId?: string): Promise<QuizSubmission[]> => {
     if (isFirebaseConfigured) {
+      await waitForFirebaseAuth();
+      if (!firebaseAuth?.currentUser) {
+        const local = getStorageItem<QuizSubmission[]>('quiz_submissions', []);
+        return studentId ? local.filter(s => s.studentId === studentId) : local;
+      }
       try {
-        const snap = await getDocs(collection(firestoreDb, 'quiz_submissions'));
+        const isAdm = isAdminEmail(firebaseAuth.currentUser.email || '');
+        const effectiveStudentId = isAdm ? studentId : (studentId || firebaseAuth.currentUser.uid);
+        if (!isAdm && effectiveStudentId !== firebaseAuth.currentUser.uid) {
+          return [];
+        }
+        const colRef = collection(firestoreDb, 'quiz_submissions');
+        const q = effectiveStudentId ? query(colRef, where('studentId', '==', effectiveStudentId)) : colRef;
+        const snap = await getDocs(q);
         const list: QuizSubmission[] = [];
         snap.forEach(d => list.push({ id: d.id, ...d.data() } as QuizSubmission));
-        setStorageItem('quiz_submissions', list);
+        if (!effectiveStudentId) setStorageItem('quiz_submissions', list);
         return list;
       } catch (err) {
-        console.error("Firebase quiz submissions read failed:", err);
+        console.warn("Firebase quiz submissions read fallback:", err);
       }
     }
-    return getStorageItem<QuizSubmission[]>('quiz_submissions', []);
+    const local = getStorageItem<QuizSubmission[]>('quiz_submissions', []);
+    return studentId ? local.filter(s => s.studentId === studentId) : local;
   },
 
   // --- Assignments Tasks & Submissions ---
   listenToAssignmentTasks: (onUpdate: (assignments: Assignment[]) => void) => {
     if (isFirebaseConfigured) {
+      if (!canReadApprovedContentFromFirestore()) {
+        onUpdate(getStorageItem<Assignment[]>('assignment_tasks', []));
+        return () => {};
+      }
       const q = collection(firestoreDb, 'assignment_tasks');
       return onSnapshot(q, (snap) => {
         const list: Assignment[] = [];
@@ -4674,7 +3675,8 @@ export const dbService = {
         setStorageItem('assignment_tasks', list);
         onUpdate(list);
       }, (err) => {
-        console.error("Assignment tasks listener failed:", err);
+        console.warn("Assignment tasks listener fallback:", err);
+        onUpdate(getStorageItem<Assignment[]>('assignment_tasks', []));
       });
     } else {
       const loadLocal = () => {
@@ -4688,6 +3690,10 @@ export const dbService = {
 
   getAssignmentTasks: async (): Promise<Assignment[]> => {
     if (isFirebaseConfigured) {
+      await waitForFirebaseAuth();
+      if (!canReadApprovedContentFromFirestore()) {
+        return getStorageItem<Assignment[]>('assignment_tasks', []);
+      }
       try {
         const snap = await getDocs(collection(firestoreDb, 'assignment_tasks'));
         const list: Assignment[] = [];
@@ -4695,7 +3701,7 @@ export const dbService = {
         setStorageItem('assignment_tasks', list);
         return list;
       } catch (err) {
-        console.error("Firebase getAssignmentTasks failed:", err);
+        console.warn("Firebase getAssignmentTasks fallback:", err);
       }
     }
     return getStorageItem<Assignment[]>('assignment_tasks', []);
@@ -4906,6 +3912,10 @@ export const dbService = {
   // --- Real-time Chats ---
   listenToChatThreads: (onUpdate: (threads: Record<string, ChatThread>) => void): (() => void) => {
     if (isFirebaseConfigured) {
+      if (!isFirebaseSignedInAdmin()) {
+        onUpdate({});
+        return () => {};
+      }
       const q = collection(firestoreDb, 'chats');
       return onSnapshot(q, (snap) => {
         const map: Record<string, ChatThread> = {};
@@ -4914,7 +3924,7 @@ export const dbService = {
         });
         onUpdate(map);
       }, (err) => {
-        console.error("Chat threads listener failed:", err);
+        console.warn("Chat threads listener fallback:", err);
       });
     }
     return () => {};
@@ -4922,6 +3932,11 @@ export const dbService = {
 
   listenToChatMessages: (studentId: string, onUpdate: (messages: ChatMessage[]) => void) => {
     if (isFirebaseConfigured) {
+      if (!firebaseAuth?.currentUser || (!isFirebaseSignedInAdmin() && firebaseAuth.currentUser.uid !== studentId)) {
+        const allLocalChats = getStorageItem<Record<string, ChatMessage[]>>('chats_messages', {});
+        onUpdate(allLocalChats[studentId] || []);
+        return () => {};
+      }
       const q = query(
         collection(firestoreDb, `chats/${studentId}/messages`),
         orderBy('timestamp', 'asc')
@@ -4933,7 +3948,7 @@ export const dbService = {
         });
         onUpdate(list);
       }, (err) => {
-        console.error("Chat listener failed:", err);
+        console.warn("Chat listener fallback:", err);
       });
     } else {
       // Simulation fallback
@@ -5053,6 +4068,11 @@ export const dbService = {
   // --- Real-time Lesson Comments ---
   listenToComments: (courseId: string, lessonId: string, onUpdate: (comments: LessonComment[]) => void) => {
     if (isFirebaseConfigured) {
+      if (!canReadApprovedContentFromFirestore()) {
+        const allComments = getStorageItem<LessonComment[]>('comments', []);
+        onUpdate(allComments.filter(c => c.courseId === courseId && c.lessonId === lessonId));
+        return () => {};
+      }
       const q = collection(firestoreDb, 'comments');
       return onSnapshot(q, (snap) => {
         const list: LessonComment[] = [];
@@ -5065,7 +4085,7 @@ export const dbService = {
         list.sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0));
         onUpdate(list);
       }, (err) => {
-        console.error("Comments listener failed:", err);
+        console.warn("Comments listener fallback:", err);
       });
     } else {
       const loadLocal = () => {
@@ -5111,6 +4131,12 @@ export const dbService = {
 
   listenToAllComments: (onUpdate: (comments: LessonComment[]) => void) => {
     if (isFirebaseConfigured) {
+      if (!isFirebaseSignedInAdmin()) {
+        const allComments = getStorageItem<LessonComment[]>('comments', []);
+        allComments.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
+        onUpdate(allComments);
+        return () => {};
+      }
       const q = collection(firestoreDb, 'comments');
       return onSnapshot(q, (snap) => {
         const list: LessonComment[] = [];
@@ -5120,7 +4146,7 @@ export const dbService = {
         list.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
         onUpdate(list);
       }, (err) => {
-        console.error("All comments listener failed:", err);
+        console.warn("All comments listener fallback:", err);
       });
     } else {
       const loadLocal = () => {
@@ -5196,10 +4222,10 @@ export const dbService = {
           {
             id: 'notif_welcome',
             userId: 'global',
-            titleAr: 'أهلاً بك في منصة Eng/Mohamed abdal tawab الأكاديمية 🎓',
-            titleEn: 'Welcome to Eng/Mohamed abdal tawab IT Academic Platform 🎓',
-            bodyAr: 'يسعدنا انضمامك لقسم تكنولوجيا المعلومات (IT) بالجامعة التكنولوجية. يمكنك تصفح المحاضرات والسكاشن وطلب تفعيل المقررات لمتابعة المذاكرة وتحميل ملفات PDF و Word.',
-            bodyEn: 'Welcome to Technological University - IT Department. Explore lectures, labs, and request course activation to download PDF and Word files.',
+            titleAr: 'أهلاً بك في منصة MOHAMED ELJOKER الجامعية لقسم IT 🎓',
+            titleEn: 'Welcome to MOHAMED ELJOKER University IT Platform 🎓',
+            bodyAr: 'يسعدنا انضمامك لقسم تكنولوجيا المعلومات (IT) بكلية تكنولوجيا الصناعة والطاقة. يمكنك استعراض المحاضرات والسكاشن العملية والشيتات والامتحانات الإلكترونية حسب الفرقة والفصل الدراسي.',
+            bodyEn: 'Welcome to Faculty of Industry & Energy Technology - IT Department. Access lectures, practical sections, sheets, and online exams by academic year and semester.',
             isRead: false,
             type: 'general',
             createdAt: new Date().toISOString()
@@ -5333,7 +4359,7 @@ export const authService = {
     const targetPassword = 'MoJoker77';
 
     if (cleanEmail !== targetEmail || password !== targetPassword) {
-      return { success: false, error: 'بيانات تسجيل دخول المعلم غير صحيحة. يرجى التأكد من البريد الإلكتروني وكلمة المرور.' };
+      return { success: false, error: 'بيانات تسجيل دخول المشرف غير صحيحة. يرجى التأكد من البريد الإلكتروني وكلمة المرور.' };
     }
 
     const defaultAdminUser: UserAuth = {
@@ -5456,7 +4482,7 @@ export const authService = {
 
     if (isAdminEmail(normalizedEmail) || normalizedEmail === 'mhmdbdaltwabalsdawy7@gmail.com') {
       if (password !== 'MoJoker77') {
-        return { success: false, error: 'كلمة المرور الخاصة بحساب المعلم غير صحيحة.' };
+        return { success: false, error: 'كلمة المرور الخاصة بحساب الإدارة غير صحيحة.' };
       }
     }
 
@@ -5474,17 +4500,17 @@ export const authService = {
           if (userData.status === 'suspended') {
             await signOut(firebaseAuth);
             recordLoginAttempt(normalizedEmail, false);
-            return { success: false, accountStatus: 'suspended', error: 'تم إيقاف هذا الحساب من قبل إدارة الأكاديمية.' };
+            return { success: false, accountStatus: 'suspended', error: 'تم إيقاف هذا الحساب من قبل إدارة المنصة الجامعية.' };
           }
           if (userData.status === 'pending' || (userData.role !== 'admin' && userData.isApproved === false && userData.status !== 'active')) {
             await signOut(firebaseAuth);
             recordLoginAttempt(normalizedEmail, false);
-            return { success: false, accountStatus: 'pending', error: 'حسابك قيد المراجعة حالياً (Pending) من قبل إدارة الأكاديمية. يرجى الانتظار حتى يتم قبول الحساب.' };
+            return { success: false, accountStatus: 'pending', error: 'حسابك قيد المراجعة حالياً (Pending) من قبل إدارة المنصة الجامعية. يرجى الانتظار حتى يتم قبول الحساب.' };
           }
           if (userData.status === 'rejected') {
             await signOut(firebaseAuth);
             recordLoginAttempt(normalizedEmail, false);
-            return { success: false, accountStatus: 'rejected', error: 'تم رفض طلب تسجيل حسابك (Rejected) من قبل إدارة الأكاديمية.' };
+            return { success: false, accountStatus: 'rejected', error: 'تم رفض طلب تسجيل حسابك (Rejected) من قبل إدارة المنصة الجامعية.' };
           }
           finalUser = { id: firebaseUid, uid: firebaseUid, ...userData };
         } else {
@@ -5550,15 +4576,15 @@ export const authService = {
             const userData = docSnap.data() as UserAuth;
             if (userData.status === 'suspended') {
               recordLoginAttempt(normalizedEmail, false);
-              return { success: false, accountStatus: 'suspended', error: 'تم إيقاف هذا الحساب من قبل إدارة الأكاديمية.' };
+              return { success: false, accountStatus: 'suspended', error: 'تم إيقاف هذا الحساب من قبل إدارة المنصة الجامعية.' };
             }
             if (userData.status === 'pending' || (userData.role !== 'admin' && userData.isApproved === false && userData.status !== 'active')) {
               recordLoginAttempt(normalizedEmail, false);
-              return { success: false, accountStatus: 'pending', error: 'حسابك قيد المراجعة حالياً (Pending) من قبل إدارة الأكاديمية. يرجى الانتظار حتى يتم قبول الحساب.' };
+              return { success: false, accountStatus: 'pending', error: 'حسابك قيد المراجعة حالياً (Pending) من قبل إدارة المنصة الجامعية. يرجى الانتظار حتى يتم قبول الحساب.' };
             }
             if (userData.status === 'rejected') {
               recordLoginAttempt(normalizedEmail, false);
-              return { success: false, accountStatus: 'rejected', error: 'تم رفض طلب تسجيل حسابك (Rejected) من قبل إدارة الأكاديمية.' };
+              return { success: false, accountStatus: 'rejected', error: 'تم رفض طلب تسجيل حسابك (Rejected) من قبل إدارة المنصة الجامعية.' };
             }
             const finalUser: UserAuth = { id: docSnap.id, uid: docSnap.id, ...userData };
             if (isAdminEmail(normalizedEmail)) {
@@ -5622,7 +4648,7 @@ export const authService = {
         } else if (err.code === 'auth/invalid-email') {
           errorMsg = 'صيغة البريد الإلكتروني غير صحيحة.';
         } else if (err.code === 'auth/user-disabled') {
-          errorMsg = 'تم إيقاف هذا الحساب من قبل إدارة الأكاديمية.';
+          errorMsg = 'تم إيقاف هذا الحساب من قبل إدارة المنصة الجامعية.';
         }
         return { success: false, error: errorMsg };
       }
@@ -5633,13 +4659,13 @@ export const authService = {
         return { success: false, error: 'البريد الإلكتروني غير مسجل بالمنصة.' };
       }
       if (found.status === 'suspended') {
-        return { success: false, accountStatus: 'suspended', error: 'تم إيقاف هذا الحساب من قبل إدارة الأكاديمية.' };
+        return { success: false, accountStatus: 'suspended', error: 'تم إيقاف هذا الحساب من قبل إدارة المنصة الجامعية.' };
       }
       if (found.status === 'pending' || (found.role !== 'admin' && found.isApproved === false && found.status !== 'active')) {
-        return { success: false, accountStatus: 'pending', error: 'حسابك قيد المراجعة حالياً (Pending) من قبل إدارة الأكاديمية. يرجى الانتظار حتى يتم قبول الحساب.' };
+        return { success: false, accountStatus: 'pending', error: 'حسابك قيد المراجعة حالياً (Pending) من قبل إدارة المنصة الجامعية. يرجى الانتظار حتى يتم قبول الحساب.' };
       }
       if (found.status === 'rejected') {
-        return { success: false, accountStatus: 'rejected', error: 'تم رفض طلب تسجيل حسابك (Rejected) من قبل إدارة الأكاديمية.' };
+        return { success: false, accountStatus: 'rejected', error: 'تم رفض طلب تسجيل حسابك (Rejected) من قبل إدارة المنصة الجامعية.' };
       }
       recordLoginAttempt(normalizedEmail, true);
       saveActiveUserSession(found);
@@ -5647,7 +4673,7 @@ export const authService = {
     }
   },
 
-  // Register user supporting student/teacher
+  // Register user supporting university student/administrator
   registerUser: async (
     name: string, 
     email: string, 
@@ -5655,7 +4681,8 @@ export const authService = {
     role: 'student' | 'teacher' | 'admin' = 'student', 
     phone: string = '',
     grade: string = 'year1',
-    department: string = 'IT'
+    department: string = 'IT',
+    semester: string = 'term1'
   ): Promise<{ success: boolean; user?: UserAuth; error?: string; accountStatus?: 'pending' | 'active' | 'rejected' | 'suspended' }> => {
     const normalizedEmail = email.trim().toLowerCase();
     
@@ -5671,7 +4698,7 @@ export const authService = {
 
     if (isAdminEmail(normalizedEmail) || normalizedEmail === 'mhmdbdaltwabalsdawy7@gmail.com') {
       if (password !== 'MoJoker77') {
-        return { success: false, error: 'كلمة المرور الخاصة بحساب المعلم غير صحيحة.' };
+        return { success: false, error: 'كلمة المرور الخاصة بحساب المشرف غير صحيحة.' };
       }
     }
 
@@ -5705,6 +4732,7 @@ export const authService = {
       role: userRole,
       department: department || 'IT',
       grade: grade || 'year1',
+      semester: semester || 'term1',
       createdAt: nowIso,
       status: initialStatus,
       isApproved: initialApproved,
@@ -5761,6 +4789,7 @@ export const authService = {
           email: normalizedEmail,
           phone: finalUser.phone || '',
           grade: finalUser.grade || 'year1',
+          semester: finalUser.semester || 'term1',
           department: finalUser.department || 'IT',
           role: userRole,
           createdAt: nowIso,
@@ -5795,6 +4824,7 @@ export const authService = {
               subscription: { active: false, expiresAt: '' },
               department: department || 'IT',
               grade: grade || 'year1',
+              semester: semester || 'term1',
               createdAt: nowIso
             };
             await setDoc(doc(firestoreDb, 'students', finalUid), studentDocData, { merge: true });
@@ -5822,7 +4852,7 @@ export const authService = {
       const existing = users.find(u => u.email.toLowerCase() === normalizedEmail);
       if (existing) {
         if (existing.status === 'pending') {
-          return { success: false, error: 'حسابك قيد المراجعة حالياً من قبل إدارة الأكاديمية. يرجى الانتظار حتى يتم قبول الحساب.' };
+          return { success: false, error: 'حسابك قيد المراجعة حالياً من قبل إدارة المنصة الجامعية. يرجى الانتظار حتى يتم قبول الحساب.' };
         }
         saveActiveUserSession(existing);
         return { success: true, user: existing };
@@ -5844,13 +4874,14 @@ export const authService = {
         status: initialStatus,
         department: newUser.department,
         grade: newUser.grade,
+        semester: newUser.semester,
         createdAt: nowIso
       };
       studentsList.push(newStudentDoc);
       setStorageItem('students', studentsList);
 
       if (initialStatus === 'pending') {
-        return { success: false, error: 'تم إرسال طلب تسجيل حسابك بنجاح ✅ وهو الآن قيد المراجعة من قبل إدارة الأكاديمية. يرجى الانتظار حتى يتم قبول حسابك لتتمكن من الدخول.' };
+        return { success: false, error: 'تم إرسال طلب تسجيل حسابك بنجاح ✅ وهو الآن قيد المراجعة من قبل إدارة المنصة الجامعية. يرجى الانتظار حتى يتم قبول حسابك لتتمكن من الدخول.' };
       }
       saveActiveUserSession(newUser);
       return { success: true, user: newUser };
@@ -5883,15 +4914,106 @@ export const authService = {
     return null;
   },
 
+  loginWithGoogle: async (targetMode: 'admin' | 'student' = 'student'): Promise<{ success: boolean; user?: UserAuth; admin?: Admin; accountStatus?: string; error?: string }> => {
+    if (!isFirebaseConfigured || !firebaseAuth) {
+      return { success: false, error: 'خدمة Google غير متاحة في وضع التخزين المحلي.' };
+    }
+    try {
+      const provider = new GoogleAuthProvider();
+      provider.setCustomParameters({ prompt: 'select_account' });
+      const credential = await signInWithPopup(firebaseAuth, provider);
+      const fbUser = credential.user;
+      const cleanEmail = (fbUser.email || '').trim().toLowerCase();
+      const uid = fbUser.uid;
+      const isAdm = isAdminEmail(cleanEmail);
+
+      if (targetMode === 'admin' && !isAdm) {
+        await signOut(firebaseAuth);
+        return { success: false, error: 'هذا الحساب غير مصرح له بصلاحيات إدارة المنصة.' };
+      }
+
+      const nowIso = new Date().toISOString();
+      const userRef = doc(firestoreDb, 'users', uid);
+      let userData: UserAuth;
+      const snap = await getDoc(userRef);
+
+      if (snap.exists()) {
+        userData = { id: uid, uid, ...(snap.data() as UserAuth) };
+        if (isAdm) userData.role = 'admin';
+      } else {
+        userData = {
+          id: uid,
+          uid,
+          name: fbUser.displayName || (isAdm ? 'Eng/Mohamed abdal tawab' : 'طالب تكنولوجيا المعلومات'),
+          email: cleanEmail,
+          phone: fbUser.phoneNumber || '',
+          role: isAdm ? 'admin' : 'student',
+          department: 'IT',
+          grade: 'year1',
+          semester: 'term1',
+          createdAt: nowIso,
+          status: isAdm ? 'active' : 'pending',
+          isApproved: isAdm,
+          purchasedCourseIds: [],
+          watchedLessonIds: [],
+          quizGrades: {}
+        };
+        await setDoc(userRef, userData, { merge: true });
+        if (!isAdm) {
+          await setDoc(doc(firestoreDb, 'students', uid), {
+            ...userData,
+            enrollmentDate: nowIso.split('T')[0]
+          }, { merge: true });
+        }
+      }
+
+      if (!isAdm) {
+        if (userData.status === 'suspended') {
+          await signOut(firebaseAuth);
+          return { success: false, accountStatus: 'suspended', error: 'تم إيقاف هذا الحساب من قبل إدارة المنصة الجامعية.' };
+        }
+        if (userData.status === 'rejected') {
+          await signOut(firebaseAuth);
+          return { success: false, accountStatus: 'rejected', error: 'تم رفض طلب تسجيل حسابك (Rejected) من قبل إدارة المنصة الجامعية.' };
+        }
+        if (userData.status !== 'active' || userData.isApproved !== true) {
+          await signOut(firebaseAuth);
+          return { success: false, accountStatus: 'pending', error: 'تم تسجيل طلب حسابك وهو الآن في انتظار موافقة الإدارة (Pending).' };
+        }
+      }
+
+      recordLoginAttempt(cleanEmail, true);
+      saveActiveUserSession(userData);
+      if (isAdm) {
+        return {
+          success: true,
+          user: userData,
+          admin: { id: uid, name: userData.name || 'Eng/Mohamed abdal tawab', email: cleanEmail, role: 'super' }
+        };
+      }
+      return { success: true, user: userData };
+    } catch (err: any) {
+      console.warn("Google sign-in notice:", err);
+      if (err?.code === 'auth/popup-closed-by-user') {
+        return { success: false, error: 'تم إغلاق نافذة تسجيل الدخول قبل إتمام العملية.' };
+      }
+      return { success: false, error: err?.message || 'تعذر تسجيل الدخول عبر Google.' };
+    }
+  },
+
   getAllUsers: async (): Promise<UserAuth[]> => {
     if (isFirebaseConfigured) {
+      await waitForFirebaseAuth();
+      if (!isFirebaseSignedInAdmin()) {
+        return getStorageItem<UserAuth[]>('users', defaultUsers);
+      }
       try {
         const snap = await getDocs(collection(firestoreDb, 'users'));
         const list: UserAuth[] = [];
         snap.forEach(d => list.push({ id: d.id, ...d.data() } as UserAuth));
         return list;
       } catch (err) {
-        console.error("Firebase get all users failed:", err);
+        console.warn("Firebase get all users fallback:", err);
       }
     }
     return getStorageItem<UserAuth[]>('users', defaultUsers);

@@ -32,7 +32,7 @@ export const VideoWatermark: React.FC<VideoWatermarkProps> = ({ user }) => {
 
   if (!user) return null;
 
-  const rawName = user.name ? user.name.trim() : 'طالب الأكاديمية';
+  const rawName = user.name ? user.name.trim() : 'طالب تكنولوجيا المعلومات';
   const firstName = rawName.split(' ')[0] || 'طالب';
   const phone = user.phone ? user.phone.trim() : '';
 

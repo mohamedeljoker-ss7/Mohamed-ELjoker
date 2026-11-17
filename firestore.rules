@@ -91,18 +91,27 @@ service cloud.firestore {
       allow write: if isAdmin();
     }
 
-    // Cloud Media Chunks (for uploaded PDFs / DOCX)
+    // Cloud Media Chunks (for uploaded PDFs / DOCX / Lab Archives / Student Submissions)
     match /cloud_media/{fileId} {
       allow read: if isApprovedStudent();
-      allow write: if isAdmin();
+      allow create: if isApprovedStudent();
+      allow update, delete: if isAdmin();
       match /chunks/{chunkId} {
         allow read: if isApprovedStudent();
-        allow write: if isAdmin();
+        allow create: if isApprovedStudent();
+        allow update, delete: if isAdmin();
       }
     }
 
     // Online Exam Submissions
     match /exam_submissions/{submissionId} {
+      allow read: if isAdmin() || (isSignedIn() && resource.data.studentId == request.auth.uid);
+      allow create: if isApprovedStudent() && request.resource.data.studentId == request.auth.uid;
+      allow update, delete: if isAdmin();
+    }
+
+    // University Sheet Submissions
+    match /sheet_submissions/{submissionId} {
       allow read: if isAdmin() || (isSignedIn() && resource.data.studentId == request.auth.uid);
       allow create: if isApprovedStudent() && request.resource.data.studentId == request.auth.uid;
       allow update, delete: if isAdmin();

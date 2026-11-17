@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect } from 'react';
+import React, { createContext, useContext, useState, useEffect, useCallback, useMemo } from 'react';
 
 type Language = 'ar' | 'en';
 
@@ -14,28 +14,32 @@ const LanguageContext = createContext<LanguageContextProps | undefined>(undefine
 export const LanguageProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [language, setLanguageState] = useState<Language>(() => {
     const saved = localStorage.getItem('academy_lang');
-    return (saved === 'en' || saved === 'ar') ? saved : 'ar'; // Default to Arabic for Egyptian audience
+    return (saved === 'en' || saved === 'ar') ? saved : 'ar';
   });
 
   const direction = language === 'ar' ? 'rtl' : 'ltr';
 
   useEffect(() => {
     localStorage.setItem('academy_lang', language);
-    // Apply body dir
     document.documentElement.dir = direction;
     document.documentElement.lang = language;
   }, [language, direction]);
 
-  const setLanguage = (lang: Language) => {
+  const setLanguage = useCallback((lang: Language) => {
     setLanguageState(lang);
-  };
+  }, []);
 
-  const t = (ar: string, en: string) => {
+  const t = useCallback((ar: string, en: string) => {
     return language === 'ar' ? ar : en;
-  };
+  }, [language]);
+
+  const contextValue = useMemo(
+    () => ({ language, direction, setLanguage, t }),
+    [language, direction, setLanguage, t]
+  );
 
   return (
-    <LanguageContext.Provider value={{ language, direction, setLanguage, t }}>
+    <LanguageContext.Provider value={contextValue}>
       {children}
     </LanguageContext.Provider>
   );

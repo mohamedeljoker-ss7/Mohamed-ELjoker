@@ -366,6 +366,26 @@
       },
       "required": ["studentId", "examId", "score", "totalPoints", "submittedAt"]
     },
+    "SheetSubmission": {
+      "title": "SheetSubmission",
+      "description": "University student sheet submission and admin grading record",
+      "type": "object",
+      "properties": {
+        "sheetId": { "type": "string" },
+        "sheetTitle": { "type": "string" },
+        "courseId": { "type": "string" },
+        "studentId": { "type": "string" },
+        "studentName": { "type": "string" },
+        "studentEmail": { "type": "string" },
+        "answerText": { "type": "string" },
+        "fileUrl": { "type": "string" },
+        "status": { "type": "string", "enum": ["submitted", "graded"] },
+        "score": { "type": "number" },
+        "feedback": { "type": "string" },
+        "submittedAt": { "type": "string" }
+      },
+      "required": ["sheetId", "studentId", "status", "submittedAt"]
+    },
     "ScheduleItem": {
       "title": "ScheduleItem",
       "description": "Weekly timetable and schedule for university lectures and sections",
@@ -450,6 +470,10 @@
     "sheets/{sheetId}": {
       "schema": "SheetItem",
       "description": "Lecture and section practice sheets"
+    },
+    "sheet_submissions/{submissionId}": {
+      "schema": "SheetSubmission",
+      "description": "Student sheet submissions and grades"
     },
     "question_bank/{questionId}": {
       "schema": "QuestionBankItem",

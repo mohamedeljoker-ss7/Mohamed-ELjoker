@@ -12,7 +12,7 @@ import { SubscriptionRequiredView } from './components/SubscriptionRequiredView'
 import { CustomVideoPlayer } from './components/CustomVideoPlayer';
 import { verifyCourseAccess, formatVideoEmbedUrl } from './utils/authAccess';
 import { triggerFileDownload } from './utils/videoStorage';
-import { doesCourseMatchStudent, doesCourseMatchStudentGrade, ACADEMIC_GRADES, ACADEMIC_SUBJECTS, getGradeName, getCourseDisplayTitle, normalizeGradeCode, getGradeFromCourseOrCategory } from './utils/gradeMatching';
+import { doesCourseMatchStudent, doesCourseMatchStudentGrade, ACADEMIC_GRADES, ACADEMIC_SEMESTERS, ACADEMIC_SUBJECTS, getGradeName, getCourseDisplayTitle, normalizeGradeCode, getGradeFromCourseOrCategory } from './utils/gradeMatching';
 import { 
   Star, Phone, Send, Info, Award, Calendar, BookOpen, Clock, FileText, CheckCircle2, 
   MapPin, HelpCircle, ShieldAlert, ArrowLeft, Loader, Play, Download, Check, X, Video, Plus, Sparkles,
@@ -62,7 +62,7 @@ function AcademyApp() {
   const [isStudentAuthOpen, setIsStudentAuthOpen] = useState<boolean>(false);
   const [authTab, setAuthTab] = useState<'student' | 'teacher'>('student');
   const [studentAuthMode, setStudentAuthMode] = useState<'login' | 'register'>('login');
-  const [studentAuthForm, setStudentAuthForm] = useState({ name: '', email: '', password: '', phone: '', grade: 'year1', department: 'IT' });
+  const [studentAuthForm, setStudentAuthForm] = useState({ name: '', email: '', password: '', phone: '', grade: 'year1', semester: 'term1', department: 'IT' });
   const [studentAuthError, setStudentAuthError] = useState<string>('');
   const [studentAuthSuccess, setStudentAuthSuccess] = useState<string>('');
   const [studentAccountStatus, setStudentAccountStatus] = useState<string>('');
@@ -191,21 +191,22 @@ function AcademyApp() {
       unsubAuth();
       window.removeEventListener('popstate', handleUrlRouting);
     };
-  }, [courses]);
+  }, []);
 
   // Keep selected course synchronized when courses array finishes fetching
+  const selectedCourseId = selectedCourse?.id;
   useEffect(() => {
     if (courses.length > 0) {
       const searchParams = new URLSearchParams(window.location.search);
       const courseIdParam = searchParams.get('id') || searchParams.get('courseId') || sessionStorage.getItem('academy_selected_course_id');
-      if (courseIdParam && (!selectedCourse || selectedCourse.id !== courseIdParam)) {
+      if (courseIdParam && selectedCourseId !== courseIdParam) {
         const found = courses.find(c => c.id === courseIdParam);
         if (found) {
           setSelectedCourse(found);
         }
       }
     }
-  }, [courses, selectedCourse]);
+  }, [courses, selectedCourseId]);
 
   // Guard admin routes without blocking public platform views
   useEffect(() => {
@@ -240,7 +241,7 @@ function AcademyApp() {
             if (window.location.pathname.includes('student') || currentView === 'student-panel') {
               handleNavigate('home');
             }
-            alert('تم إنهاء جميع جلسات الدخول وتسجيل الخروج من المنصة بواسطة إدارة الأكاديمية.');
+            alert('تم إنهاء جميع جلسات الدخول وتسجيل الخروج من المنصة بواسطة إدارة المنصة الجامعية.');
           }
         }
       }
@@ -392,7 +393,7 @@ function AcademyApp() {
     const cleanPassword = adminPassword.trim();
 
     if (cleanEmail !== 'mhmdbdaltwabalsdawy7@gmail.com' || cleanPassword !== 'MoJoker77') {
-      setLoginError(language === 'ar' ? 'بيانات تسجيل دخول المعلم غير صحيحة. يرجى التأكد من البريد الإلكتروني وكلمة المرور.' : 'Invalid teacher credentials. Please check email and password.');
+      setLoginError(language === 'ar' ? 'بيانات تسجيل دخول الإدارة غير صحيحة. يرجى التأكد من البريد الإلكتروني وكلمة المرور.' : 'Invalid administrator credentials. Please check email and password.');
       return;
     }
 
@@ -413,6 +414,40 @@ function AcademyApp() {
       }
     } catch {
       setLoginError(language === 'ar' ? 'حدث خطأ غير متوقع أثناء تسجيل الدخول.' : 'Error logging in');
+    }
+  };
+
+  const handleGoogleAuth = async (mode: 'admin' | 'student') => {
+    setLoginError('');
+    setStudentAuthError('');
+    setStudentAuthSuccess('');
+    setStudentAccountStatus('');
+    try {
+      const res = await authService.loginWithGoogle(mode);
+      if (res.success && (res.admin || res.user?.role === 'admin')) {
+        setIsAdminLoggedIn(true);
+        setIsStudentLoggedIn(false);
+        setIsAdminLoginOpen(false);
+        setIsStudentAuthOpen(false);
+        handleNavigate('home');
+      } else if (res.success && res.user) {
+        setIsStudentLoggedIn(true);
+        setIsAdminLoggedIn(false);
+        setIsStudentAuthOpen(false);
+        setIsAdminLoginOpen(false);
+        handleNavigate('student-panel');
+      } else {
+        if (mode === 'admin') {
+          setLoginError(res.error || t('تعذر تسجيل الدخول عبر Google.', 'Google login failed.'));
+        } else {
+          if (res.accountStatus) setStudentAccountStatus(res.accountStatus);
+          setStudentAuthError(res.error || t('تعذر تسجيل الدخول عبر Google.', 'Google login failed.'));
+        }
+      }
+    } catch (err: any) {
+      const msg = err?.message || t('تعذر تسجيل الدخول عبر Google.', 'Google login failed.');
+      if (mode === 'admin') setLoginError(msg);
+      else setStudentAuthError(msg);
     }
   };
 
@@ -471,12 +506,12 @@ function AcademyApp() {
           if (res.user.role === 'admin') {
             setIsAdminLoggedIn(true);
             setIsStudentAuthOpen(false);
-            setStudentAuthForm({ name: '', email: '', password: '', phone: '', grade: 'year1', department: 'IT' });
+            setStudentAuthForm({ name: '', email: '', password: '', phone: '', grade: 'year1', semester: 'term1', department: 'IT' });
             handleNavigate('home');
           } else {
             setIsStudentLoggedIn(true);
             setIsStudentAuthOpen(false);
-            setStudentAuthForm({ name: '', email: '', password: '', phone: '', grade: 'year1', department: 'IT' });
+            setStudentAuthForm({ name: '', email: '', password: '', phone: '', grade: 'year1', semester: 'term1', department: 'IT' });
             handleNavigate('student-panel');
           }
         } else {
@@ -494,12 +529,13 @@ function AcademyApp() {
           'student', 
           phone, 
           studentAuthForm.grade || 'year1', 
-          studentAuthForm.department || 'IT'
+          studentAuthForm.department || 'IT',
+          studentAuthForm.semester || 'term1'
         );
         if (res.success && res.user) {
           setIsStudentLoggedIn(true);
           setIsStudentAuthOpen(false);
-          setStudentAuthForm({ name: '', email: '', password: '', phone: '', grade: 'year1', department: 'IT' });
+          setStudentAuthForm({ name: '', email: '', password: '', phone: '', grade: 'year1', semester: 'term1', department: 'IT' });
           handleNavigate('student-panel');
         } else {
           const msg = res.error || '';
@@ -692,10 +728,10 @@ function AcademyApp() {
   // FAQs
   const faqs = [
     {
-      qAr: 'ما هي المقررات الأكاديمية الستة المتاحة على المنصة لقسم تكنولوجيا المعلومات IT؟',
-      qEn: 'What are the 6 academic IT courses available on the platform?',
-      aAr: 'تغطي المنصة المقررات الأساسية المعتمدة: Physics (الفيزياء)، Python Programming (برمجة بايثون)، IT Essentials (أساسيات تكنولوجيا المعلومات)، Mathematics (الرياضيات)، Cyber Security (الأمن السيبراني)، و English (اللغة الإنجليزية).',
-      aEn: 'The platform covers the 6 accredited IT courses: Physics, Python Programming, IT Essentials, Mathematics, Cyber Security, and English.'
+      qAr: 'ما هي المواد الدراسية المتاحة على المنصة لقسم تكنولوجيا المعلومات IT؟',
+      qEn: 'What academic IT courses are available on the platform?',
+      aAr: 'تنشر الإدارة المقررات الدراسية لقسم تكنولوجيا المعلومات حسب كل فرقة دراسية وفصل دراسي، شاملة المحاضرات والسكاشن والشيتات والامتحانات.',
+      aEn: 'The administration publishes IT department courses organized by academic year and semester, complete with lectures, lab sections, sheets, and exams.'
     },
     {
       qAr: 'كيف أحصل على ملفات المحاضرات وسكاشن العملي والشيتات؟',
@@ -846,7 +882,7 @@ function AcademyApp() {
                           <div className="absolute bottom-4 left-4 right-4 flex items-center justify-between text-xs text-white">
                             <div>
                               <p className="font-extrabold">{t('بوابة قسم تكنولوجيا المعلومات', 'IT Department Academic Hub')}</p>
-                              <p className="text-[11px] text-cyan-300 font-mono">Eng/Mohamed abdal tawab · 6 Core Courses</p>
+                              <p className="text-[11px] text-cyan-300 font-mono">Eng/Mohamed abdal tawab · IT Department</p>
                             </div>
                             <span className="text-[11px] font-mono font-bold text-emerald-300">100% FREE</span>
                           </div>
@@ -904,19 +940,31 @@ function AcademyApp() {
                       </button>
                     </div>
 
-                    <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-3">
-                      {courses.filter(c => c.published !== false).slice(0, 6).map(course => (
-                        <CourseCard
-                          key={course.id}
-                          course={course}
-                          category={categories.find(c => c.id === course.categoryId)}
-                          onSelect={handleCourseClick}
-                          onEnroll={(course, e) => triggerEnroll(course, e)}
-                          user={authService.getCurrentUser()}
-                          orders={orders}
-                        />
-                      ))}
-                    </div>
+                    {courses.filter(c => c.published !== false).length === 0 ? (
+                      <div className="rounded-2xl glass border border-slate-200/80 dark:border-slate-800/80 p-12 text-center max-w-lg mx-auto">
+                        <BookOpen className="h-10 w-10 text-slate-400 dark:text-slate-500 mx-auto mb-3" />
+                        <p className="font-bold text-slate-900 dark:text-white mb-1">
+                          {t('لا توجد مقررات دراسية منشورة حالياً', 'No published courses available yet')}
+                        </p>
+                        <p className="text-xs text-slate-500 dark:text-slate-400">
+                          {t('سيتم عرض المقررات فور إضافتها ونشرها من لوحة الإدارة.', 'Courses will appear here as soon as they are added by the administration.')}
+                        </p>
+                      </div>
+                    ) : (
+                      <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-3">
+                        {courses.filter(c => c.published !== false).slice(0, 6).map(course => (
+                          <CourseCard
+                            key={course.id}
+                            course={course}
+                            category={categories.find(c => c.id === course.categoryId)}
+                            onSelect={handleCourseClick}
+                            onEnroll={(course, e) => triggerEnroll(course, e)}
+                            user={authService.getCurrentUser()}
+                            orders={orders}
+                          />
+                        ))}
+                      </div>
+                    )}
                   </div>
                 </section>
 
@@ -951,7 +999,7 @@ function AcademyApp() {
 
                         <div className="space-y-3 text-xs text-slate-700 dark:text-slate-300">
                           {[
-                            t('نزول دوري لمحاضرات المواد الستة: Physics, Python, IT Essentials, Math, Cyber Security, English.', 'Regular release of lectures for the 6 core IT subjects: Physics, Python, IT Essentials, Math, Cyber Security, English.'),
+                            t('نزول دوري لمحاضرات ومقررات قسم تكنولوجيا المعلومات (IT) المنشورة عبر المنصة.', 'Regular release of lectures and accredited IT Department courses published on the platform.'),
                             t('سكاشن عملية وشيتات وتجارب معملية بصيغ Word (.docx) قابلة للتعديل والطباعة.', 'Practical lab sections and assignment sheets in editable Word (.docx) and PDF format.'),
                             t('ملخصات مركزة ونماذج امتحانات الميدترم والفاينل مع الإجابات النموذجية.', 'Focused summaries and past midterm & final exam archives with model answers.'),
                             t('مكتبة رقمية للمراجع والكتب وأكواد البرمجة الجاهزة والمشاريع التطبيقية.', 'Digital library with course textbooks, ready-to-run source code, and practical projects.'),
@@ -1026,8 +1074,8 @@ function AcademyApp() {
                   
                   {/* Headline */}
                   <div className="text-center max-w-2xl mx-auto mb-10">
-                    <h1 className="text-2xl font-black text-slate-900 dark:text-white md:text-4xl">{t('الكورسات والمناهج الدراسية', 'Educational Courses & Curriculums')}</h1>
-                    <p className="text-xs text-slate-600 dark:text-slate-400 mt-2">{t('تصفح الكورسات والمناهج لجميع المراحل الدراسية والمواد التعليمية', 'Browse courses by grade level and subject')}</p>
+                    <h1 className="text-2xl font-black text-slate-900 dark:text-white md:text-4xl">{t('المقررات والمناهج الجامعية', 'University Subjects & Curriculums')}</h1>
+                    <p className="text-xs text-slate-600 dark:text-slate-400 mt-2">{t('تصفح المقررات الدراسية لجميع الفرق والمواد التخصصية بقسم IT', 'Browse academic subjects by academic year and department')}</p>
                   </div>
 
                   {/* Filters Bar: Grade Tabs + Subject Filter */}
@@ -1083,7 +1131,7 @@ function AcademyApp() {
                   {filteredCourses.length === 0 ? (
                     <div className="rounded-2xl glass p-12 text-center max-w-md mx-auto">
                       <HelpCircle className="h-10 w-10 text-slate-400 dark:text-slate-500 mx-auto mb-3" />
-                      <p className="font-bold text-slate-900 dark:text-white mb-1">{t('لا توجد كورسات حالياً', 'No courses currently available')}</p>
+                      <p className="font-bold text-slate-900 dark:text-white mb-1">{t('لا توجد مقررات دراسية متاحة حالياً', 'No subjects currently available')}</p>
                       <p className="text-xs text-slate-500 dark:text-slate-400">{t('جرب البحث بكلمات أخرى أو تغيير القسم.', 'Try searching for other keywords or categories.')}</p>
                     </div>
                   ) : (
@@ -1446,8 +1494,8 @@ function AcademyApp() {
 
                       <p>
                         {t(
-                          'تغطي المنصة المقررات الستة الأساسية المعتمدة للقسم: مادة الفيزياء (Physics)، برمجة بايثون (Python Programming)، أساسيات تكنولوجيا المعلومات (IT Essentials)، الرياضيات (Mathematics)، الأمن السيبراني (Cyber Security)، واللغة الإنجليزية التخصصية (English).',
-                          'The platform covers the 6 core accredited courses: Physics, Python Programming, IT Essentials, Mathematics, Cyber Security, and Technical English.'
+                          'تتيح المنصة للإدارة إضافة وتنظيم جميع المقررات الأكاديمية لقسم تكنولوجيا المعلومات (IT) حسب الفرق والفصول الدراسية مع المحاضرات والسكاشن والامتحانات والشيتات.',
+                          'The platform enables the administration to organize and publish accredited IT Department courses by academic year and semester with lectures, labs, exams, and sheets.'
                         )}
                       </p>
 
@@ -1645,7 +1693,7 @@ function AcademyApp() {
                     <p>{t('برجاء قراءة اللوائح الأكاديمية المنظمة لاستخدام منصة Eng/Mohamed abdal tawab بالجامعة التكنولوجية لقسم تكنولوجيا المعلومات IT:', 'Please review the academic regulations governing the use of Eng/Mohamed abdal tawab’s IT University Platform:')}</p>
                     
                     <h3 className="font-bold text-slate-900 dark:text-white text-sm">{t('١. صلاحية استخدام المواد الأكاديمية والملفات', '1. Academic Materials Usage License')}</h3>
-                    <p>{t('عند تفعيل المقرر للطالب، يُمنح صلاحية أكاديمية للاطلاع وتحميل ملفات المحاضرات النظرية (PDF) وشيتات السكاشن العملية (Word .docx) وحل التكليفات والامتحانات للمقررات الستة. يحظر إعادة نشر أو بيع المحتوى الأكاديمي لجهات تجارية خارجية.', 'Active course access grants the student personal permission to access and download lecture notes, practical Word lab sheets, and assignments for accredited courses.')}</p>
+                    <p>{t('عند تفعيل المقرر للطالب، يُمنح صلاحية أكاديمية للاطلاع وتحميل ملفات المحاضرات النظرية (PDF) وشيتات السكاشن العملية (Word .docx) وحل التكليفات والامتحانات للمقررات المعتمدة. يحظر إعادة نشر أو بيع المحتوى الأكاديمي لجهات تجارية خارجية.', 'Active course access grants the student personal permission to access and download lecture notes, practical Word lab sheets, and assignments for accredited courses.')}</p>
 
                     <h3 className="font-bold text-slate-900 dark:text-white text-sm">{t('٢. تفعيل المواد الدراسية وقسم الامتحانات', '2. Course Activation & Exam System')}</h3>
                     <p>{t('يتم تفعيل الوصول إلى ملفات السكاشن والمحاضرات وحل الشيتات وبنك أسئلة الامتحانات بعد مراجعة حساب الطالب من قبل الإدارة لضمان انتظام العملية التعليمية لطلاب قسم IT.', 'File access and exam submissions are activated once student credentials are verified by the department administration.')}</p>
@@ -1696,7 +1744,7 @@ function AcademyApp() {
                         🎓
                       </span>
                       <h3 className="text-xl font-black text-slate-900 dark:text-white">{t('بوابة الطالب التعليمية', 'Student Learning Portal')}</h3>
-                      <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">{t('سجل دخولك لمتابعة حصصك وحل الامتحانات والواجبات المنزلية', 'Access courses, check certificates, do online exams and assignments')}</p>
+                      <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">{t('سجل دخولك لمتابعة المحاضرات والسكاشن وحل الامتحانات والشيتات الجامعية', 'Access academic resources, online exams, and lecture/section sheets')}</p>
                     </div>
 
                     <div className="space-y-4">
@@ -1889,7 +1937,7 @@ function AcademyApp() {
         </button>
       </div>
 
-      {/* Unified Dual Login Modal (Student Login & Teacher Login) */}
+      {/* Unified Dual Login Modal (Student Login & Administrator Login) */}
       {(isStudentAuthOpen || isAdminLoginOpen) && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/75 dark:bg-[#090d16]/90 backdrop-blur-md p-3 sm:p-4 animate-fadeIn">
           <div className="relative w-full max-w-sm rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950 p-5 sm:p-7 shadow-2xl animate-scaleUp max-h-[90vh] overflow-y-auto">
@@ -1941,22 +1989,22 @@ function AcademyApp() {
                     : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
                 }`}
               >
-                👨‍🏫 {t('دخول المعلم', 'Teacher Login')}
+                🛡️ {t('دخول الإدارة', 'Admin Login')}
               </button>
             </div>
 
-            {/* TAB 1: TEACHER LOGIN */}
+            {/* TAB 1: ADMINISTRATOR LOGIN */}
             {authTab === 'teacher' && (
               <>
                 <div className="text-center mb-5">
                   <span className="inline-flex h-11 w-11 items-center justify-center rounded-xl bg-brand-cyan/10 border border-brand-cyan/20 text-xl mx-auto mb-2">
-                    👨‍🏫
+                    🔐
                   </span>
                   <h3 className="text-lg font-black text-slate-900 dark:text-white">
-                    {t('تسجيل دخول المعلم / المدير', 'Teacher & Board Login')}
+                    {t('تسجيل دخول الإدارة والمشرف الأكاديمي', 'Administrator Login')}
                   </h3>
                   <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-1">
-                    {t('بوابة إدارة الكورسات والطلاب لم. محمد عبد التواب', 'Course & Student Management Portal')}
+                    {t('بوابة إدارة المقررات والطلاب لم. محمد عبد التواب', 'University LMS & Student Administration')}
                   </p>
                 </div>
 
@@ -1969,11 +2017,11 @@ function AcademyApp() {
                   )}
 
                   <div>
-                    <label className="block mb-1.5 font-semibold text-slate-800 dark:text-white">{t('البريد الإلكتروني للمعلم', 'Teacher Email')}</label>
+                    <label className="block mb-1.5 font-semibold text-slate-800 dark:text-white">{t('البريد الإلكتروني للإدارة', 'Administrator Email')}</label>
                     <input
                       type="email"
                       required
-                      placeholder="teacher@example.com"
+                      placeholder="admin@university.edu"
                       value={adminEmail}
                       onChange={e => setAdminEmail(e.target.value)}
                       className="w-full rounded-xl bg-slate-50 dark:bg-slate-900 border border-slate-300 dark:border-slate-800 p-3 text-slate-900 dark:text-white focus:outline-none focus:border-brand-cyan font-mono"
@@ -1996,8 +2044,18 @@ function AcademyApp() {
                     type="submit"
                     className="w-full rounded-xl bg-brand-cyan text-white dark:text-slate-950 hover:bg-brand-cyan-light py-3 font-bold transition-all cursor-pointer shadow-md text-xs"
                   >
-                    {t('تسجيل الدخول كمعلم', 'Login as Teacher')}
+                    {t('تسجيل الدخول كمدير للنظام', 'Login as Administrator')}
                   </button>
+
+                  {dbService.isRealFirebase() && (
+                    <button
+                      type="button"
+                      onClick={() => handleGoogleAuth('admin')}
+                      className="w-full rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-800 dark:text-white py-2.5 font-bold transition-all cursor-pointer text-xs"
+                    >
+                      🔐 {t('الدخول بحساب Google (للإدارة)', 'Sign in with Google (Admin)')}
+                    </button>
+                  )}
 
                   <div className="text-center pt-2 text-[10px] text-slate-500 border-t border-slate-200 dark:border-slate-900/60">
                     <p>{t('يتم التحقق من رتبة الحساب (role == "admin") في قاعدة البيانات فور تسجيل الدخول.', 'Role (role == "admin") is strictly verified in Firestore upon login.')}</p>
@@ -2125,6 +2183,21 @@ function AcademyApp() {
                       </div>
 
                       <div>
+                        <label className="block mb-1.5 font-semibold text-slate-800 dark:text-white">{t('الفصل الدراسي', 'Academic Semester')}</label>
+                        <select
+                          value={studentAuthForm.semester || 'term1'}
+                          onChange={e => setStudentAuthForm({ ...studentAuthForm, semester: e.target.value })}
+                          className="w-full rounded-xl bg-slate-50 dark:bg-slate-900 border border-slate-300 dark:border-slate-800 p-3 text-slate-900 dark:text-white focus:outline-none focus:border-brand-cyan"
+                        >
+                          {ACADEMIC_SEMESTERS.map(s => (
+                            <option key={s.id} value={s.id}>
+                              {t(s.nameAr, s.nameEn)}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+
+                      <div>
                         <label className="block mb-1.5 font-semibold text-slate-800 dark:text-white">{t('التخصص / المسار الدراسي', 'IT Department Track')}</label>
                         <select
                           value={studentAuthForm.department}
@@ -2156,9 +2229,19 @@ function AcademyApp() {
                     className="w-full rounded-xl bg-brand-cyan text-white dark:text-slate-950 hover:bg-brand-cyan-light py-3 font-bold transition-all cursor-pointer shadow-md text-xs"
                   >
                     {studentAuthMode === 'login' 
-                      ? t('الدخول للأكاديمية وتفعيل الدروس', 'Login as Student') 
-                      : t('تسجيل طالب جديد فورا', 'Register New Student')}
+                      ? t('الدخول إلى المنصة الجامعية', 'Login as Student') 
+                      : t('تسجيل حساب طالب جديد', 'Register New Student')}
                   </button>
+
+                  {dbService.isRealFirebase() && (
+                    <button
+                      type="button"
+                      onClick={() => handleGoogleAuth('student')}
+                      className="w-full rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-800 dark:text-white py-2.5 font-bold transition-all cursor-pointer text-xs"
+                    >
+                      🎓 {t('المتابعة بحساب Google', 'Continue with Google')}
+                    </button>
+                  )}
 
                   <div className="text-center pt-3 border-t border-slate-200 dark:border-slate-800/60 flex justify-between text-[11px] text-slate-500 dark:text-slate-400">
                     {studentAuthMode === 'login' ? (

@@ -111,7 +111,7 @@ export const Footer: React.FC<FooterProps> = ({ settings, onNavigate }) => {
             {t(settings.footerAr, settings.footerEn)}
           </p>
           <p className="text-center md:text-left font-mono text-[11px]">
-            {t('صُمم بكفاءة وامتياز للأكاديمية والطلاب © ٢٠٢٦', 'Designed for Excellence & Innovation © 2026')}
+            {t('صُمم بكفاءة وامتياز لمنصة قسم تكنولوجيا المعلومات © ٢٠٢٦', 'Designed for University IT Excellence © 2026')}
           </p>
         </div>
 

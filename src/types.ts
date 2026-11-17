@@ -47,8 +47,29 @@ export interface UserSubscription {
   expiresAt: string | number;
 }
 
+export type AcademicYear = 'year1' | 'year2' | 'year3' | 'year4' | 'general' | 'all';
+export type AcademicSemester = 'term1' | 'term2' | 'all';
+
+export interface AttachmentFile {
+  id: string;
+  name: string;
+  url: string;
+  fileType: 'pdf' | 'ppt' | 'pptx' | 'doc' | 'docx' | 'image' | 'code' | 'zip' | 'video' | 'other';
+  size?: number;
+}
+
+export interface SectionExample {
+  id: string;
+  title: string;
+  codeSnippet?: string;
+  language?: string;
+  solutionText: string;
+}
+
 export interface LectureItem {
   id: string;
+  academicYear?: AcademicYear | string;
+  semester?: AcademicSemester | string;
   courseId: string;
   courseTitle?: string;
   subject?: string;
@@ -57,38 +78,64 @@ export interface LectureItem {
   title: string;
   description?: string;
   youtubeUrl?: string;
+  videoUrl?: string;
   pdfUrl?: string;
+  pptxUrl?: string;
+  imageUrls?: string[];
+  attachments?: AttachmentFile[];
+  lectureDate?: string;
+  status?: 'draft' | 'published';
+  published?: boolean;
   createdAt: string;
+  updatedAt?: string;
 }
 
 export interface SectionItem {
   id: string;
+  academicYear?: AcademicYear | string;
+  semester?: AcademicSemester | string;
   courseId: string;
   courseTitle?: string;
   subject?: string;
   number: number;
   sectionNumber?: number;
   title: string;
+  practicalTopic?: string;
+  labInstructions?: string;
   description?: string;
   youtubeUrl?: string;
+  videoUrl?: string;
   fileUrl?: string;
+  pdfUrl?: string;
+  archiveUrl?: string;
+  codeFiles?: AttachmentFile[];
+  imageUrls?: string[];
+  practicalExamples?: SectionExample[];
+  attachments?: AttachmentFile[];
+  sectionDate?: string;
+  status?: 'draft' | 'published';
+  published?: boolean;
   createdAt: string;
+  updatedAt?: string;
 }
 
 export interface OnlineExamQuestion {
   id: string;
   questionText: string;
   question?: string;
-  type: 'multiple_choice' | 'true_false';
+  type: 'multiple_choice' | 'true_false' | 'short_answer';
   options: string[];
   correctAnswerIndex: number;
   correctAnswer?: number;
+  acceptedAnswers?: string[];
   points: number;
   explanation?: string;
 }
 
 export interface ExamItem {
   id: string;
+  academicYear?: AcademicYear | string;
+  semester?: AcademicSemester | string;
   courseId: string;
   courseTitle?: string;
   subject?: string;
@@ -100,18 +147,27 @@ export interface ExamItem {
   questionsPdfUrl?: string;
   modelAnswerUrl?: string;
   examDate?: string;
+  openAt?: string;
+  closeAt?: string;
   createdAt: string;
+  updatedAt?: string;
   createdBy?: string;
   isOnlineExam?: boolean;
   durationMinutes?: number;
+  maxAttempts?: number;
+  shuffleQuestions?: boolean;
   totalPoints?: number;
   showResultsImmediately?: boolean;
+  showAnswersToStudents?: boolean;
   questions?: OnlineExamQuestion[];
+  status?: 'draft' | 'published';
   published?: boolean;
 }
 
 export interface QuestionBankItem {
   id: string;
+  academicYear?: AcademicYear | string;
+  semester?: AcademicSemester | string;
   courseId: string;
   courseTitle: string;
   subject?: string;
@@ -119,10 +175,11 @@ export interface QuestionBankItem {
   difficulty?: 'easy' | 'medium' | 'hard';
   questionText: string;
   question?: string;
-  type: 'multiple_choice' | 'true_false';
+  type: 'multiple_choice' | 'true_false' | 'short_answer';
   options: string[];
   correctAnswerIndex: number;
   correctAnswer?: number;
+  acceptedAnswers?: string[];
   points: number;
   explanation?: string;
   createdAt: string;
@@ -138,18 +195,30 @@ export interface ExamSubmission {
   courseId: string;
   courseTitle?: string;
   subject?: string;
+  academicYear?: string;
+  semester?: string;
   score: number;
   totalPoints: number;
   percentage: number;
   correctCount?: number;
   totalQuestions?: number;
+  attemptNumber?: number;
   answers: Record<string, number>;
+  shortAnswers?: Record<string, string>;
+  manualScores?: Record<string, number>;
+  needsManualReview?: boolean;
+  status?: 'auto_graded' | 'pending_review' | 'graded';
+  feedback?: string;
+  reviewedBy?: string;
+  reviewedAt?: string;
   submittedAt: string;
 }
 
 export interface ScheduleItem {
   id: string;
   title: string;
+  academicYear?: AcademicYear | string;
+  semester?: AcademicSemester | string;
   courseId: string;
   courseTitle: string;
   subject?: string;
@@ -203,6 +272,8 @@ export interface ActivityLogItem {
 
 export interface SheetItem {
   id: string;
+  academicYear?: AcademicYear | string;
+  semester?: AcademicSemester | string;
   courseId: string;
   courseTitle?: string;
   subject?: string;
@@ -214,7 +285,46 @@ export interface SheetItem {
   title: string;
   description?: string;
   fileUrl: string;
+  pdfUrl?: string;
+  wordUrl?: string;
+  imageUrls?: string[];
+  attachments?: AttachmentFile[];
+  publishDate?: string;
+  deadline?: string;
+  requiresSubmission?: boolean;
+  totalPoints?: number;
+  modelAnswerUrl?: string;
+  modelAnswerText?: string;
+  showAnswersToStudents?: boolean;
+  status?: 'draft' | 'published' | 'closed';
+  published?: boolean;
   createdAt: string;
+  updatedAt?: string;
+}
+
+export interface SheetSubmission {
+  id: string;
+  sheetId: string;
+  sheetTitle: string;
+  sheetType?: 'lecture_sheet' | 'section_sheet';
+  courseId: string;
+  courseTitle?: string;
+  subject?: string;
+  academicYear?: string;
+  semester?: string;
+  studentId: string;
+  studentName: string;
+  studentEmail: string;
+  answerText?: string;
+  fileUrl?: string;
+  fileName?: string;
+  status: 'submitted' | 'graded';
+  score?: number;
+  totalPoints?: number;
+  feedback?: string;
+  gradedBy?: string;
+  gradedAt?: string;
+  submittedAt: string;
 }
 
 export interface Course {
@@ -294,6 +404,7 @@ export interface Student {
   subscription?: UserSubscription;
   department?: string;
   grade?: string;
+  semester?: AcademicSemester | string;
   createdAt?: string;
   isApproved?: boolean;
 }
@@ -315,6 +426,7 @@ export interface UserAuth {
   subscription?: UserSubscription;
   department?: string;
   grade?: string;
+  semester?: AcademicSemester | string;
   createdAt?: string;
   lastLoginTimestamp?: number;
   forceLogoutVersion?: number;

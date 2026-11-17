@@ -6,7 +6,8 @@ import {
   LectureItem, SectionItem, ExamItem, SheetItem,
   QuestionBankItem, ScheduleItem, StudentInquiry, ExamSubmission, ActivityLogItem, OnlineExamQuestion
 } from '../types';
-import { dbService, authService, firebaseAuth, waitForFirebaseAuth } from '../firebase';
+import { dbService, authService, firebaseAuth, waitForFirebaseAuth, isAdminEmail } from '../firebase';
+import { onAuthStateChanged } from 'firebase/auth';
 import { uploadLargeVideo } from '../utils/largeVideoUploader';
 import { VideoHostingUploader } from './VideoHostingUploader';
 import { FileUploadField } from './FileUploadField';
@@ -16,6 +17,10 @@ import { CustomVideoPlayer } from './CustomVideoPlayer';
 import { triggerFileDownload } from '../utils/videoStorage';
 import { ACADEMIC_GRADES, ACADEMIC_SUBJECTS, getGradeName, getCourseDisplayTitle } from '../utils/gradeMatching';
 import { HERO_IT_UNIVERSITY_IMG, COURSE_PROGRAMMING_CYBER_IMG, ENG_MOHAMED_AVATAR_IMG, getCourseFallbackImage } from '../utils/platformAssets';
+import { AdminLecturesManager } from './lms/AdminLecturesManager';
+import { AdminSectionsManager } from './lms/AdminSectionsManager';
+import { AdminSheetsManager } from './lms/AdminSheetsManager';
+import { AdminExamsManager } from './lms/AdminExamsManager';
 import { 
   BookOpen, Layers, Users, FileText, Megaphone, Star, Mail, Settings, ShieldAlert,
   Plus, Edit, Trash2, Check, X, Shield, Lock, Eye, EyeOff, Copy, RefreshCw, Send,
@@ -112,6 +117,16 @@ const resolveCourseBySubject = (subj: string) => {
 export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
   const { language, t } = useLanguage();
   const currentAdmin = authService.getCurrentAdmin();
+  const [fbAuthUser, setFbAuthUser] = useState<any>(() => firebaseAuth?.currentUser || null);
+  const [googleSyncing, setGoogleSyncing] = useState(false);
+
+  useEffect(() => {
+    if (!dbService.isRealFirebase() || !firebaseAuth) return;
+    const unsub = onAuthStateChanged(firebaseAuth, (u) => {
+      setFbAuthUser(u);
+    });
+    return () => unsub();
+  }, []);
 
   // Active Admin Tab
   const [activeTab, setActiveTab] = useState<TabType>('dashboard');
@@ -266,6 +281,15 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
     ).catch(() => {});
   };
 
+  const handlePreviewAdminMedia = (url: string) => {
+    if (!url) return;
+    if (/\.(mp4|webm|mov|m3u8)(\?|$)|youtube\.com|youtu\.be|vimeo\.com/i.test(url)) {
+      setAdminVideoPreviewUrl(url);
+    } else {
+      triggerFileDownload(url, 'academic-resource');
+    }
+  };
+
   // Subtabs & Modal States for Exams and Assignments
   const [assignmentsSubTab, setAssignmentsSubTab] = useState<'tasks' | 'submissions'>('tasks');
   const [assignmentSearchQuery, setAssignmentSearchQuery] = useState<string>('');
@@ -307,7 +331,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
     (async () => {
       await waitForFirebaseAuth();
       if (cancelled) return;
-      if (dbService.isRealFirebase() && !firebaseAuth?.currentUser) return;
+      if (dbService.isRealFirebase() && (!firebaseAuth?.currentUser || !isAdminEmail(firebaseAuth.currentUser.email || ''))) return;
       unsubscribe = dbService.listenToChatThreads((threads) => {
         if (!cancelled) setChatThreads(threads);
       });
@@ -316,7 +340,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
       cancelled = true;
       if (typeof unsubscribe === 'function') unsubscribe();
     };
-  }, []);
+  }, [fbAuthUser?.uid]);
 
   useEffect(() => {
     if (!selectedChatStudentId) {
@@ -328,7 +352,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
     (async () => {
       await waitForFirebaseAuth();
       if (cancelled) return;
-      if (dbService.isRealFirebase() && !firebaseAuth?.currentUser) return;
+      if (dbService.isRealFirebase() && (!firebaseAuth?.currentUser || !isAdminEmail(firebaseAuth.currentUser.email || ''))) return;
       unsubscribe = dbService.listenToChatMessages(selectedChatStudentId, (msgs) => {
         if (!cancelled) setLiveChatMessages(msgs);
       });
@@ -337,7 +361,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
       cancelled = true;
       if (typeof unsubscribe === 'function') unsubscribe();
     };
-  }, [selectedChatStudentId]);
+  }, [selectedChatStudentId, fbAuthUser?.uid]);
 
   const handleGenericFileUpload = async (
     e: React.ChangeEvent<HTMLInputElement>,
@@ -533,33 +557,57 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
       await waitForFirebaseAuth();
       if (cancelled) return;
       loadData();
+
+      const hasAdminFbAuth = !dbService.isRealFirebase() || Boolean(firebaseAuth?.currentUser && isAdminEmail(firebaseAuth.currentUser.email || ''));
       cleanups = [
         dbService.listenToCourses((realtimeCourses) => setCourses(realtimeCourses)),
-        dbService.listenToSubscriptions((realtimeOrders) => setOrders(realtimeOrders)),
-        dbService.listenToMessages((realtimeMessages) => setMessages(realtimeMessages)),
-        dbService.listenToStudents((realtimeStudents) => setStudents(realtimeStudents)),
-        dbService.listenToQuizzes((realtimeQuizzes) => setQuizzes(realtimeQuizzes)),
-        dbService.listenToQuizSubmissions((realtimeQuizSubs) => setQuizSubmissions(realtimeQuizSubs)),
-        dbService.listenToAssignmentTasks((realtimeTasks) => setAssignmentTasks(realtimeTasks)),
-        dbService.listenToAssignmentSubmissions((realtimeSubs) => setAssignmentSubmissions(realtimeSubs)),
-        dbService.listenToAllComments((realtimeComments) => setLessonComments(realtimeComments)),
-        dbService.listenToLectures((realtimeLectures) => setLectures(realtimeLectures)),
-        dbService.listenToSections((realtimeSections) => setSections(realtimeSections)),
-        dbService.listenToExams((realtimeExams) => setExams(realtimeExams)),
-        dbService.listenToSheets((realtimeSheets) => setSheets(realtimeSheets)),
-        dbService.listenToQuestionBank((items) => setQuestionBank(items)),
-        dbService.listenToSchedule((items) => setScheduleItems(items)),
-        dbService.listenToInquiries((items) => setInquiries(items)),
-        dbService.listenToExamSubmissions((subs) => setExamSubmissions(subs)),
-        dbService.listenToActivityLogs((logs) => setActivityLogs(logs)),
       ];
+
+      if (hasAdminFbAuth) {
+        if (dbService.isRealFirebase()) {
+          dbService.runOneTimeDemoAndCoursesPurge().then((res) => {
+            if (res.ran && !cancelled) {
+              setCourses([]);
+              setLectures([]);
+              setSections([]);
+              setExams([]);
+              setSheets([]);
+              setQuestionBank([]);
+              setScheduleItems([]);
+              setInquiries([]);
+              setExamSubmissions([]);
+              setActivityLogs([]);
+              triggerNotification(t('تم حذف جميع المقررات والبيانات التجريبية بنجاح.', 'All demo data and courses have been cleared.'));
+            }
+          }).catch(() => {});
+        }
+        cleanups.push(
+          dbService.listenToSubscriptions((realtimeOrders) => setOrders(realtimeOrders)),
+          dbService.listenToMessages((realtimeMessages) => setMessages(realtimeMessages)),
+          dbService.listenToStudents((realtimeStudents) => setStudents(realtimeStudents)),
+          dbService.listenToQuizzes((realtimeQuizzes) => setQuizzes(realtimeQuizzes)),
+          dbService.listenToQuizSubmissions((realtimeQuizSubs) => setQuizSubmissions(realtimeQuizSubs)),
+          dbService.listenToAssignmentTasks((realtimeTasks) => setAssignmentTasks(realtimeTasks)),
+          dbService.listenToAssignmentSubmissions((realtimeSubs) => setAssignmentSubmissions(realtimeSubs)),
+          dbService.listenToAllComments((realtimeComments) => setLessonComments(realtimeComments)),
+          dbService.listenToLectures((realtimeLectures) => setLectures(realtimeLectures)),
+          dbService.listenToSections((realtimeSections) => setSections(realtimeSections)),
+          dbService.listenToExams((realtimeExams) => setExams(realtimeExams)),
+          dbService.listenToSheets((realtimeSheets) => setSheets(realtimeSheets)),
+          dbService.listenToQuestionBank((items) => setQuestionBank(items)),
+          dbService.listenToSchedule((items) => setScheduleItems(items)),
+          dbService.listenToInquiries((items) => setInquiries(items)),
+          dbService.listenToExamSubmissions((subs) => setExamSubmissions(subs)),
+          dbService.listenToActivityLogs((logs) => setActivityLogs(logs)),
+        );
+      }
     })();
 
     return () => {
       cancelled = true;
       cleanups.forEach(fn => { if (typeof fn === 'function') fn(); });
     };
-  }, [currentAdmin?.id]);
+  }, [currentAdmin?.id, fbAuthUser?.uid]);
 
   const triggerNotification = (text: string, isError = false) => {
     if (isError) {
@@ -758,7 +806,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
           console.warn("Could not dispatch course add notification:", nErr);
         }
 
-        triggerNotification(t('تم إضافة الكورس بنجاح وإرسال إشعار فوري للطلاب!', 'Course added and notification dispatched!'));
+        triggerNotification(t('تم إضافة المقرر بنجاح وإرسال إشعار فوري للطلاب!', 'Subject added and notification dispatched!'));
       } else if (modalType === 'edit') {
         const prevCourse = courses.find(c => c.id === selectedId);
         const prevLessonCount = (prevCourse?.units || []).reduce((acc: number, u: any) => acc + (u.lessons?.length || 0), 0) || (prevCourse?.lessons?.length || 0);
@@ -787,12 +835,12 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
           }
         }
 
-        triggerNotification(t('تم تحديث الكورس بنجاح وإخطار الطلاب بالجديد!', 'Course updated and students notified!'));
+        triggerNotification(t('تم تحديث المقرر بنجاح وإخطار الطلاب بالجديد!', 'Subject updated and students notified!'));
       } else if (modalType === 'duplicate') {
         const duplicatedForm = { ...submissionForm, titleAr: submissionForm.titleAr + ' (نسخة)', titleEn: submissionForm.titleEn + ' (Copy)' };
         const added = await dbService.addCourse(duplicatedForm);
         setCourses(prev => [...prev.filter(c => c.id !== added.id), added]);
-        triggerNotification(t('تم تكرار الكورس بنجاح والمزامنة!', 'Course duplicated and synchronized successfully!'));
+        triggerNotification(t('تم تكرار المقرر بنجاح والمزامنة!', 'Subject duplicated and synchronized successfully!'));
       }
       setIsModalOpen(false);
     } catch (err: any) {
@@ -800,7 +848,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
       triggerNotification(
         typeof err?.message === 'string' && !err.message.startsWith('{')
           ? err.message
-          : t('حدث خطأ أثناء حفظ الكورس، يرجى المحاولة مرة أخرى.', 'Error saving course, please try again.'),
+          : t('حدث خطأ أثناء حفظ المقرر، يرجى المحاولة مرة أخرى.', 'Error saving subject, please try again.'),
         true
       );
     } finally {
@@ -922,7 +970,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
     setEditingLessonIndex(null);
     setEditingLessonUnitIndex(null);
     setLessonForm({ title: '', videoUrl: '', duration: '15:00', type: 'video', pdfUrl: '', wordUrl: '', isSection: false, order: 1 });
-    triggerNotification(t('تم حفظ المحاضرة/السكشن وإضافته للكورس بنجاح!', 'Lecture/Lab section saved successfully!'));
+    triggerNotification(t('تم حفظ المحاضرة/السكشن وإضافته للمقرر بنجاح!', 'Lecture/Lab section saved successfully!'));
   };
 
   const handleDeleteLesson = (unitIndex: number, lessonIndex: number) => {
@@ -1013,8 +1061,8 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
   const handleDeleteCourse = async (id: string) => {
     const confirmation = window.confirm(
       t(
-        'هل أنت متأكد من حذف هذا الكورس وجميع الملفات المرتبطة به (الصور، الفيديوهات، وملفات PDF)؟ لا يمكن التراجع عن هذه العملية.',
-        'Are you sure you want to delete this course and all its associated files (images, videos, and PDFs)? This action cannot be undone.'
+        'هل أنت متأكد من حذف هذا المقرر وجميع الملفات المرتبطة به (الصور، الفيديوهات، وملفات PDF)؟ لا يمكن التراجع عن هذه العملية.',
+        'Are you sure you want to delete this subject and all its associated files (images, videos, and PDFs)? This action cannot be undone.'
       )
     );
     if (!confirmation) return;
@@ -1032,7 +1080,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
       setCourses(freshCourses.filter(c => c.id !== id));
 
       // 4. Show a success message
-      triggerNotification(t('تم حذف الكورس بنجاح وجميع الملفات المرتبطة به.', 'Course and all its associated files deleted successfully.'));
+      triggerNotification(t('تم حذف المقرر بنجاح وجميع الملفات المرتبطة به.', 'Subject and all its associated files deleted successfully.'));
     } catch (err: any) {
       // Log the exact error to the console
       console.error("Course deletion failed:", err);
@@ -1048,7 +1096,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
 
       // Show the exact Firebase error in the notification
       triggerNotification(
-        t(`فشل حذف الكورس: ${errorMessage}`, `Failed to delete course: ${errorMessage}`),
+        t(`فشل حذف المقرر: ${errorMessage}`, `Failed to delete subject: ${errorMessage}`),
         true
       );
 
@@ -1483,7 +1531,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
       await dbService.addChatMessage(selectedChatStudentId, {
         text: textToSend,
         senderId: 'admin',
-        senderName: t('إدارة الأكاديمية', 'Academy Admin'),
+        senderName: t('إدارة المنصة الجامعية', 'Platform Administrator'),
         timestamp: Date.now()
       });
       triggerNotification(t('تم إرسال الرد للطالب بنجاح! 🚀', 'Reply sent to student!'));
@@ -1549,15 +1597,15 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
       if (modalType === 'add') {
         const added = await dbService.addTeacher(teacherForm);
         setTeachers(prev => [...prev, added]);
-        triggerNotification(t('تم إضافة المعلم بنجاح!', 'Teacher added successfully!'));
+        triggerNotification(t('تم إضافة عضو هيئة التدريس بنجاح!', 'Faculty supervisor added successfully!'));
       } else {
         await dbService.updateTeacher(selectedId, teacherForm);
         setTeachers(prev => prev.map(t => t.id === selectedId ? { ...t, ...teacherForm } : t));
-        triggerNotification(t('تم تحديث بيانات المعلم بنجاح!', 'Teacher updated successfully!'));
+        triggerNotification(t('تم تحديث بيانات عضو هيئة التدريس بنجاح!', 'Faculty supervisor updated successfully!'));
       }
       setIsModalOpen(false);
     } catch (err: any) {
-      triggerNotification(err.message || 'Error saving teacher', true);
+      triggerNotification(err.message || 'Error saving supervisor', true);
     } finally {
       setActionLoading(false);
     }
@@ -1574,13 +1622,13 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
   };
 
   const handleDeleteTeacher = async (id: string) => {
-    if (!window.confirm(t('هل أنت متأكد من حذف هذا المعلم؟', 'Are you sure you want to delete this teacher?'))) return;
+    if (!window.confirm(t('هل أنت متأكد من حذف عضو هيئة التدريس هذا؟', 'Are you sure you want to delete this faculty supervisor?'))) return;
     try {
       await dbService.deleteTeacher(id);
       setTeachers(prev => prev.filter(t => t.id !== id));
-      triggerNotification(t('تم حذف المعلم بنجاح.', 'Teacher deleted successfully.'));
+      triggerNotification(t('تم حذف عضو هيئة التدريس بنجاح.', 'Faculty supervisor deleted successfully.'));
     } catch {
-      triggerNotification('Error deleting teacher', true);
+      triggerNotification('Error deleting supervisor', true);
     }
   };
 
@@ -1697,7 +1745,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
           userId: ord.studentId || ord.studentEmail,
           titleAr: `تم تفعيل مقرر: ${ord.courseTitle} بنجاح! 🎓`,
           titleEn: `Course Activated: ${ord.courseTitle}! 🎓`,
-          bodyAr: `تهانينا! قامت إدارة الأكاديمية باعتماد طلبك وتفعيل صلاحية الاطلاع وتحميل ملفات المحاضرات (PDF) والسكاشن (Word) لمقرر "${ord.courseTitle}". يمكنك البدء فوراً في المذاكرة وتحميل الملفات.`,
+          bodyAr: `تهانينا! قامت إدارة المنصة الجامعية باعتماد طلبك وتفعيل صلاحية الاطلاع وتحميل ملفات المحاضرات (PDF) والسكاشن (Word) لمقرر "${ord.courseTitle}". يمكنك البدء فوراً في المذاكرة وتحميل الملفات.`,
           bodyEn: `Congratulations! Your course activation request for "${ord.courseTitle}" has been approved! You now have full access to view and download all lecture notes and lab worksheets.`,
           isRead: false,
           createdAt: new Date().toISOString(),
@@ -1774,7 +1822,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
         }).catch(() => {});
       }
 
-      triggerNotification(t('تم رفض طلب الاشتراك وتم حجب الوصول للكورس.', 'Subscription request rejected and course access blocked.'));
+      triggerNotification(t('تم رفض طلب التفعيل وحجب الوصول للمقرر.', 'Activation request rejected and subject access blocked.'));
     } catch (err: any) {
       console.error(err);
       triggerNotification(t('خطأ أثناء رفض الطلب', 'Error rejecting request'), true);
@@ -2522,14 +2570,14 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
     { id: 'question-bank', labelAr: 'بنك الأسئلة', labelEn: 'Question Bank', shortAr: 'بنك الأسئلة', shortEn: 'Q-Bank', icon: ListChecks, count: questionBank.length },
     { id: 'schedule', labelAr: 'جدول المحاضرات والسكاشن', labelEn: 'Weekly Timetable', shortAr: 'الجدول', shortEn: 'Timetable', icon: Calendar, count: scheduleItems.length },
     { id: 'inquiries', labelAr: 'استفسارات وأسئلة الطلاب', labelEn: 'Student Inquiries Q&A', shortAr: 'الاستفسارات', shortEn: 'Inquiries', icon: HelpCircle, count: inquiries.length, pendingCount: inquiries.filter(i => i.status === 'pending').length },
-    { id: 'notifications', labelAr: 'إشعارات الأكاديمية الفورية', labelEn: 'Instant Notifications', shortAr: 'الإشعارات', shortEn: 'Alerts', icon: Bell },
-    { id: 'quizzes', labelAr: 'الاختبارات الإلكترونية التفاعلية', labelEn: 'Online Practice Quizzes', shortAr: 'الاختبارات', shortEn: 'Quizzes', icon: HelpCircle, count: quizzes.length },
-    { id: 'assignments', labelAr: 'الواجبات والتسليمات', labelEn: 'Assignments & Tasks', shortAr: 'الواجبات', shortEn: 'Tasks', icon: ClipboardList, count: assignmentTasks.length, isBadgeYellow: assignmentSubmissions.some(s => s.status === 'submitted'), pendingCount: assignmentSubmissions.filter(s => s.status === 'submitted').length },
+    { id: 'notifications', labelAr: 'إشعارات المنصة الجامعية', labelEn: 'Announcements & Alerts', shortAr: 'الإعلانات', shortEn: 'Alerts', icon: Bell },
+    { id: 'quizzes', labelAr: 'الاختبارات التدريبية التفاعلية', labelEn: 'Practice Assessments', shortAr: 'التدريبات', shortEn: 'Quizzes', icon: HelpCircle, count: quizzes.length },
+    { id: 'assignments', labelAr: 'التكليفات والتسليمات البحثية', labelEn: 'Coursework & Submissions', shortAr: 'التكليفات', shortEn: 'Coursework', icon: ClipboardList, count: assignmentTasks.length, isBadgeYellow: assignmentSubmissions.some(s => s.status === 'submitted'), pendingCount: assignmentSubmissions.filter(s => s.status === 'submitted').length },
     { id: 'messages', labelAr: 'صندوق رسائل الوارد', labelEn: 'Contact Messages', shortAr: 'الرسائل', shortEn: 'Messages', icon: Mail, count: messages.filter(m => !m.read).length, isBadgeRed: true },
-    { id: 'lesson_comments', labelAr: 'التعليقات والأسئلة عن الدرس', labelEn: 'Lesson Q&A & Comments', shortAr: 'التعليقات', shortEn: 'Comments', icon: MessageSquare, count: lessonComments.filter(c => !c.reply).length, isBadgeYellow: lessonComments.some(c => !c.reply), pendingCount: lessonComments.filter(c => !c.reply).length },
+    { id: 'lesson_comments', labelAr: 'مناقشات واستفسارات المقررات', labelEn: 'Subject Discussions', shortAr: 'المناقشات', shortEn: 'Discussions', icon: MessageSquare, count: lessonComments.filter(c => !c.reply).length, isBadgeYellow: lessonComments.some(c => !c.reply), pendingCount: lessonComments.filter(c => !c.reply).length },
     { id: 'activity-logs', labelAr: 'سجل نشاط الإدارة', labelEn: 'Activity Audit Logs', shortAr: 'السجل', shortEn: 'Logs', icon: History, count: activityLogs.length },
-    { id: 'settings', labelAr: 'إعدادات المنصة والهوية', labelEn: 'Platform Settings', shortAr: 'الإعدادات', shortEn: 'Settings', icon: Settings },
-    { id: 'admins', labelAr: 'المسؤولين والصلاحيات', labelEn: 'Academy Admins', shortAr: 'المسؤولين', shortEn: 'Admins', icon: Shield }
+    { id: 'settings', labelAr: 'إعدادات المنصة الجامعية', labelEn: 'Platform Settings', shortAr: 'الإعدادات', shortEn: 'Settings', icon: Settings },
+    { id: 'admins', labelAr: 'إدارة المسؤولين والصلاحيات', labelEn: 'Platform Administrators', shortAr: 'المسؤولين', shortEn: 'Admins', icon: Shield }
   ];
   const currentAdminNavItem = adminNavItems.find(item => item.id === activeTab) || adminNavItems[0];
   const totalAdminPendingCount = adminNavItems.reduce((acc, item) => acc + (item.pendingCount || 0), 0);
@@ -2541,22 +2589,55 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
         {/* Admin Header */}
         <div className="flex flex-col gap-4 border-b border-slate-200 dark:border-slate-800 pb-5 md:flex-row md:items-center md:justify-between">
           <div className="min-w-0">
-            <div className="flex items-center gap-2">
-              <span className="flex h-2.5 w-2.5 rounded-full bg-emerald-500" />
-              <span className="text-xs font-semibold text-emerald-700 dark:text-emerald-400 font-mono">
-                {dbService.isRealFirebase() ? 'Real Firestore Live' : 'Simulated Sandbox Storage'}
-              </span>
+            <div className="flex flex-wrap items-center gap-2">
+              {(!dbService.isRealFirebase() || (fbAuthUser && isAdminEmail(fbAuthUser.email || ''))) ? (
+                <>
+                  <span className="flex h-2.5 w-2.5 rounded-full bg-emerald-500" />
+                  <span className="text-xs font-semibold text-emerald-700 dark:text-emerald-400 font-mono">
+                    {dbService.isRealFirebase() ? 'Real Firestore Live' : 'Simulated Sandbox Storage'}
+                  </span>
+                </>
+              ) : (
+                <>
+                  <span className="flex h-2.5 w-2.5 rounded-full bg-amber-500" />
+                  <span className="text-xs font-semibold text-amber-700 dark:text-amber-400 font-mono">
+                    {t('وضع التخزين المحلي المؤقت', 'Local Fallback Mode')}
+                  </span>
+                </>
+              )}
             </div>
             <h1 className="text-xl sm:text-2xl font-black text-slate-900 dark:text-white md:text-3xl flex items-center gap-2 mt-1">
               <Shield className="h-6 w-6 sm:h-7 sm:w-7 text-brand-cyan shrink-0" />
-              <span className="truncate">{t('لوحة تحكم الأكاديمية', 'Academy Dashboard')}</span>
+              <span className="truncate">{t('لوحة تحكم منصة MOHAMED ELJOKER الجامعية', 'MOHAMED ELJOKER University LMS Dashboard')}</span>
             </h1>
             <p className="mt-1 text-xs sm:text-sm text-slate-600 dark:text-slate-400">
-              {t('مرحباً بك يا ', 'Welcome back, ')} <span className="font-bold text-brand-cyan">{currentAdmin?.name || 'Admin'}</span> ({currentAdmin?.role === 'super' ? t('مدير عام', 'Super Admin') : t('محرر', 'Editor')})
+              {t('مرحباً بك يا ', 'Welcome back, ')} <span className="font-bold text-brand-cyan">{currentAdmin?.name || 'Admin'}</span> ({currentAdmin?.role === 'super' ? t('مدير النظام', 'Administrator') : t('محرر أكاديمي', 'Academic Editor')})
             </p>
           </div>
 
           <div className="flex flex-wrap items-center gap-2.5">
+            {dbService.isRealFirebase() && (!fbAuthUser || !isAdminEmail(fbAuthUser.email || '')) && (
+              <button
+                type="button"
+                disabled={googleSyncing}
+                onClick={async () => {
+                  setGoogleSyncing(true);
+                  try {
+                    const res = await authService.loginWithGoogle('admin');
+                    if (res.success) {
+                      triggerNotification(t('تم ربط المزامنة السحابية لحساب الإدارة بنجاح!', 'Firebase Admin cloud sync linked!'));
+                    } else if (res.error) {
+                      triggerNotification(res.error, true);
+                    }
+                  } finally {
+                    setGoogleSyncing(false);
+                  }
+                }}
+                className="rounded-xl bg-brand-cyan/15 border border-brand-cyan/30 px-3.5 py-2 text-xs font-bold text-brand-cyan hover:bg-brand-cyan hover:text-white dark:hover:text-slate-950 transition-all cursor-pointer disabled:opacity-50"
+              >
+                {googleSyncing ? t('جاري الربط...', 'Connecting...') : t('تفعيل المزامنة السحابية (Google)', 'Link Cloud Sync (Google)')}
+              </button>
+            )}
             <button
               onClick={loadData}
               className="rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900/60 p-2.5 text-slate-600 dark:text-slate-300 hover:text-brand-cyan hover:bg-slate-100 dark:hover:bg-slate-800 transition-all cursor-pointer shadow-xs"
@@ -2863,106 +2944,101 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
                         </p>
                       </div>
 
-                      {/* Metric 3: Active Courses */}
+                      {/* Metric 3: Active Subjects */}
                       <div 
                         onClick={() => setActiveTab('courses')}
                         className="group rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950/40 shadow-xs dark:shadow-none hover:bg-slate-100 dark:hover:bg-slate-900/60 hover:border-brand-cyan/50 p-5 transition-all cursor-pointer"
                       >
                         <div className="flex items-center justify-between">
-                          <span className="text-xs font-semibold text-slate-600 dark:text-slate-400 group-hover:text-brand-cyan transition-colors">{t('الكورسات التعليمية النشطة', 'Active Courses')}</span>
+                          <span className="text-xs font-semibold text-slate-600 dark:text-slate-400 group-hover:text-brand-cyan transition-colors">{t('المواد والمقررات الدراسية', 'Active Academic Subjects')}</span>
                           <div className="rounded-lg bg-violet-500/10 p-2 text-violet-400">
                             <BookOpen className="h-5 w-5" />
                           </div>
                         </div>
-                        <p className="mt-4 text-3xl font-black text-slate-900 dark:text-white font-mono flex items-center justify-between">
+                        <p className="mt-4 text-3xl font-black text-slate-900 dark:text-white font-mono flex items-center justify-between tabular-nums">
                           <span>{courses.length}</span>
                           <span className="text-xs font-bold text-violet-400 opacity-0 group-hover:opacity-100 transition-opacity font-sans">
-                            {t('تصفح الكورسات ➔', 'Browse ➔')}
+                            {t('تصفح المقررات ➔', 'Browse ➔')}
                           </span>
                         </p>
-                        <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">{t('كورس تم إنشاؤه لصفوف التعليم المختلفة', 'Created courses for all preparatories')}</p>
+                        <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">{t('مقررات قسم تكنولوجيا المعلومات للفرق الأربع', 'IT Department subjects across all 4 academic years')}</p>
                       </div>
 
                       {/* Metric 4: Electronic Exams */}
                       <div 
-                        onClick={() => setActiveTab('quizzes')}
+                        onClick={() => setActiveTab('exams')}
                         className="group rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950/40 shadow-xs dark:shadow-none hover:bg-slate-100 dark:hover:bg-slate-900/60 hover:border-brand-cyan/50 p-5 transition-all cursor-pointer"
                       >
                         <div className="flex items-center justify-between">
-                          <span className="text-xs font-semibold text-slate-600 dark:text-slate-400 group-hover:text-brand-cyan transition-colors">{t('الامتحانات والاختبارات الإلكترونية', 'Electronic Exams')}</span>
+                          <span className="text-xs font-semibold text-slate-600 dark:text-slate-400 group-hover:text-brand-cyan transition-colors">{t('الامتحانات الإلكترونية والورقية', 'Online & Paper Exams')}</span>
                           <div className="rounded-lg bg-brand-cyan/10 p-2 text-brand-cyan">
                             <HelpCircle className="h-5 w-5" />
                           </div>
                         </div>
-                        <p className="mt-4 text-3xl font-black text-slate-900 dark:text-white font-mono flex items-center justify-between">
-                          <span>{quizzes.length}</span>
+                        <p className="mt-4 text-3xl font-black text-slate-900 dark:text-white font-mono flex items-center justify-between tabular-nums">
+                          <span>{exams.length}</span>
                           <span className="text-xs font-bold text-brand-cyan opacity-0 group-hover:opacity-100 transition-opacity font-sans">
                             {t('إدارة الامتحانات ➔', 'Manage ➔')}
                           </span>
                         </p>
-                        <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">{t('امتحانات أونلاين وتصحيح تلقائي للطلاب', 'Online exams with auto-grading')}</p>
+                        <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">{t('امتحانات أونلاين وتصحيح تلقائي ومراجعة يدوية', 'Online exams with auto & manual grading')}</p>
                       </div>
 
-                      {/* Metric 5: Assignments & Submissions */}
+                      {/* Metric 5: Sheets & Submissions */}
                       <div 
-                        onClick={() => setActiveTab('assignments')}
+                        onClick={() => setActiveTab('sheets')}
                         className="group rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950/40 shadow-xs dark:shadow-none hover:bg-slate-100 dark:hover:bg-slate-900/60 hover:border-brand-cyan/50 p-5 transition-all cursor-pointer"
                       >
                         <div className="flex items-center justify-between">
-                          <span className="text-xs font-semibold text-slate-600 dark:text-slate-400 group-hover:text-brand-cyan transition-colors">{t('الواجبات والتسليمات', 'Assignments & Homework')}</span>
+                          <span className="text-xs font-semibold text-slate-600 dark:text-slate-400 group-hover:text-brand-cyan transition-colors">{t('الشيتات وتسليمات الطلاب', 'Academic Sheets & Submissions')}</span>
                           <div className="rounded-lg bg-amber-500/10 p-2 text-amber-600 dark:text-amber-400">
                             <ClipboardList className="h-5 w-5" />
                           </div>
                         </div>
-                        <p className="mt-4 text-3xl font-black text-slate-900 dark:text-white font-mono flex items-center justify-between">
-                          <span>{assignmentTasks.length}</span>
+                        <p className="mt-4 text-3xl font-black text-slate-900 dark:text-white font-mono flex items-center justify-between tabular-nums">
+                          <span>{sheets.length}</span>
                           <span className="text-xs font-bold text-amber-600 dark:text-amber-400 opacity-0 group-hover:opacity-100 transition-opacity font-sans">
-                            {t('تصحيح وتسليمات ➔', 'Grade Homework ➔')}
+                            {t('إدارة الشيتات ➔', 'Manage Sheets ➔')}
                           </span>
                         </p>
                         <p className="mt-2 text-xs text-slate-500 dark:text-slate-400 flex items-center justify-between">
-                          <span>{t('تسهيل رفع الشيتات وتصحيح حلول الطلاب', 'Homework tasks & submissions')}</span>
-                          {assignmentSubmissions.filter(s => s.status === 'submitted').length > 0 && (
-                            <span className="font-bold text-amber-600 dark:text-amber-400 bg-amber-500/20 px-2 py-0.5 rounded text-[10px]">
-                              {assignmentSubmissions.filter(s => s.status === 'submitted').length} {t('جديد', 'new')}
-                            </span>
-                          )}
+                          <span>{t('شيتات المحاضرات والسكاشن وتقييم الحلول', 'Lecture & Section sheets & grading')}</span>
                         </p>
                       </div>
 
                     </div>
 
-                    {/* Course Management Section below Statistics */}
+                    {/* Subject Management Section below Statistics */}
                     <div className="mt-8 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-100/70 dark:bg-slate-950/20 p-5">
                       <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 mb-6 pb-4 border-b border-slate-200 dark:border-slate-800">
                         <div>
                           <h3 className="text-lg font-bold text-slate-900 dark:text-white flex items-center gap-2">
                             <BookOpen className="h-5 w-5 text-brand-cyan" />
-                            {t('إدارة الكورسات والمناهج الدراسية', 'Course Management System')}
+                            {t('إدارة المواد والمقررات الدراسية الجامعية', 'Academic Subjects Management')}
                           </h3>
-                          <p className="text-xs text-slate-600 dark:text-slate-400 mt-0.5">{t('إضافة وتعديل وحذف ومعاينة المناهج الدراسية لطلاب الأكاديمية', 'Add, modify, delete, and preview academic syllabus for academy students')}</p>
+                          <p className="text-xs text-slate-600 dark:text-slate-400 mt-0.5">{t('إضافة وتعديل وحذف ومعاينة المقررات الدراسية لطلاب قسم تكنولوجيا المعلومات IT', 'Add, modify, delete, and preview university IT subjects')}</p>
                         </div>
                         <button
                           onClick={openAddModal}
                           className="flex items-center gap-1.5 rounded-xl bg-brand-cyan text-white dark:text-slate-950 hover:bg-brand-cyan-light px-4 py-2.5 text-xs font-bold transition-all cursor-pointer shadow-lg shadow-cyan-950/20"
                         >
                           <Plus className="h-4 w-4" />
-                          {t('إضافة كورس جديد', 'Add Course')}
+                          {t('إضافة مقرر دراسي جديد', 'Add Subject')}
                         </button>
                       </div>
 
-                      {/* Course list table */}
+                      {/* Subject list table */}
                       {courses.length === 0 ? (
                         <div className="flex flex-col items-center justify-center py-10 border border-dashed border-slate-200 dark:border-slate-800 rounded-xl bg-slate-50 dark:bg-slate-900/10">
                           <BookOpen className="h-10 w-10 text-slate-600 mb-2" />
-                          <p className="text-xs text-slate-600 dark:text-slate-400">{t('لا توجد كورسات مضافة حالياً. ابدأ بإضافة الكورس الأول!', 'No courses added yet. Start by adding your first course!')}</p>
+                          <p className="text-xs text-slate-600 dark:text-slate-400">{t('لا توجد مقررات دراسية مضافة حالياً. ابدأ بإضافة المقرر الأول!', 'No subjects added yet. Start by adding your first subject!')}</p>
                         </div>
                       ) : (
                         <div className="overflow-x-auto">
                           <table className="w-full text-right text-sm">
                             <thead className="bg-slate-50 dark:bg-slate-900/60 text-slate-700 dark:text-slate-300 text-xs text-center sm:text-right">
                               <tr>
-                                <th className="p-3">{t('الكورس والمادة', 'Course & Subject')}</th>
+                                <th className="p-3">{t('المقرر والمادة', 'Subject & Title')}</th>
                                 <th className="p-3">{t('الفرقة / القسم', 'Year / Category')}</th>
                                 <th className="p-3">{t('إتاحة الوصول', 'Access')}</th>
                                 <th className="p-3">{t('الحالة', 'Status')}</th>
@@ -3109,45 +3185,28 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
                         {courses.length > 0 && (
                           <button
                             onClick={async () => {
-                              if (window.confirm(t('هل أنت متأكد من رغبتك في حذف جميع الكورسات بالكامل من المنصة؟ لن تتمكن من التراجع.', 'Are you sure you want to delete ALL courses from the platform? This cannot be undone.'))) {
+                              if (window.confirm(t('هل أنت متأكد من رغبتك في حذف جميع المقررات بالكامل من المنصة؟ لن تتمكن من التراجع.', 'Are you sure you want to delete ALL subjects from the platform? This cannot be undone.'))) {
                                 try {
                                   await dbService.deleteAllCourses();
                                   setCourses([]);
-                                  alert(t('تم حذف جميع الكورسات بنجاح.', 'All courses have been deleted successfully.'));
+                                  triggerNotification(t('تم حذف جميع المقررات بنجاح.', 'All subjects have been deleted successfully.'));
                                 } catch (err) {
-                                  alert(t('حدث خطأ أثناء حذف الكورسات.', 'Error deleting courses.'));
+                                  triggerNotification(t('حدث خطأ أثناء حذف المقررات.', 'Error deleting subjects.'), true);
                                 }
                               }
                             }}
                             className="flex items-center gap-1.5 rounded-xl bg-red-500/10 border border-red-500/30 text-red-600 dark:text-red-400 hover:bg-red-500/20 px-3.5 py-2 text-xs font-bold transition-all cursor-pointer"
                           >
                             <Trash2 className="h-4 w-4" />
-                            <span>{t('حذف جميع الكورسات', 'Delete All Courses')}</span>
+                            <span>{t('حذف جميع المقررات', 'Delete All Subjects')}</span>
                           </button>
                         )}
-                        <button
-                          onClick={async () => {
-                            if (window.confirm(t('هل ترغب في تحميل وتثبيت مقررات قسم تكنولوجيا المعلومات الستة (Physics, Python, IT Essentials, Math, Cyber Security, English) مع المحاضرات والسكاشن الجاهزة؟', 'Load official 6 IT Department courses with lectures and lab sheets?'))) {
-                              try {
-                                const fresh = await dbService.seedITUniversityCourses();
-                                setCourses(fresh);
-                                alert(t('تم تحميل وتثبيت مقررات قسم تكنولوجيا المعلومات بنجاح! 🚀', 'IT Department courses loaded successfully!'));
-                              } catch (err) {
-                                alert(t('حدث خطأ أثناء تحميل المقررات.', 'Error loading courses.'));
-                              }
-                            }
-                          }}
-                          className="flex items-center gap-1.5 rounded-xl bg-blue-500/10 border border-blue-500/30 text-blue-600 dark:text-blue-400 hover:bg-blue-500/20 px-3.5 py-2 text-xs font-bold transition-all cursor-pointer"
-                        >
-                          <BookOpen className="h-4 w-4" />
-                          <span>{t('تحميل المقررات الـ 6 لقسم IT', 'Load 6 IT Courses')}</span>
-                        </button>
                         <button
                           onClick={openAddModal}
                           className="flex items-center gap-1.5 rounded-xl bg-brand-cyan text-white dark:text-slate-950 hover:bg-brand-cyan-light px-4 py-2 text-xs font-bold transition-all cursor-pointer"
                         >
                           <Plus className="h-4 w-4" />
-                          <span>{t('إضافة كورس جديد', 'Add Course')}</span>
+                          <span>{t('إضافة مقرر دراسي جديد', 'Add Subject')}</span>
                         </button>
                       </div>
                     </div>
@@ -3155,7 +3214,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
                     {/* Search and Category Filters */}
                     <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 mb-6">
                       <div>
-                        <label className="block text-xs font-semibold text-slate-600 dark:text-slate-400 mb-1.5">{t('البحث عن كورس', 'Search Courses')}</label>
+                        <label className="block text-xs font-semibold text-slate-600 dark:text-slate-400 mb-1.5">{t('البحث عن مقرر دراسي', 'Search Subjects')}</label>
                         <input
                           type="text"
                           placeholder={t('ابحث بالعنوان أو الوصف...', 'Search by title or description...')}
@@ -3179,6 +3238,21 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
                       </div>
                     </div>
 
+                    {courses.length === 0 ? (
+                      <div className="rounded-2xl border border-dashed border-slate-300 dark:border-slate-700 bg-slate-50/70 dark:bg-slate-900/30 p-10 text-center">
+                        <BookOpen className="h-10 w-10 text-slate-400 dark:text-slate-500 mx-auto mb-3" />
+                        <p className="text-sm font-bold text-slate-900 dark:text-white mb-1">{t('لا توجد مقررات دراسية حالياً', 'No subjects or courses added yet')}</p>
+                        <p className="text-xs text-slate-500 dark:text-slate-400 mb-4">{t('ابدأ بإضافة المقررات الدراسية الخاصة بك من زر الإضافة أعلاه.', 'Start by adding your academic courses using the button above.')}</p>
+                        <button
+                          type="button"
+                          onClick={openAddModal}
+                          className="inline-flex items-center gap-1.5 rounded-xl bg-brand-cyan text-white dark:text-slate-950 hover:bg-brand-cyan-light px-4 py-2 text-xs font-bold transition-all cursor-pointer"
+                        >
+                          <Plus className="h-4 w-4" />
+                          <span>{t('إضافة مقرر دراسي جديد', 'Add Subject')}</span>
+                        </button>
+                      </div>
+                    ) : (
                     <div className="overflow-x-auto">
                       <table className="w-full text-right text-sm">
                         <thead className="bg-slate-50 dark:bg-slate-900/60 text-slate-700 dark:text-slate-300 text-xs">
@@ -3256,7 +3330,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
                                     <button
                                       onClick={() => handleDuplicateCourse(c)}
                                       className="p-1.5 text-amber-600 dark:text-amber-400 hover:text-amber-300 transition-all cursor-pointer"
-                                      title={t('تكرار الكورس', 'Duplicate')}
+                                      title={t('تكرار المقرر', 'Duplicate')}
                                     >
                                       <Copy className="h-4 w-4" />
                                     </button>
@@ -3275,6 +3349,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
                         </tbody>
                       </table>
                     </div>
+                    )}
                   </div>
                 )}
 
@@ -3483,7 +3558,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
                               <th className="p-3.5">{t('بيانات الاتصال', 'Contact Details')}</th>
                               <th className="p-3.5">{t('الصف / الشعبة', 'Grade / Dept')}</th>
                               <th className="p-3.5">{t('تاريخ التسجيل', 'Registration Date')}</th>
-                              <th className="p-3.5">{t('الكورسات المشترك بها', 'Enrolled Courses')}</th>
+                              <th className="p-3.5">{t('المقررات المفعّلة', 'Activated Subjects')}</th>
                               <th className="p-3.5">{t('الحالة', 'Status')}</th>
                               <th className="p-3.5 text-center">{t('إجراءات التحكم', 'Actions')}</th>
                             </tr>
@@ -3529,7 +3604,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
                                           );
                                         })
                                       ) : (
-                                        <span className="text-slate-500 dark:text-slate-400 italic text-[11px]">{t('لا يوجد كورسات تابعة', 'No courses')}</span>
+                                        <span className="text-slate-500 dark:text-slate-400 italic text-[11px]">{t('لا توجد مقررات مفعّلة', 'No subjects')}</span>
                                       )}
                                     </div>
                                   </td>
@@ -3572,7 +3647,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
                                       {/* Edit Student Button */}
                                       <button
                                         onClick={() => handleEditStudent(stud)}
-                                        title={t('تعديل البيانات والكورسات', 'Edit Details & Courses')}
+                                        title={t('تعديل البيانات والمقررات', 'Edit Details & Subjects')}
                                         className="rounded-lg bg-blue-500/10 border border-blue-500/20 p-1.5 text-blue-600 dark:text-blue-400 hover:bg-blue-500/20 transition-all cursor-pointer"
                                       >
                                         <Edit className="h-3.5 w-3.5" />
@@ -3604,14 +3679,14 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
                     <div className="flex items-center justify-between mb-6">
                       <h2 className="text-xl font-bold text-slate-900 dark:text-white flex items-center gap-2">
                         <GraduationCap className="h-5 w-5 text-brand-cyan" />
-                        {t('إدارة هيئة التدريس والمعلمين', 'Academy Teachers Faculty')}
+                        {t('إدارة الهيئة الأكاديمية والمشرفين', 'Academic Faculty & Supervisors')}
                       </h2>
                       <button
                         onClick={openAddModal}
                         className="flex items-center gap-1.5 rounded-xl bg-brand-cyan text-white dark:text-slate-950 hover:bg-brand-cyan-light px-4 py-2 text-xs font-bold transition-all cursor-pointer"
                       >
                         <Plus className="h-4 w-4" />
-                        {t('إضافة معلم جديد', 'Add Teacher')}
+                        {t('إضافة مشرف أكاديمي', 'Add Supervisor')}
                       </button>
                     </div>
 
@@ -3975,10 +4050,10 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
                       <div>
                         <h2 className="text-xl font-bold text-slate-900 dark:text-white flex items-center gap-2">
                           <ClipboardList className="h-5 w-5 text-brand-cyan" />
-                          {t('إدارة الواجبات المنزلية والتقييمات', 'Assignments & Assessments')}
+                          {t('إدارة التكليفات الأكاديمية والتقييمات', 'Academic Assignments & Assessments')}
                         </h2>
                         <p className="text-xs text-slate-600 dark:text-slate-400 mt-1">
-                          {t('إنشاء تكليفات الواجبات الشيتات، استقبال تسليمات الطلاب ورصد الدرجات والتصحيح', 'Create homework tasks, receive student submissions, and grade submissions.')}
+                          {t('إنشاء التكليفات والشيتات الأكاديمية، استقبال تسليمات الطلاب ورصد الدرجات والتصحيح', 'Create academic assignment tasks, receive student submissions, and grade submissions.')}
                         </p>
                       </div>
 
@@ -3988,7 +4063,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
                           className="flex items-center gap-1.5 rounded-xl bg-brand-cyan text-white dark:text-slate-950 hover:bg-brand-cyan-light px-4 py-2.5 text-xs font-bold transition-all cursor-pointer shadow-lg shadow-cyan-950/20"
                         >
                           <Plus className="h-4 w-4" />
-                          {t('إضافة واجب جديد', 'Create New Assignment')}
+                          {t('إضافة تكليف أكاديمي جديد', 'Create New Assignment')}
                         </button>
                       </div>
                     </div>
@@ -4001,7 +4076,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
                           assignmentsSubTab === 'tasks' ? 'bg-brand-cyan text-white dark:text-slate-950 shadow-md' : 'bg-slate-50 dark:bg-slate-900 text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
                         }`}
                       >
-                        {t('تكليفات الواجبات المتاحة', 'Assignment Tasks')} ({assignmentTasks.length})
+                        {t('التكليفات الأكاديمية المتاحة', 'Assignment Tasks')} ({assignmentTasks.length})
                       </button>
 
                       <button
@@ -4025,8 +4100,8 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
                         {assignmentTasks.length === 0 ? (
                           <div className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950/40 shadow-xs dark:shadow-none p-12 text-center text-slate-600 dark:text-slate-400">
                             <ClipboardList className="mx-auto h-12 w-12 text-slate-600 mb-3" />
-                            <p className="font-bold text-slate-900 dark:text-white text-sm">{t('لا توجد تكليفات واجبات مضافة بعد', 'No assignment tasks created yet.')}</p>
-                            <p className="text-xs mt-1">{t('اضغط على "إضافة واجب جديد" لإرفاق شيت واجب وتحديد موعد التسليم.', 'Click "Create New Assignment" to post homework tasks.')}</p>
+                            <p className="font-bold text-slate-900 dark:text-white text-sm">{t('لا توجد تكليفات أكاديمية مضافة بعد', 'No assignment tasks created yet.')}</p>
+                            <p className="text-xs mt-1">{t('اضغط على "إضافة تكليف أكاديمي جديد" لإرفاق شيت التكليف وتحديد موعد التسليم.', 'Click "Create New Assignment" to post academic assignment tasks.')}</p>
                           </div>
                         ) : (
                           <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
@@ -4079,7 +4154,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
                                           className="inline-flex items-center gap-1.5 text-brand-cyan hover:underline font-bold text-[11px] cursor-pointer"
                                         >
                                           <FileText className="h-3.5 w-3.5" />
-                                          <span>{t('عرض شيت الواجب PDF المرفق 📎', 'View attached PDF sheet')}</span>
+                                          <span>{t('عرض شيت التكليف PDF المرفق 📎', 'View attached PDF sheet')}</span>
                                         </button>
                                       </div>
                                     )}
@@ -4127,7 +4202,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
                             <Search className="absolute right-3 top-2.5 h-4 w-4 text-slate-500 dark:text-slate-400" />
                             <input
                               type="text"
-                              placeholder={t('البحث باسم الطالب أو عنوان الواجب...', 'Search by student name or assignment title...')}
+                              placeholder={t('البحث باسم الطالب أو عنوان التكليف...', 'Search by student name or assignment title...')}
                               value={assignmentSearchQuery}
                               onChange={e => setAssignmentSearchQuery(e.target.value)}
                               className="w-full rounded-xl bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 pr-9 pl-4 py-2 text-xs text-slate-900 dark:text-white placeholder-slate-500 focus:outline-none"
@@ -4152,7 +4227,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
                             return (
                               <div className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950/40 shadow-xs dark:shadow-none p-12 text-center text-slate-600 dark:text-slate-400">
                                 <FileCheck className="mx-auto h-12 w-12 text-slate-600 mb-3" />
-                                <p className="font-bold text-slate-900 dark:text-white text-sm">{t('لا توجد تسليمات واجبات مطابقة', 'No assignment submissions match.')}</p>
+                                <p className="font-bold text-slate-900 dark:text-white text-sm">{t('لا توجد تسليمات تكليفات مطابقة', 'No assignment submissions match.')}</p>
                               </div>
                             );
                           }
@@ -4163,8 +4238,8 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
                                 const isGraded = sub.status === 'graded';
                                 const studentText = sub.studentText || (sub as any).studentAnswerText || '';
                                 const fileUrl = sub.fileUrl || (sub as any).attachmentUrl || '';
-                                const taskTitle = sub.homeworkAr || (sub as any).assignmentTitle || (assignmentTasks.find(a => a.id === sub.assignmentId)?.titleAr) || t('واجب مدرسي', 'Homework Task');
-                                const courseTitle = (sub as any).courseTitle || (courses.find(c => c.id === sub.courseId)?.titleAr) || t('الكورس', 'Course');
+                                const taskTitle = sub.homeworkAr || (sub as any).assignmentTitle || (assignmentTasks.find(a => a.id === sub.assignmentId)?.titleAr) || t('تكليف دراسي', 'Assignment Task');
+                                const courseTitle = (sub as any).courseTitle || (courses.find(c => c.id === sub.courseId)?.titleAr) || t('المقرر الدراسي', 'Subject');
                                 const submissionDate = sub.date || (sub as any).submittedAt || '';
 
                                 return (
@@ -4180,7 +4255,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
                                           </span>
                                         </div>
                                         <p className="text-[11px] text-slate-600 dark:text-slate-400 mt-0.5">
-                                          {t('الكورس:', 'Course:')} <span className="text-brand-cyan font-bold">{courseTitle}</span> • {t('الواجب:', 'Task:')} <span className="text-slate-900 dark:text-white font-bold">{taskTitle}</span>
+                                          {t('المقرر:', 'Subject:')} <span className="text-brand-cyan font-bold">{courseTitle}</span> • {t('التكليف:', 'Task:')} <span className="text-slate-900 dark:text-white font-bold">{taskTitle}</span>
                                         </p>
                                       </div>
 
@@ -4206,11 +4281,11 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
                                             className="inline-flex items-center gap-2 rounded-xl bg-slate-50 dark:bg-slate-900 hover:bg-slate-200 dark:hover:bg-slate-800 border border-slate-200 dark:border-slate-800 px-3.5 py-2 text-brand-cyan text-xs font-bold transition-all cursor-pointer"
                                           >
                                             <FileText className="h-4 w-4" />
-                                            <span>{t('فتح وتنزيل ملف/صورة حل الطالب المرفقة 📄', 'View Student Homework File/Image')}</span>
+                                            <span>{t('فتح وتنزيل ملف/صورة حل الطالب المرفقة 📄', 'View Student Assignment File/Image')}</span>
                                           </button>
                                           {(fileUrl.startsWith('data:image/') || /\.(jpg|jpeg|png|gif|webp)(\?.*)?$/i.test(fileUrl)) && (
                                             <div className="mt-2 max-w-sm rounded-xl overflow-hidden border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900/50 p-1">
-                                              <img src={fileUrl} alt="Student Homework Solution" className="w-full max-h-64 object-contain rounded-lg" />
+                                              <img src={fileUrl} alt="Student Assignment Solution" className="w-full max-h-64 object-contain rounded-lg" />
                                             </div>
                                           )}
                                         </div>
@@ -4221,11 +4296,11 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
                                     {isGraded && (
                                       <div className="bg-emerald-950/20 border border-emerald-500/30 p-3 rounded-xl mb-4">
                                         <div className="flex items-center justify-between text-xs font-bold text-emerald-700 dark:text-emerald-400 mb-1">
-                                          <span>{t('درجة الواجب المرصودة:', 'Assigned Grade:')}</span>
+                                          <span>{t('الدرجة المرصودة:', 'Assigned Grade:')}</span>
                                           <span className="text-base font-mono">{sub.grade}</span>
                                         </div>
                                         {sub.feedback && (
-                                          <p className="text-[11px] text-emerald-700 dark:text-emerald-300 mt-1">{t('ملاحظات المدرس:', 'Teacher Feedback:')} {sub.feedback}</p>
+                                          <p className="text-[11px] text-emerald-700 dark:text-emerald-300 mt-1">{t('ملاحظات المشرف الأكاديمي:', 'Supervisor Feedback:')} {sub.feedback}</p>
                                         )}
                                       </div>
                                     )}
@@ -4263,7 +4338,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
                             <div className="w-full max-w-lg rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950 p-6 text-slate-900 dark:text-white shadow-2xl">
                               <div className="flex items-center justify-between border-b border-slate-200 dark:border-slate-800 pb-4 mb-4">
                                 <div>
-                                  <span className="text-[10px] font-bold text-brand-cyan uppercase tracking-wider">{t('تصحيح واجب الطالب ورصد الدرجات', 'Grade Student Homework')}</span>
+                                  <span className="text-[10px] font-bold text-brand-cyan uppercase tracking-wider">{t('تقييم تكليف الطالب ورصد الدرجات', 'Grade Student Assignment')}</span>
                                   <h3 className="text-base font-bold text-slate-900 dark:text-white mt-0.5">{selectedSubmissionForGrading.studentName}</h3>
                                 </div>
                                 <button
@@ -4288,10 +4363,10 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
                                 </div>
 
                                 <div>
-                                  <label className="block mb-1.5 font-semibold text-slate-900 dark:text-white">{t('ملاحظات وتوجيهات المشرف الأكاديمي للطالب (الفييدباك)', 'Teacher Feedback & Notes')}</label>
+                                  <label className="block mb-1.5 font-semibold text-slate-900 dark:text-white">{t('ملاحظات وتوجيهات المشرف الأكاديمي للطالب', 'Supervisor Feedback & Notes')}</label>
                                   <textarea
                                     rows={3}
-                                    placeholder={t('اكتب نصائحك أو أخطاء الطالب في الحل...', 'Write teacher tips or feedback...')}
+                                    placeholder={t('اكتب ملاحظاتك الأكاديمية للطالب حول الحل...', 'Write academic feedback or notes...')}
                                     value={submissionFeedbackInput}
                                     onChange={e => setSubmissionFeedbackInput(e.target.value)}
                                     className="w-full rounded-xl bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-3 text-slate-900 dark:text-white focus:outline-none focus:border-brand-cyan"
@@ -4346,7 +4421,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
                             {t('موافقات تسجيل دخول المنصة (حسابات الطلاب الجدد)', 'Student Login & Account Approvals')}
                           </h2>
                           <p className="text-xs text-slate-600 dark:text-slate-400 mt-1">
-                            {t('قم بمراجعة طلبات تسجيل الحسابات الجديدة في الأكاديمية. عند الموافقة يتم تفعيل صلاحية الطالب لعرض وتحميل ملفات المحاضرات (PDF) والسكاشن (Word) وحل الشيتات والامتحانات.', 'Review new student account registration requests. Approving an account grants login access to the platform.')}
+                            {t('قم بمراجعة طلبات تسجيل الحسابات الجديدة في المنصة الجامعية. عند الموافقة يتم تفعيل صلاحية الطالب لعرض وتحميل المحاضرات والسكاشن وحل الشيتات والامتحانات.', 'Review new student account registration requests. Approving an account grants access to lectures, sections, sheets, and online exams.')}
                           </p>
                         </div>
                         <div className="flex flex-wrap items-center gap-2 shrink-0">
@@ -4510,753 +4585,63 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
                   );
                 })()}
 
-                {/* --- LECTURES (المحاضرات وملفات الـ PDF) PANEL --- */}
+                {/* --- LECTURES (المحاضرات الجامعية) INDEPENDENT MODULE --- */}
                 {activeTab === 'lectures' && (
-                  <div className="space-y-6 animate-fadeIn">
-                    <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 pb-4 border-b border-slate-200 dark:border-slate-800">
-                      <div>
-                        <h2 className="text-xl font-black text-slate-900 dark:text-white flex items-center gap-2.5">
-                          <BookOpen className="h-6 w-6 text-brand-cyan" />
-                          {t('إدارة المحاضرات وملفات الـ PDF (قسم IT)', 'IT Department Lectures & PDFs')}
-                        </h2>
-                        <p className="text-xs text-slate-600 dark:text-slate-400 mt-1">
-                          {t('إضافة ونشر المحاضرات وتعيين روابط YouTube ورفع ملفات الـ PDF المعتمدة لكل مادة.', 'Publish lectures, embed YouTube videos, and upload approved PDF notes.')}
-                        </p>
-                      </div>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setEditingContentId(null);
-                          setLectureForm({
-                            subject: 'Physics',
-                            lectureNumber: lectures.length + 1,
-                            title: '',
-                            description: '',
-                            youtubeUrl: '',
-                            pdfUrl: '',
-                          });
-                          setActiveContentModal('lecture');
-                        }}
-                        className="flex items-center gap-1.5 rounded-xl bg-brand-cyan text-white dark:text-slate-950 hover:bg-brand-cyan-light px-4 py-2.5 text-xs font-bold transition-all cursor-pointer shadow-lg shadow-cyan-950/20 shrink-0"
-                      >
-                        <Plus className="h-4 w-4" />
-                        <span>{t('إضافة محاضرة جديدة', 'Add Lecture')}</span>
-                      </button>
-                    </div>
-
-                    {/* Search & Subject Filters */}
-                    <div className="flex flex-col md:flex-row items-stretch md:items-center justify-between gap-4 rounded-2xl bg-slate-50 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800 p-4">
-                      <div className="relative flex-1">
-                        <Search className="absolute right-4 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-600 dark:text-slate-400 pointer-events-none" />
-                        <input
-                          type="text"
-                          value={courseSearchQuery}
-                          onChange={e => setCourseSearchQuery(e.target.value)}
-                          placeholder={t('بحث بعنوان المحاضرة أو الوصف...', 'Search lecture title or description...')}
-                          className="w-full rounded-xl bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 pr-11 pl-4 py-2.5 text-xs text-slate-900 dark:text-white placeholder-slate-500 focus:outline-none focus:border-brand-cyan"
-                        />
-                      </div>
-                      <div className="flex items-center gap-2 overflow-x-auto pb-1 md:pb-0 shrink-0">
-                        {['all', 'Physics', 'Python', 'IT Essentials', 'Mathematics', 'Cyber Security', 'English'].map(subj => (
-                          <button
-                            key={subj}
-                            type="button"
-                            onClick={() => setCourseCategoryFilter(subj)}
-                            className={`px-3 py-1.5 rounded-xl text-xs font-bold shrink-0 transition-all cursor-pointer border ${
-                              courseCategoryFilter === subj
-                                ? 'bg-brand-cyan text-white dark:text-slate-950 border-brand-cyan shadow-sm'
-                                : 'bg-white dark:bg-slate-950 text-slate-600 dark:text-slate-400 border-slate-200 dark:border-slate-800 hover:border-slate-700'
-                            }`}
-                          >
-                            {subj === 'all' ? t('الكل', 'All') : subj}
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-
-                    {/* Lectures Table */}
-                    <div className="overflow-x-auto rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950/40 shadow-xs dark:shadow-none">
-                      <table className="w-full text-right text-xs">
-                        <thead className="bg-slate-100 dark:bg-slate-900/80 text-slate-700 dark:text-slate-300 font-bold border-b border-slate-200 dark:border-slate-800">
-                          <tr>
-                            <th className="p-3.5">#</th>
-                            <th className="p-3.5">{t('المادة', 'Subject')}</th>
-                            <th className="p-3.5">{t('عنوان المحاضرة', 'Lecture Title')}</th>
-                            <th className="p-3.5">{t('فيديو YouTube', 'YouTube')}</th>
-                            <th className="p-3.5">{t('ملف PDF', 'PDF File')}</th>
-                            <th className="p-3.5 text-center">{t('الإجراءات', 'Actions')}</th>
-                          </tr>
-                        </thead>
-                        <tbody className="divide-y divide-slate-800/60">
-                          {lectures
-                            .filter(l => {
-                              const subjLabel = l.subject || l.courseTitle || '';
-                              const matchesSearch = !courseSearchQuery || l.title.toLowerCase().includes(courseSearchQuery.toLowerCase()) || subjLabel.toLowerCase().includes(courseSearchQuery.toLowerCase());
-                              const matchesSubj = courseCategoryFilter === 'all' || subjLabel.toLowerCase().includes(courseCategoryFilter.toLowerCase());
-                              return matchesSearch && matchesSubj;
-                            })
-                            .map((lec) => {
-                              const lecSubj = lec.subject || lec.courseTitle || 'IT';
-                              const lecNum = lec.lectureNumber ?? lec.number ?? 1;
-                              return (
-                              <tr key={lec.id} className="hover:bg-slate-50 dark:hover:bg-slate-900/40 transition-colors">
-                                <td className="p-3.5 font-mono tabular-nums text-slate-600 dark:text-slate-400 font-bold">#{lecNum}</td>
-                                <td className="p-3.5">
-                                  <span className="px-2 py-0.5 rounded-lg bg-cyan-500/10 text-brand-cyan border border-cyan-500/20 font-bold">
-                                    {lecSubj}
-                                  </span>
-                                </td>
-                                <td className="p-3.5 font-bold text-slate-900 dark:text-white max-w-xs">
-                                  <div>{lec.title}</div>
-                                  {lec.description && <p className="text-[10px] text-slate-600 dark:text-slate-400 line-clamp-1 mt-0.5">{lec.description}</p>}
-                                </td>
-                                <td className="p-3.5">
-                                  {lec.youtubeUrl ? (
-                                    <a
-                                      href={lec.youtubeUrl}
-                                      target="_blank"
-                                      rel="noopener noreferrer"
-                                      className="inline-flex items-center gap-1 text-red-600 dark:text-red-400 hover:underline font-bold"
-                                    >
-                                      <Video className="h-3.5 w-3.5" />
-                                      <span>{t('مشاهدة', 'Watch')}</span>
-                                    </a>
-                                  ) : (
-                                    <span className="text-slate-600">—</span>
-                                  )}
-                                </td>
-                                <td className="p-3.5">
-                                  {lec.pdfUrl ? (
-                                    <a
-                                      href={lec.pdfUrl}
-                                      target="_blank"
-                                      rel="noopener noreferrer"
-                                      className="inline-flex items-center gap-1 text-brand-cyan hover:underline font-bold"
-                                    >
-                                      <FileText className="h-3.5 w-3.5" />
-                                      <span>{t('فتح PDF', 'Open PDF')}</span>
-                                    </a>
-                                  ) : (
-                                    <span className="text-slate-600">—</span>
-                                  )}
-                                </td>
-                                <td className="p-3.5 text-center">
-                                  <div className="flex items-center justify-center gap-2">
-                                    <button
-                                      type="button"
-                                      onClick={() => {
-                                        setEditingContentId(lec.id);
-                                        setLectureForm({
-                                          subject: lec.subject || resolveCourseBySubject(lec.courseTitle || '').courseTitle.split('–')[0].trim() || 'Physics',
-                                          lectureNumber: Number(lecNum) || 1,
-                                          title: lec.title || '',
-                                          description: lec.description || '',
-                                          youtubeUrl: lec.youtubeUrl || '',
-                                          pdfUrl: lec.pdfUrl || '',
-                                        });
-                                        setActiveContentModal('lecture');
-                                      }}
-                                      className="p-1.5 rounded-lg bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white hover:border-brand-cyan transition-colors cursor-pointer"
-                                      title={t('تعديل', 'Edit')}
-                                    >
-                                      <Edit className="h-3.5 w-3.5" />
-                                    </button>
-                                    <button
-                                      type="button"
-                                      onClick={() => handleDeleteLecture(lec.id)}
-                                      className="p-1.5 rounded-lg bg-red-500/10 border border-red-500/20 text-red-600 dark:text-red-400 hover:bg-red-500 hover:text-white transition-colors cursor-pointer"
-                                      title={t('حذف', 'Delete')}
-                                    >
-                                      <Trash2 className="h-3.5 w-3.5" />
-                                    </button>
-                                  </div>
-                                </td>
-                              </tr>
-                            );})}
-                        </tbody>
-                      </table>
-                    </div>
-                  </div>
+                  <AdminLecturesManager
+                    lectures={lectures}
+                    courses={courses}
+                    onRefresh={loadData}
+                    onLogAction={(action, title, details) => logAdminAction(action, 'lecture', title, details)}
+                    onPreviewMedia={handlePreviewAdminMedia}
+                  />
                 )}
 
-                {/* --- SECTIONS (السكاشن والتطبيقات المعملية) PANEL --- */}
+                {/* --- SECTIONS (السكاشن والتطبيقات المعملية) INDEPENDENT MODULE --- */}
                 {activeTab === 'sections' && (
-                  <div className="space-y-6 animate-fadeIn">
-                    <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 pb-4 border-b border-slate-200 dark:border-slate-800">
-                      <div>
-                        <h2 className="text-xl font-black text-slate-900 dark:text-white flex items-center gap-2.5">
-                          <Layers className="h-6 w-6 text-brand-cyan" />
-                          {t('إدارة السكاشن والتطبيقات المعملية (قسم IT)', 'IT Lab Sections & Practicals')}
-                        </h2>
-                        <p className="text-xs text-slate-600 dark:text-slate-400 mt-1">
-                          {t('إضافة شروحات السكاشن المعملية وملفات التجارب (Word أو PDF) وروابط YouTube.', 'Publish lab sections, attach lab Word/PDF files and YouTube links.')}
-                        </p>
-                      </div>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setEditingContentId(null);
-                          setSectionForm({
-                            subject: 'Physics',
-                            sectionNumber: sections.length + 1,
-                            title: '',
-                            description: '',
-                            youtubeUrl: '',
-                            fileUrl: '',
-                          });
-                          setActiveContentModal('section');
-                        }}
-                        className="flex items-center gap-1.5 rounded-xl bg-brand-cyan text-white dark:text-slate-950 hover:bg-brand-cyan-light px-4 py-2.5 text-xs font-bold transition-all cursor-pointer shadow-lg shadow-cyan-950/20 shrink-0"
-                      >
-                        <Plus className="h-4 w-4" />
-                        <span>{t('إضافة سكشن جديد', 'Add Section')}</span>
-                      </button>
-                    </div>
-
-                    {/* Search & Subject Filters */}
-                    <div className="flex flex-col md:flex-row items-stretch md:items-center justify-between gap-4 rounded-2xl bg-slate-50 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800 p-4">
-                      <div className="relative flex-1">
-                        <Search className="absolute right-4 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-600 dark:text-slate-400 pointer-events-none" />
-                        <input
-                          type="text"
-                          value={courseSearchQuery}
-                          onChange={e => setCourseSearchQuery(e.target.value)}
-                          placeholder={t('بحث بعنوان السكشن أو المعمل...', 'Search section title or lab topic...')}
-                          className="w-full rounded-xl bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 pr-11 pl-4 py-2.5 text-xs text-slate-900 dark:text-white placeholder-slate-500 focus:outline-none focus:border-brand-cyan"
-                        />
-                      </div>
-                      <div className="flex items-center gap-2 overflow-x-auto pb-1 md:pb-0 shrink-0">
-                        {['all', 'Physics', 'Python', 'IT Essentials', 'Mathematics', 'Cyber Security', 'English'].map(subj => (
-                          <button
-                            key={subj}
-                            type="button"
-                            onClick={() => setCourseCategoryFilter(subj)}
-                            className={`px-3 py-1.5 rounded-xl text-xs font-bold shrink-0 transition-all cursor-pointer border ${
-                              courseCategoryFilter === subj
-                                ? 'bg-brand-cyan text-white dark:text-slate-950 border-brand-cyan shadow-sm'
-                                : 'bg-white dark:bg-slate-950 text-slate-600 dark:text-slate-400 border-slate-200 dark:border-slate-800 hover:border-slate-700'
-                            }`}
-                          >
-                            {subj === 'all' ? t('الكل', 'All') : subj}
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-
-                    {/* Sections Table */}
-                    <div className="overflow-x-auto rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950/40 shadow-xs dark:shadow-none">
-                      <table className="w-full text-right text-xs">
-                        <thead className="bg-slate-100 dark:bg-slate-900/80 text-slate-700 dark:text-slate-300 font-bold border-b border-slate-200 dark:border-slate-800">
-                          <tr>
-                            <th className="p-3.5">#</th>
-                            <th className="p-3.5">{t('المادة', 'Subject')}</th>
-                            <th className="p-3.5">{t('عنوان السكشن', 'Section Title')}</th>
-                            <th className="p-3.5">{t('فيديو YouTube', 'YouTube')}</th>
-                            <th className="p-3.5">{t('ملف السكشن (Word / PDF)', 'Lab File')}</th>
-                            <th className="p-3.5 text-center">{t('الإجراءات', 'Actions')}</th>
-                          </tr>
-                        </thead>
-                        <tbody className="divide-y divide-slate-800/60">
-                          {sections
-                            .filter(s => {
-                              const subjLabel = s.subject || s.courseTitle || '';
-                              const matchesSearch = !courseSearchQuery || s.title.toLowerCase().includes(courseSearchQuery.toLowerCase()) || subjLabel.toLowerCase().includes(courseSearchQuery.toLowerCase());
-                              const matchesSubj = courseCategoryFilter === 'all' || subjLabel.toLowerCase().includes(courseCategoryFilter.toLowerCase());
-                              return matchesSearch && matchesSubj;
-                            })
-                            .map((sec) => {
-                              const secSubj = sec.subject || sec.courseTitle || 'IT';
-                              const secNum = sec.sectionNumber ?? sec.number ?? 1;
-                              return (
-                              <tr key={sec.id} className="hover:bg-slate-50 dark:hover:bg-slate-900/40 transition-colors">
-                                <td className="p-3.5 font-mono tabular-nums text-slate-600 dark:text-slate-400 font-bold">#{secNum}</td>
-                                <td className="p-3.5">
-                                  <span className="px-2 py-0.5 rounded-lg bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border border-emerald-500/20 font-bold">
-                                    {secSubj}
-                                  </span>
-                                </td>
-                                <td className="p-3.5 font-bold text-slate-900 dark:text-white max-w-xs">
-                                  <div>{sec.title}</div>
-                                  {sec.description && <p className="text-[10px] text-slate-600 dark:text-slate-400 line-clamp-1 mt-0.5">{sec.description}</p>}
-                                </td>
-                                <td className="p-3.5">
-                                  {sec.youtubeUrl ? (
-                                    <a
-                                      href={sec.youtubeUrl}
-                                      target="_blank"
-                                      rel="noopener noreferrer"
-                                      className="inline-flex items-center gap-1 text-red-600 dark:text-red-400 hover:underline font-bold"
-                                    >
-                                      <Video className="h-3.5 w-3.5" />
-                                      <span>{t('مشاهدة', 'Watch')}</span>
-                                    </a>
-                                  ) : (
-                                    <span className="text-slate-600">—</span>
-                                  )}
-                                </td>
-                                <td className="p-3.5">
-                                  {sec.fileUrl ? (
-                                    <button
-                                      type="button"
-                                      onClick={() => triggerFileDownload(sec.fileUrl, sec.title || 'section-file')}
-                                      className="inline-flex items-center gap-1 text-emerald-700 dark:text-emerald-400 hover:underline font-bold cursor-pointer"
-                                    >
-                                      <Download className="h-3.5 w-3.5" />
-                                      <span>{t('تحميل الملف', 'Download')}</span>
-                                    </button>
-                                  ) : (
-                                    <span className="text-slate-600">—</span>
-                                  )}
-                                </td>
-                                <td className="p-3.5 text-center">
-                                  <div className="flex items-center justify-center gap-2">
-                                    <button
-                                      type="button"
-                                      onClick={() => {
-                                        setEditingContentId(sec.id);
-                                        setSectionForm({
-                                          subject: sec.subject || resolveCourseBySubject(sec.courseTitle || '').courseTitle.split('–')[0].trim() || 'Physics',
-                                          sectionNumber: Number(secNum) || 1,
-                                          title: sec.title || '',
-                                          description: sec.description || '',
-                                          youtubeUrl: sec.youtubeUrl || '',
-                                          fileUrl: sec.fileUrl || '',
-                                        });
-                                        setActiveContentModal('section');
-                                      }}
-                                      className="p-1.5 rounded-lg bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white hover:border-brand-cyan transition-colors cursor-pointer"
-                                      title={t('تعديل', 'Edit')}
-                                    >
-                                      <Edit className="h-3.5 w-3.5" />
-                                    </button>
-                                    <button
-                                      type="button"
-                                      onClick={() => handleDeleteSection(sec.id)}
-                                      className="p-1.5 rounded-lg bg-red-500/10 border border-red-500/20 text-red-600 dark:text-red-400 hover:bg-red-500 hover:text-white transition-colors cursor-pointer"
-                                      title={t('حذف', 'Delete')}
-                                    >
-                                      <Trash2 className="h-3.5 w-3.5" />
-                                    </button>
-                                  </div>
-                                </td>
-                              </tr>
-                            );})}
-                        </tbody>
-                      </table>
-                    </div>
-                  </div>
+                  <AdminSectionsManager
+                    sections={sections}
+                    courses={courses}
+                    onRefresh={loadData}
+                    onLogAction={(action, title, details) => logAdminAction(action, 'section', title, details)}
+                    onPreviewMedia={handlePreviewAdminMedia}
+                  />
                 )}
 
-                {/* --- EXAMS (بنك الامتحانات ونماذج الإجابة) PANEL --- */}
+                {/* --- EXAMS (الامتحانات الإلكترونية والورقية) INDEPENDENT MODULE --- */}
                 {activeTab === 'exams' && (
-                  <div className="space-y-6 animate-fadeIn">
-                    <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 pb-4 border-b border-slate-200 dark:border-slate-800">
-                      <div>
-                        <h2 className="text-xl font-black text-slate-900 dark:text-white flex items-center gap-2.5">
-                          <GraduationCap className="h-6 w-6 text-brand-cyan" />
-                          {t('إدارة بنك الامتحانات الرسمية ونماذج الإجابة', 'Exams & Model Answers Management')}
-                        </h2>
-                        <p className="text-xs text-slate-600 dark:text-slate-400 mt-1">
-                          {t('إضافة أوراق امتحانات الميدترم والفاينل (PDF) ونماذج الإجابات الرسمية الخاصة بقسم IT.', 'Upload midterm and final exams with optional model answers.')}
-                        </p>
-                      </div>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setEditingContentId(null);
-                          setExamForm({
-                            subject: 'Physics',
-                            number: `Exam ${exams.length + 1}`,
-                            title: '',
-                            description: '',
-                            questionsPdfUrl: '',
-                            modelAnswerUrl: '',
-                            examDate: new Date().toISOString().split('T')[0],
-                            isOnlineExam: false,
-                            durationMinutes: 30,
-                            showResultsImmediately: true,
-                            published: true,
-                            questions: [],
-                          });
-                          setActiveContentModal('exam');
-                        }}
-                        className="flex items-center gap-1.5 rounded-xl bg-brand-cyan text-white dark:text-slate-950 hover:bg-brand-cyan-light px-4 py-2.5 text-xs font-bold transition-all cursor-pointer shadow-lg shadow-cyan-950/20 shrink-0"
-                      >
-                        <Plus className="h-4 w-4" />
-                        <span>{t('إضافة امتحان جديد', 'Add Exam')}</span>
-                      </button>
-                    </div>
-
-                    {/* Search & Subject Filters */}
-                    <div className="flex flex-col md:flex-row items-stretch md:items-center justify-between gap-4 rounded-2xl bg-slate-50 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800 p-4">
-                      <div className="relative flex-1">
-                        <Search className="absolute right-4 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-600 dark:text-slate-400 pointer-events-none" />
-                        <input
-                          type="text"
-                          value={courseSearchQuery}
-                          onChange={e => setCourseSearchQuery(e.target.value)}
-                          placeholder={t('بحث باسم أو موضوع الامتحان...', 'Search exam title or topic...')}
-                          className="w-full rounded-xl bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 pr-11 pl-4 py-2.5 text-xs text-slate-900 dark:text-white placeholder-slate-500 focus:outline-none focus:border-brand-cyan"
-                        />
-                      </div>
-                      <div className="flex items-center gap-2 overflow-x-auto pb-1 md:pb-0 shrink-0">
-                        {['all', 'Physics', 'Python', 'IT Essentials', 'Mathematics', 'Cyber Security', 'English'].map(subj => (
-                          <button
-                            key={subj}
-                            type="button"
-                            onClick={() => setCourseCategoryFilter(subj)}
-                            className={`px-3 py-1.5 rounded-xl text-xs font-bold shrink-0 transition-all cursor-pointer border ${
-                              courseCategoryFilter === subj
-                                ? 'bg-brand-cyan text-white dark:text-slate-950 border-brand-cyan shadow-sm'
-                                : 'bg-white dark:bg-slate-950 text-slate-600 dark:text-slate-400 border-slate-200 dark:border-slate-800 hover:border-slate-700'
-                            }`}
-                          >
-                            {subj === 'all' ? t('الكل', 'All') : subj}
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-
-                    {/* Exams Table */}
-                    <div className="overflow-x-auto rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950/40 shadow-xs dark:shadow-none">
-                      <table className="w-full text-right text-xs">
-                        <thead className="bg-slate-100 dark:bg-slate-900/80 text-slate-700 dark:text-slate-300 font-bold border-b border-slate-200 dark:border-slate-800">
-                          <tr>
-                            <th className="p-3.5">{t('المادة', 'Subject')}</th>
-                            <th className="p-3.5">{t('اسم / رقم الامتحان', 'Exam Title')}</th>
-                            <th className="p-3.5">{t('النمط', 'Mode')}</th>
-                            <th className="p-3.5">{t('ورقة الأسئلة (PDF)', 'Questions PDF')}</th>
-                            <th className="p-3.5">{t('نموذج الإجابة (PDF)', 'Model Answer')}</th>
-                            <th className="p-3.5 text-center">{t('الإجراءات', 'Actions')}</th>
-                          </tr>
-                        </thead>
-                        <tbody className="divide-y divide-slate-800/60">
-                          {exams
-                            .filter(ex => {
-                              const subjLabel = ex.subject || ex.courseTitle || '';
-                              const matchesSearch = !courseSearchQuery || ex.title.toLowerCase().includes(courseSearchQuery.toLowerCase()) || subjLabel.toLowerCase().includes(courseSearchQuery.toLowerCase());
-                              const matchesSubj = courseCategoryFilter === 'all' || subjLabel.toLowerCase().includes(courseCategoryFilter.toLowerCase());
-                              return matchesSearch && matchesSubj;
-                            })
-                            .map((ex) => {
-                              const exSubj = ex.subject || ex.courseTitle || 'IT';
-                              const qPdf = ex.questionsPdfUrl || ex.questionsFileUrl;
-                              const aPdf = ex.modelAnswerUrl || ex.answersFileUrl;
-                              return (
-                              <tr key={ex.id} className="hover:bg-slate-50 dark:hover:bg-slate-900/40 transition-colors">
-                                <td className="p-3.5">
-                                  <span className="px-2 py-0.5 rounded-lg bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20 font-bold">
-                                    {exSubj}
-                                  </span>
-                                </td>
-                                <td className="p-3.5 font-bold text-slate-900 dark:text-white max-w-xs">
-                                  <div>{ex.title}</div>
-                                  {ex.description && <p className="text-[10px] text-slate-600 dark:text-slate-400 line-clamp-1 mt-0.5">{ex.description}</p>}
-                                </td>
-                                <td className="p-3.5">
-                                  {ex.isOnlineExam ? (
-                                    <span className="inline-flex items-center gap-1 rounded-full bg-brand-cyan/10 border border-brand-cyan/30 text-brand-cyan px-2.5 py-0.5 text-[10px] font-bold tabular-nums">
-                                      {t(`أونلاين (${ex.questions?.length || 0} س)`, `Online (${ex.questions?.length || 0} Q)`)}
-                                    </span>
-                                  ) : (
-                                    <span className="inline-flex items-center gap-1 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 px-2.5 py-0.5 text-[10px] font-bold">
-                                      {ex.examDate || t('ملف PDF', 'PDF Exam')}
-                                    </span>
-                                  )}
-                                </td>
-                                <td className="p-3.5">
-                                  {qPdf ? (
-                                    <button
-                                      type="button"
-                                      onClick={() => triggerFileDownload(qPdf, ex.title || 'exam-questions')}
-                                      className="inline-flex items-center gap-1 text-brand-cyan hover:underline font-bold cursor-pointer"
-                                    >
-                                      <FileText className="h-3.5 w-3.5" />
-                                      <span>{t('الأسئلة', 'Questions')}</span>
-                                    </button>
-                                  ) : (
-                                    <span className="text-slate-600">—</span>
-                                  )}
-                                </td>
-                                <td className="p-3.5">
-                                  {aPdf ? (
-                                    <button
-                                      type="button"
-                                      onClick={() => triggerFileDownload(aPdf, `${ex.title}-model-answer`)}
-                                      className="inline-flex items-center gap-1 text-emerald-700 dark:text-emerald-400 hover:underline font-bold cursor-pointer"
-                                    >
-                                      <CheckCircle2 className="h-3.5 w-3.5" />
-                                      <span>{t('نموذج الحل', 'Answer Key')}</span>
-                                    </button>
-                                  ) : (
-                                    <span className="text-slate-600">—</span>
-                                  )}
-                                </td>
-                                <td className="p-3.5 text-center">
-                                  <div className="flex items-center justify-center gap-2">
-                                    <button
-                                      type="button"
-                                      onClick={() => {
-                                        setEditingContentId(ex.id);
-                                        setExamForm({
-                                          subject: ex.subject || resolveCourseBySubject(ex.courseTitle || '').courseTitle.split('–')[0].trim() || 'Physics',
-                                          number: String(ex.number || 'Exam'),
-                                          title: ex.title || '',
-                                          description: ex.description || '',
-                                          questionsPdfUrl: qPdf || '',
-                                          modelAnswerUrl: aPdf || '',
-                                          examDate: ex.examDate || '',
-                                          isOnlineExam: Boolean(ex.isOnlineExam),
-                                          durationMinutes: ex.durationMinutes || 30,
-                                          showResultsImmediately: ex.showResultsImmediately !== false,
-                                          published: ex.published !== false,
-                                          questions: ex.questions || [],
-                                        });
-                                        setActiveContentModal('exam');
-                                      }}
-                                      className="p-1.5 rounded-lg bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white hover:border-brand-cyan transition-colors cursor-pointer"
-                                      title={t('تعديل', 'Edit')}
-                                    >
-                                      <Edit className="h-3.5 w-3.5" />
-                                    </button>
-                                    <button
-                                      type="button"
-                                      onClick={() => handleDeleteExam(ex.id)}
-                                      className="p-1.5 rounded-lg bg-red-500/10 border border-red-500/20 text-red-600 dark:text-red-400 hover:bg-red-500 hover:text-white transition-colors cursor-pointer"
-                                      title={t('حذف', 'Delete')}
-                                    >
-                                      <Trash2 className="h-3.5 w-3.5" />
-                                    </button>
-                                  </div>
-                                </td>
-                              </tr>
-                            );})}
-                        </tbody>
-                      </table>
-                    </div>
-
-                    {/* Student Online Exam Submissions Log */}
-                    <div className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950/50 p-5 space-y-4">
-                      <div className="flex items-center justify-between">
-                        <h3 className="text-sm font-black text-slate-900 dark:text-white flex items-center gap-2">
-                          <Award className="h-4.5 w-4.5 text-emerald-700 dark:text-emerald-400" />
-                          <span>{t('نتائج تسليمات الامتحانات الإلكترونية للطلاب', 'Student Online Exam Submissions')}</span>
-                        </h3>
-                        <span className="rounded-full bg-slate-100 dark:bg-slate-800 px-2.5 py-0.5 text-[11px] font-mono tabular-nums text-brand-cyan font-bold">
-                          {examSubmissions.length}
-                        </span>
-                      </div>
-                      {examSubmissions.length === 0 ? (
-                        <p className="text-xs text-slate-500 dark:text-slate-400 py-4 text-center">{t('لم يقم الطلاب بتسليم امتحانات إلكترونية بعد.', 'No online exam submissions yet.')}</p>
-                      ) : (
-                        <div className="overflow-x-auto">
-                          <table className="w-full text-right text-xs">
-                            <thead className="bg-slate-100 dark:bg-slate-900/70 text-slate-700 dark:text-slate-300 border-b border-slate-200 dark:border-slate-800">
-                              <tr>
-                                <th className="p-3">{t('الطالب', 'Student')}</th>
-                                <th className="p-3">{t('الامتحان', 'Exam')}</th>
-                                <th className="p-3">{t('الدرجة', 'Score')}</th>
-                                <th className="p-3">{t('النسبة', 'Percentage')}</th>
-                                <th className="p-3">{t('تاريخ التسليم', 'Submitted')}</th>
-                              </tr>
-                            </thead>
-                            <tbody className="divide-y divide-slate-800/50">
-                              {examSubmissions.slice(0, 20).map(sub => (
-                                <tr key={sub.id} className="hover:bg-slate-50 dark:hover:bg-slate-900/40">
-                                  <td className="p-3 font-bold text-slate-900 dark:text-white">
-                                    <div>{sub.studentName}</div>
-                                    <div className="text-[10px] text-slate-600 dark:text-slate-400 font-mono">{sub.studentEmail}</div>
-                                  </td>
-                                  <td className="p-3 text-slate-700 dark:text-slate-300">{sub.examTitle}</td>
-                                  <td className="p-3 font-mono tabular-nums font-bold text-brand-cyan">{sub.score} / {sub.totalPoints}</td>
-                                  <td className="p-3 font-mono tabular-nums">
-                                    <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${
-                                      sub.percentage >= 50 ? 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-400' : 'bg-red-500/15 text-red-600 dark:text-red-400'
-                                    }`}>
-                                      {sub.percentage}%
-                                    </span>
-                                  </td>
-                                  <td className="p-3 font-mono text-slate-600 dark:text-slate-400 text-[11px]">{new Date(sub.submittedAt).toLocaleString()}</td>
-                                </tr>
-                              ))}
-                            </tbody>
-                          </table>
-                        </div>
-                      )}
-                    </div>
-                  </div>
+                  <AdminExamsManager
+                    exams={exams}
+                    courses={courses}
+                    questionBank={questionBank}
+                    adminName={currentAdmin?.name || 'Eng/Mohamed abdal tawab'}
+                    onRefresh={loadData}
+                    onLogAction={(action, title, details) => logAdminAction(action, 'exam', title, details)}
+                    onPreviewMedia={handlePreviewAdminMedia}
+                  />
                 )}
 
-                {/* --- SHEETS (شيتات المحاضرات والسكاشن) PANEL --- */}
+                {/* --- SHEETS (الشيتات الأكاديمية) INDEPENDENT MODULE --- */}
                 {activeTab === 'sheets' && (
-                  <div className="space-y-6 animate-fadeIn">
-                    <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 pb-4 border-b border-slate-200 dark:border-slate-800">
-                      <div>
-                        <h2 className="text-xl font-black text-slate-900 dark:text-white flex items-center gap-2.5">
-                          <FileCheck className="h-6 w-6 text-brand-cyan" />
-                          {t('إدارة شيتات المحاضرات وشيتات السكاشن', 'Lecture & Section Sheets Management')}
-                        </h2>
-                        <p className="text-xs text-slate-600 dark:text-slate-400 mt-1">
-                          {t('رفع وتنظيم شيتات وتكليفات المحاضرات والسكاشن العملية بصيغة PDF لكل مادة.', 'Manage and upload PDF training sheets for lectures and lab practicals.')}
-                        </p>
-                      </div>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setEditingContentId(null);
-                          setSheetForm({
-                            type: 'lecture_sheet',
-                            subject: 'Physics',
-                            title: '',
-                            lectureNumber: 1,
-                            sectionNumber: 1,
-                            fileUrl: '',
-                          });
-                          setActiveContentModal('sheet');
-                        }}
-                        className="flex items-center gap-1.5 rounded-xl bg-brand-cyan text-white dark:text-slate-950 hover:bg-brand-cyan-light px-4 py-2.5 text-xs font-bold transition-all cursor-pointer shadow-lg shadow-cyan-950/20 shrink-0"
-                      >
-                        <Plus className="h-4 w-4" />
-                        <span>{t('إضافة شيت جديد', 'Add Sheet')}</span>
-                      </button>
-                    </div>
-
-                    {/* Search & Subject Filters */}
-                    <div className="flex flex-col md:flex-row items-stretch md:items-center justify-between gap-4 rounded-2xl bg-slate-50 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800 p-4">
-                      <div className="relative flex-1">
-                        <Search className="absolute right-4 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-600 dark:text-slate-400 pointer-events-none" />
-                        <input
-                          type="text"
-                          value={courseSearchQuery}
-                          onChange={e => setCourseSearchQuery(e.target.value)}
-                          placeholder={t('بحث بعنوان الشيت أو المادة...', 'Search sheet title or subject...')}
-                          className="w-full rounded-xl bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 pr-11 pl-4 py-2.5 text-xs text-slate-900 dark:text-white placeholder-slate-500 focus:outline-none focus:border-brand-cyan"
-                        />
-                      </div>
-                      <div className="flex items-center gap-2 overflow-x-auto pb-1 md:pb-0 shrink-0">
-                        {['all', 'Physics', 'Python', 'IT Essentials', 'Mathematics', 'Cyber Security', 'English'].map(subj => (
-                          <button
-                            key={subj}
-                            type="button"
-                            onClick={() => setCourseCategoryFilter(subj)}
-                            className={`px-3 py-1.5 rounded-xl text-xs font-bold shrink-0 transition-all cursor-pointer border ${
-                              courseCategoryFilter === subj
-                                ? 'bg-brand-cyan text-white dark:text-slate-950 border-brand-cyan shadow-sm'
-                                : 'bg-white dark:bg-slate-950 text-slate-600 dark:text-slate-400 border-slate-200 dark:border-slate-800 hover:border-slate-700'
-                            }`}
-                          >
-                            {subj === 'all' ? t('الكل', 'All') : subj}
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-
-                    {/* Sheets Table */}
-                    <div className="overflow-x-auto rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950/40 shadow-xs dark:shadow-none">
-                      <table className="w-full text-right text-xs">
-                        <thead className="bg-slate-100 dark:bg-slate-900/80 text-slate-700 dark:text-slate-300 font-bold border-b border-slate-200 dark:border-slate-800">
-                          <tr>
-                            <th className="p-3.5">{t('النوع', 'Type')}</th>
-                            <th className="p-3.5">{t('المادة', 'Subject')}</th>
-                            <th className="p-3.5">{t('عنوان الشيت', 'Sheet Title')}</th>
-                            <th className="p-3.5">{t('الرقم التابع له', 'Ref #')}</th>
-                            <th className="p-3.5">{t('ملف الشيت (PDF)', 'Sheet File')}</th>
-                            <th className="p-3.5 text-center">{t('الإجراءات', 'Actions')}</th>
-                          </tr>
-                        </thead>
-                        <tbody className="divide-y divide-slate-800/60">
-                          {sheets
-                            .filter(sh => {
-                              const subjLabel = sh.subject || sh.courseTitle || '';
-                              const matchesSearch = !courseSearchQuery || sh.title.toLowerCase().includes(courseSearchQuery.toLowerCase()) || subjLabel.toLowerCase().includes(courseSearchQuery.toLowerCase());
-                              const matchesSubj = courseCategoryFilter === 'all' || subjLabel.toLowerCase().includes(courseCategoryFilter.toLowerCase());
-                              return matchesSearch && matchesSubj;
-                            })
-                            .map((sh) => {
-                              const shType = sh.type || sh.sheetType || 'lecture_sheet';
-                              const shSubj = sh.subject || sh.courseTitle || 'IT';
-                              const shRef = sh.lectureNumber ?? sh.sectionNumber ?? sh.referenceNumber;
-                              return (
-                              <tr key={sh.id} className="hover:bg-slate-50 dark:hover:bg-slate-900/40 transition-colors">
-                                <td className="p-3.5">
-                                  <span className={`px-2 py-0.5 rounded-lg text-[10px] font-bold border ${
-                                    shType === 'lecture_sheet'
-                                      ? 'bg-blue-500/10 text-blue-600 dark:text-blue-400 border-blue-500/20'
-                                      : 'bg-purple-500/10 text-purple-400 border-purple-500/20'
-                                  }`}>
-                                    {shType === 'lecture_sheet' ? t('شيت محاضرة', 'Lecture Sheet') : t('شيت سكشن', 'Section Sheet')}
-                                  </span>
-                                </td>
-                                <td className="p-3.5 font-bold text-slate-700 dark:text-slate-300">{shSubj}</td>
-                                <td className="p-3.5 font-bold text-slate-900 dark:text-white max-w-xs">{sh.title}</td>
-                                <td className="p-3.5 font-mono tabular-nums text-slate-600 dark:text-slate-400">
-                                  {shType === 'lecture_sheet'
-                                    ? (shRef ? `محاضرة #${shRef}` : '—')
-                                    : (shRef ? `سكشن #${shRef}` : '—')}
-                                </td>
-                                <td className="p-3.5">
-                                  {sh.fileUrl ? (
-                                    <button
-                                      type="button"
-                                      onClick={() => triggerFileDownload(sh.fileUrl, sh.title || 'sheet')}
-                                      className="inline-flex items-center gap-1 text-brand-cyan hover:underline font-bold cursor-pointer"
-                                    >
-                                      <FileText className="h-3.5 w-3.5" />
-                                      <span>{t('تحميل الشيت', 'Download')}</span>
-                                    </button>
-                                  ) : (
-                                    <span className="text-slate-600">—</span>
-                                  )}
-                                </td>
-                                <td className="p-3.5 text-center">
-                                  <div className="flex items-center justify-center gap-2">
-                                    <button
-                                      type="button"
-                                      onClick={() => {
-                                        setEditingContentId(sh.id);
-                                        setSheetForm({
-                                          type: shType,
-                                          subject: sh.subject || resolveCourseBySubject(sh.courseTitle || '').courseTitle.split('–')[0].trim() || 'Physics',
-                                          title: sh.title || '',
-                                          lectureNumber: shType === 'lecture_sheet' ? (Number(shRef) || 1) : 1,
-                                          sectionNumber: shType === 'section_sheet' ? (Number(shRef) || 1) : 1,
-                                          fileUrl: sh.fileUrl || '',
-                                        });
-                                        setActiveContentModal('sheet');
-                                      }}
-                                      className="p-1.5 rounded-lg bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white hover:border-brand-cyan transition-colors cursor-pointer"
-                                      title={t('تعديل', 'Edit')}
-                                    >
-                                      <Edit className="h-3.5 w-3.5" />
-                                    </button>
-                                    <button
-                                      type="button"
-                                      onClick={() => handleDeleteSheet(sh.id)}
-                                      className="p-1.5 rounded-lg bg-red-500/10 border border-red-500/20 text-red-600 dark:text-red-400 hover:bg-red-500 hover:text-white transition-colors cursor-pointer"
-                                      title={t('حذف', 'Delete')}
-                                    >
-                                      <Trash2 className="h-3.5 w-3.5" />
-                                    </button>
-                                  </div>
-                                </td>
-                              </tr>
-                            );})}
-                        </tbody>
-                      </table>
-                    </div>
-                  </div>
+                  <AdminSheetsManager
+                    sheets={sheets}
+                    courses={courses}
+                    adminName={currentAdmin?.name || 'Eng/Mohamed abdal tawab'}
+                    onRefresh={loadData}
+                    onLogAction={(action, title, details) => logAdminAction(action, 'sheet', title, details)}
+                    onPreviewMedia={handlePreviewAdminMedia}
+                  />
                 )}
 
-                {/* --- ACADEMY NOTIFICATIONS PANEL --- */}
+                {/* --- UNIVERSITY ANNOUNCEMENTS PANEL --- */}
                 {activeTab === 'notifications' && (
                   <div className="space-y-6 animate-fadeIn">
                     <div className="border-b border-slate-200 dark:border-slate-800 pb-4">
                       <h2 className="text-xl font-black text-slate-900 dark:text-white flex items-center gap-2.5">
                         <Bell className="h-6 w-6 text-brand-cyan" />
-                        {t('نظام إشعارات الأكاديمية الفورية للطلاب', 'Academy Instant Notification Broadcast')}
+                        {t('نظام الإعلانات والتنبيهات الجامعية الفورية', 'University Platform Announcements & Alerts')}
                       </h2>
                       <p className="text-xs text-slate-600 dark:text-slate-400 mt-1">
-                        {t('أرسل تنبيهات فورية تظهر مباشرة في شريط ولوحة إشعارات الطالب عند رفع محاضرات جديدة، أو اعتماد وتفعيل حسابات المواد الدراسية.', 'Broadcast instant alerts that appear live in the student dashboard when new lectures are uploaded or access is activated.')}
+                        {t('أرسل تنبيهات فورية تظهر مباشرة في لوحة الطالب عند نشر محاضرات أو سكاشن أو شيتات أو امتحانات جديدة.', 'Broadcast instant alerts that appear live in the student portal when new academic content is published.')}
                       </p>
                     </div>
 
@@ -5973,7 +5358,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
                     <div className="flex items-center justify-between mb-6">
                       <h2 className="text-xl font-bold text-slate-900 dark:text-white flex items-center gap-2">
                         <Ticket className="h-5 w-5 text-brand-cyan" />
-                        {t('إدارة كوبونات الخصم والترويج لكورسات الأكاديمية', 'Manage Promo Discount Coupons')}
+                        {t('إدارة أكواد التفعيل والمنح الجامعية', 'Manage Academic Promo Codes')}
                       </h2>
                       <button
                         onClick={openAddModal}
@@ -6165,7 +5550,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
                     <div className="flex items-center justify-between mb-6">
                       <h2 className="text-xl font-bold text-slate-900 dark:text-white flex items-center gap-2">
                         <Megaphone className="h-5 w-5 text-brand-cyan" />
-                        {t('إدارة أخبار وإعلانات الأكاديمية', 'Manage Academy News')}
+                        {t('إدارة إشعارات وإعلانات المنصة الجامعية', 'Manage University Announcements & News')}
                       </h2>
                       <button
                         onClick={openAddModal}
@@ -6856,12 +6241,12 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
                   <form onSubmit={handleSettingsSave} className="space-y-6">
                     <h2 className="text-xl font-bold text-slate-900 dark:text-white mb-6 flex items-center gap-2">
                       <Settings className="h-5 w-5 text-brand-cyan" />
-                      {t('تخصيص بيانات وإعدادات الأكاديمية العامة', 'Website Global Customization')}
+                      {t('تخصيص بيانات وإعدادات المنصة الجامعية', 'University Platform Settings')}
                     </h2>
 
                     <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 text-xs text-slate-700 dark:text-slate-300">
                       <div>
-                        <label className="block mb-1.5 font-semibold text-slate-900 dark:text-white">{t('اسم الأكاديمية (العربية)', 'Academy Name (Arabic)')}</label>
+                        <label className="block mb-1.5 font-semibold text-slate-900 dark:text-white">{t('اسم المنصة (العربية)', 'Platform Name (Arabic)')}</label>
                         <input
                           type="text"
                           required
@@ -6871,7 +6256,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
                         />
                       </div>
                       <div>
-                        <label className="block mb-1.5 font-semibold text-slate-900 dark:text-white">{t('اسم الأكاديمية (الإنجليزية)', 'Academy Name (English)')}</label>
+                        <label className="block mb-1.5 font-semibold text-slate-900 dark:text-white">{t('اسم المنصة (الإنجليزية)', 'Platform Name (English)')}</label>
                         <input
                           type="text"
                           required
@@ -6936,8 +6321,8 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
                       </h3>
                       <p className="text-xs text-slate-700 dark:text-slate-300 mb-4 leading-relaxed">
                         {t(
-                          'إذا أردت إنهاء جلسات الدخول وإخراج جميع الطلاب والحسابات المسجلة من المنصة على جميع أجهزتهم ومتصفحاتهم فوراً (مع الاحتفاظ ببياناتهم وكورساتهم المسجلة كما هي دون حذف)، يمكنك استخدام هذا الزر. سيطلب منهم النظام تسجيل الدخول ببريدهم وكلمة المرور من جديد.',
-                          'If you want to immediately terminate all active sessions and log out all student accounts across all devices and browsers (without deleting their accounts or course enrollments), use this button. They will be required to log in again.'
+                          'إذا أردت إنهاء جلسات الدخول وإخراج جميع الطلاب والحسابات المسجلة من المنصة على جميع أجهزتهم ومتصفحاتهم فوراً (مع الاحتفاظ ببياناتهم ومقرراتهم المسجلة كما هي دون حذف)، يمكنك استخدام هذا الزر. سيطلب منهم النظام تسجيل الدخول ببريدهم وكلمة المرور من جديد.',
+                          'If you want to immediately terminate all active sessions and log out all student accounts across all devices and browsers (without deleting their accounts or subject enrollments), use this button. They will be required to log in again.'
                         )}
                       </p>
                       <button
@@ -6953,13 +6338,13 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
                   </form>
                 )}
 
-                {/* 10. ACADEMY ADMINS */}
+                {/* 10. PLATFORM ADMINS */}
                 {activeTab === 'admins' && (
                   <div>
                     <div className="flex items-center justify-between mb-6">
                       <h2 className="text-xl font-bold text-slate-900 dark:text-white flex items-center gap-2">
                         <Shield className="h-5 w-5 text-brand-cyan" />
-                        {t('إدارة حسابات المسؤولين وصلاحياتهم', 'Academy Board Members')}
+                        {t('إدارة حسابات المسؤولين والصلاحيات', 'Platform Administrators & Permissions')}
                       </h2>
                       {currentAdmin?.role === 'super' ? (
                         <button
@@ -7029,657 +6414,6 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
             >
               <X className="h-5 w-5" />
             </button>
-
-            {/* 1. LECTURE FORM MODAL */}
-            {activeContentModal === 'lecture' && (
-              <form onSubmit={handleSaveLecture} className="space-y-4">
-                <div className="border-b border-slate-200 dark:border-slate-800 pb-3">
-                  <h3 className="text-lg font-black text-slate-900 dark:text-white flex items-center gap-2">
-                    <BookOpen className="h-5 w-5 text-brand-cyan" />
-                    <span>{editingContentId ? t('تعديل المحاضرة', 'Edit Lecture') : t('إضافة محاضرة جديدة', 'Add New Lecture')}</span>
-                  </h3>
-                  <p className="text-xs text-slate-600 dark:text-slate-400 mt-1">{t('اربط المحاضرة بفيديو YouTube وملف PDF مذكرات الشرح.', 'Link lecture to YouTube and PDF document.')}</p>
-                </div>
-
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                  <div>
-                    <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">{t('المادة الدراسية', 'Subject')}</label>
-                    <select
-                      value={lectureForm.subject}
-                      onChange={e => setLectureForm(prev => ({ ...prev, subject: e.target.value }))}
-                      className="w-full rounded-xl bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-2.5 text-xs text-slate-900 dark:text-white focus:outline-none focus:border-brand-cyan cursor-pointer"
-                    >
-                      {['Physics', 'Python', 'IT Essentials', 'Mathematics', 'Cyber Security', 'English'].map(subj => (
-                        <option key={subj} value={subj}>{subj}</option>
-                      ))}
-                    </select>
-                  </div>
-
-                  <div>
-                    <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">{t('رقم المحاضرة', 'Lecture Number')}</label>
-                    <input
-                      type="number"
-                      min={1}
-                      required
-                      value={lectureForm.lectureNumber}
-                      onChange={e => setLectureForm(prev => ({ ...prev, lectureNumber: parseInt(e.target.value) || 1 }))}
-                      className="w-full rounded-xl bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-2.5 text-xs text-slate-900 dark:text-white focus:outline-none focus:border-brand-cyan"
-                    />
-                  </div>
-                </div>
-
-                <div>
-                  <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">{t('عنوان المحاضرة', 'Lecture Title')}</label>
-                  <input
-                    type="text"
-                    required
-                    value={lectureForm.title}
-                    onChange={e => setLectureForm(prev => ({ ...prev, title: e.target.value }))}
-                    placeholder={t('مثال: مقدمة في الحركة والقوى الكهربية', 'Lecture title...')}
-                    className="w-full rounded-xl bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-2.5 text-xs text-slate-900 dark:text-white focus:outline-none focus:border-brand-cyan"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">{t('وصف أو نقاط المحاضرة (اختياري)', 'Description (Optional)')}</label>
-                  <textarea
-                    rows={2}
-                    value={lectureForm.description}
-                    onChange={e => setLectureForm(prev => ({ ...prev, description: e.target.value }))}
-                    placeholder={t('أبرز النقاط والقوانين المشروحة في هذه المحاضرة...', 'Summary notes...')}
-                    className="w-full rounded-xl bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-2.5 text-xs text-slate-900 dark:text-white focus:outline-none focus:border-brand-cyan"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1 flex items-center justify-between">
-                    <span className="flex items-center gap-1.5 text-red-600 dark:text-red-400">
-                      <Video className="h-4 w-4" />
-                      {t('رابط فيديو YouTube (مشغل رسمي فقط)', 'YouTube Video URL')}
-                    </span>
-                    <span className="text-[10px] text-slate-500 dark:text-slate-400 font-normal">{t('ممنوع رفع ملفات فيديو للسيرفر', 'YouTube only')}</span>
-                  </label>
-                  <input
-                    type="url"
-                    value={lectureForm.youtubeUrl}
-                    onChange={e => setLectureForm(prev => ({ ...prev, youtubeUrl: e.target.value }))}
-                    placeholder="https://www.youtube.com/watch?v=..."
-                    className="w-full rounded-xl bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-2.5 text-xs text-slate-900 dark:text-white focus:outline-none focus:border-brand-cyan font-mono"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1 flex items-center gap-1.5 text-brand-cyan">
-                    <FileText className="h-4 w-4" />
-                    {t('رابط ملف مذكرة المحاضرة (PDF)', 'Lecture PDF Document URL')}
-                  </label>
-                  <input
-                    type="url"
-                    value={lectureForm.pdfUrl}
-                    onChange={e => setLectureForm(prev => ({ ...prev, pdfUrl: e.target.value }))}
-                    placeholder="https://.../lecture-notes.pdf"
-                    className="w-full rounded-xl bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-2.5 text-xs text-slate-900 dark:text-white focus:outline-none focus:border-brand-cyan font-mono"
-                  />
-                </div>
-
-                <div className="flex justify-end gap-3 pt-3 border-t border-slate-200 dark:border-slate-800">
-                  <button
-                    type="button"
-                    onClick={() => setActiveContentModal(null)}
-                    className="rounded-xl bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 px-5 py-2.5 text-xs font-bold text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white cursor-pointer"
-                  >
-                    {t('إلغاء', 'Cancel')}
-                  </button>
-                  <button
-                    type="submit"
-                    disabled={actionLoading}
-                    className="rounded-xl bg-brand-cyan text-white dark:text-slate-950 hover:bg-brand-cyan-light px-6 py-2.5 text-xs font-black transition-all cursor-pointer shadow-lg shadow-cyan-950/20 disabled:opacity-50"
-                  >
-                    {actionLoading ? t('جاري الحفظ...', 'Saving...') : t('حفظ ونشر المحاضرة', 'Save Lecture')}
-                  </button>
-                </div>
-              </form>
-            )}
-
-            {/* 2. SECTION FORM MODAL */}
-            {activeContentModal === 'section' && (
-              <form onSubmit={handleSaveSection} className="space-y-4">
-                <div className="border-b border-slate-200 dark:border-slate-800 pb-3">
-                  <h3 className="text-lg font-black text-slate-900 dark:text-white flex items-center gap-2">
-                    <Layers className="h-5 w-5 text-emerald-700 dark:text-emerald-400" />
-                    <span>{editingContentId ? t('تعديل السكشن المعملي', 'Edit Lab Section') : t('إضافة سكشن معملي جديد', 'Add New Lab Section')}</span>
-                  </h3>
-                  <p className="text-xs text-slate-600 dark:text-slate-400 mt-1">{t('اربط السكشن بفيديو YouTube وملف Word أو PDF الخاص بالمعمل.', 'Attach YouTube and Word/PDF lab document.')}</p>
-                </div>
-
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                  <div>
-                    <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">{t('المادة الدراسية', 'Subject')}</label>
-                    <select
-                      value={sectionForm.subject}
-                      onChange={e => setSectionForm(prev => ({ ...prev, subject: e.target.value }))}
-                      className="w-full rounded-xl bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-2.5 text-xs text-slate-900 dark:text-white focus:outline-none focus:border-brand-cyan cursor-pointer"
-                    >
-                      {['Physics', 'Python', 'IT Essentials', 'Mathematics', 'Cyber Security', 'English'].map(subj => (
-                        <option key={subj} value={subj}>{subj}</option>
-                      ))}
-                    </select>
-                  </div>
-
-                  <div>
-                    <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">{t('رقم السكشن', 'Section Number')}</label>
-                    <input
-                      type="number"
-                      min={1}
-                      required
-                      value={sectionForm.sectionNumber}
-                      onChange={e => setSectionForm(prev => ({ ...prev, sectionNumber: parseInt(e.target.value) || 1 }))}
-                      className="w-full rounded-xl bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-2.5 text-xs text-slate-900 dark:text-white focus:outline-none focus:border-brand-cyan"
-                    />
-                  </div>
-                </div>
-
-                <div>
-                  <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">{t('عنوان السكشن', 'Section Title')}</label>
-                  <input
-                    type="text"
-                    required
-                    value={sectionForm.title}
-                    onChange={e => setSectionForm(prev => ({ ...prev, title: e.target.value }))}
-                    placeholder={t('مثال: التجربة المعملية الأولى: القياسات والأخطاء', 'Lab section title...')}
-                    className="w-full rounded-xl bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-2.5 text-xs text-slate-900 dark:text-white focus:outline-none focus:border-brand-cyan"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">{t('وصف السكشن أو ملاحظات المعمل (اختياري)', 'Description (Optional)')}</label>
-                  <textarea
-                    rows={2}
-                    value={sectionForm.description}
-                    onChange={e => setSectionForm(prev => ({ ...prev, description: e.target.value }))}
-                    placeholder={t('ملاحظات الأجهزة والخطوات العملية...', 'Lab notes...')}
-                    className="w-full rounded-xl bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-2.5 text-xs text-slate-900 dark:text-white focus:outline-none focus:border-brand-cyan"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1 flex items-center justify-between">
-                    <span className="flex items-center gap-1.5 text-red-600 dark:text-red-400">
-                      <Video className="h-4 w-4" />
-                      {t('رابط فيديو YouTube للشرح العملي', 'YouTube Video URL')}
-                    </span>
-                  </label>
-                  <input
-                    type="url"
-                    value={sectionForm.youtubeUrl}
-                    onChange={e => setSectionForm(prev => ({ ...prev, youtubeUrl: e.target.value }))}
-                    placeholder="https://www.youtube.com/watch?v=..."
-                    className="w-full rounded-xl bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-2.5 text-xs text-slate-900 dark:text-white focus:outline-none focus:border-brand-cyan font-mono"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1 flex items-center gap-1.5 text-emerald-700 dark:text-emerald-400">
-                    <Download className="h-4 w-4" />
-                    {t('رابط ملف السكشن (Word .docx أو PDF)', 'Section Document File URL (.docx / PDF)')}
-                  </label>
-                  <input
-                    type="url"
-                    value={sectionForm.fileUrl}
-                    onChange={e => setSectionForm(prev => ({ ...prev, fileUrl: e.target.value }))}
-                    placeholder="https://.../section-lab.docx"
-                    className="w-full rounded-xl bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-2.5 text-xs text-slate-900 dark:text-white focus:outline-none focus:border-brand-cyan font-mono"
-                  />
-                </div>
-
-                <div className="flex justify-end gap-3 pt-3 border-t border-slate-200 dark:border-slate-800">
-                  <button
-                    type="button"
-                    onClick={() => setActiveContentModal(null)}
-                    className="rounded-xl bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 px-5 py-2.5 text-xs font-bold text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white cursor-pointer"
-                  >
-                    {t('إلغاء', 'Cancel')}
-                  </button>
-                  <button
-                    type="submit"
-                    disabled={actionLoading}
-                    className="rounded-xl bg-emerald-500 text-slate-950 hover:bg-emerald-400 px-6 py-2.5 text-xs font-black transition-all cursor-pointer shadow-lg shadow-emerald-950/20 disabled:opacity-50"
-                  >
-                    {actionLoading ? t('جاري الحفظ...', 'Saving...') : t('حفظ ونشر السكشن', 'Save Section')}
-                  </button>
-                </div>
-              </form>
-            )}
-
-            {/* 3. EXAM FORM MODAL (Paper PDF + Interactive Online Exam) */}
-            {activeContentModal === 'exam' && (
-              <form onSubmit={handleSaveExam} className="space-y-4">
-                <div className="border-b border-slate-200 dark:border-slate-800 pb-3">
-                  <h3 className="text-lg font-black text-slate-900 dark:text-white flex items-center gap-2">
-                    <GraduationCap className="h-5 w-5 text-amber-600 dark:text-amber-400" />
-                    <span>{editingContentId ? t('تعديل الامتحان', 'Edit Exam') : t('إضافة امتحان جديد (ورقي أو أونلاين)', 'Add Exam (PDF or Online)')}</span>
-                  </h3>
-                  <p className="text-xs text-slate-600 dark:text-slate-400 mt-1">{t('يمكنك نشر امتحان PDF ورقي أو تفعيل نظام الامتحان الإلكتروني بتصحيح تلقائي فوري.', 'Publish a PDF paper exam or enable interactive auto-graded online exam mode.')}</p>
-                </div>
-
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                  <div>
-                    <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">{t('المادة الدراسية', 'Subject')}</label>
-                    <select
-                      value={examForm.subject}
-                      onChange={e => setExamForm(prev => ({ ...prev, subject: e.target.value }))}
-                      className="w-full rounded-xl bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-2.5 text-xs text-slate-900 dark:text-white focus:outline-none focus:border-brand-cyan cursor-pointer"
-                    >
-                      {['Physics', 'Python', 'IT Essentials', 'Mathematics', 'Cyber Security', 'English'].map(subj => (
-                        <option key={subj} value={subj}>{subj}</option>
-                      ))}
-                    </select>
-                  </div>
-
-                  <div>
-                    <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">{t('تاريخ الامتحان (اختياري)', 'Exam Date (Optional)')}</label>
-                    <input
-                      type="date"
-                      value={examForm.examDate}
-                      onChange={e => setExamForm(prev => ({ ...prev, examDate: e.target.value }))}
-                      className="w-full rounded-xl bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-2.5 text-xs text-slate-900 dark:text-white focus:outline-none focus:border-brand-cyan"
-                    />
-                  </div>
-                </div>
-
-                <div>
-                  <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">{t('اسم أو رقم الامتحان', 'Exam Title')}</label>
-                  <input
-                    type="text"
-                    required
-                    value={examForm.title}
-                    onChange={e => setExamForm(prev => ({ ...prev, title: e.target.value }))}
-                    placeholder={t('مثال: امتحان الميدترم الفصلي 2026', 'e.g. Midterm Exam 2026')}
-                    className="w-full rounded-xl bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-2.5 text-xs text-slate-900 dark:text-white focus:outline-none focus:border-brand-cyan"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">{t('وصف الامتحان وتفاصيل الدرجات (اختياري)', 'Description (Optional)')}</label>
-                  <textarea
-                    rows={2}
-                    value={examForm.description}
-                    onChange={e => setExamForm(prev => ({ ...prev, description: e.target.value }))}
-                    placeholder={t('عدد الأسئلة والزمن المتاح...', 'Details...')}
-                    className="w-full rounded-xl bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-2.5 text-xs text-slate-900 dark:text-white focus:outline-none focus:border-brand-cyan"
-                  />
-                </div>
-
-                {/* Online Exam Switch */}
-                <div className="rounded-xl border border-brand-cyan/30 bg-brand-cyan/5 p-3.5 space-y-3">
-                  <div className="flex flex-wrap items-center justify-between gap-3">
-                    <label className="flex items-center gap-2 cursor-pointer text-xs font-black text-slate-900 dark:text-white">
-                      <input
-                        type="checkbox"
-                        checked={Boolean(examForm.isOnlineExam)}
-                        onChange={e => setExamForm(prev => ({ ...prev, isOnlineExam: e.target.checked }))}
-                        className="h-4 w-4 accent-brand-cyan cursor-pointer"
-                      />
-                      <span>{t('تفعيل كامتحان إلكتروني تفاعلي (أونلاين بمؤقت وتصحيح تلقائي)', 'Enable Interactive Online Auto-Graded Exam')}</span>
-                    </label>
-                    <label className="flex items-center gap-2 cursor-pointer text-xs font-bold text-slate-700 dark:text-slate-300">
-                      <input
-                        type="checkbox"
-                        checked={examForm.published !== false}
-                        onChange={e => setExamForm(prev => ({ ...prev, published: e.target.checked }))}
-                        className="h-4 w-4 accent-brand-cyan cursor-pointer"
-                      />
-                      <span>{t('منشور للطلاب', 'Published')}</span>
-                    </label>
-                  </div>
-
-                  {examForm.isOnlineExam && (
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2 border-t border-slate-200 dark:border-slate-800">
-                      <div>
-                        <label className="block text-[11px] font-bold text-slate-700 dark:text-slate-300 mb-1">{t('مدة الامتحان (بالدقائق)', 'Duration (Minutes)')}</label>
-                        <input
-                          type="number"
-                          min={5}
-                          max={240}
-                          value={examForm.durationMinutes}
-                          onChange={e => setExamForm(prev => ({ ...prev, durationMinutes: parseInt(e.target.value) || 30 }))}
-                          className="w-full rounded-xl bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-2 text-xs text-slate-900 dark:text-white font-mono tabular-nums"
-                        />
-                      </div>
-                      <div className="flex items-end pb-1.5">
-                        <label className="flex items-center gap-2 cursor-pointer text-xs font-bold text-emerald-700 dark:text-emerald-300">
-                          <input
-                            type="checkbox"
-                            checked={examForm.showResultsImmediately !== false}
-                            onChange={e => setExamForm(prev => ({ ...prev, showResultsImmediately: e.target.checked }))}
-                            className="h-4 w-4 accent-emerald-500 cursor-pointer"
-                          />
-                          <span>{t('إظهار النتيجة للطالب فور التسليم', 'Show score immediately on submit')}</span>
-                        </label>
-                      </div>
-                    </div>
-                  )}
-                </div>
-
-                {/* Online Exam Questions Builder & Import from Question Bank */}
-                {examForm.isOnlineExam && (
-                  <div className="rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900/50 p-4 space-y-3 text-xs">
-                    <div className="flex flex-wrap items-center justify-between gap-2">
-                      <h4 className="font-black text-slate-900 dark:text-white flex items-center gap-1.5">
-                        <ListChecks className="h-4 w-4 text-brand-cyan" />
-                        <span>{t(`أسئلة الامتحان الأونلاين (${examForm.questions.length})`, `Online Exam Questions (${examForm.questions.length})`)}</span>
-                      </h4>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          const matchingBank = questionBank.filter(qb =>
-                            (qb.courseTitle || '').toLowerCase().includes(examForm.subject.toLowerCase()) ||
-                            (qb.topic || '').toLowerCase().includes(examForm.subject.toLowerCase())
-                          );
-                          const toImport = (matchingBank.length > 0 ? matchingBank : questionBank).filter(
-                            qb => !examForm.questions.some(exq => exq.questionText === qb.questionText)
-                          );
-                          if (toImport.length === 0) {
-                            triggerNotification(t('لا توجد أسئلة جديدة متاحة للاستيراد في هذه المادة', 'No additional bank questions available for this subject'), true);
-                            return;
-                          }
-                          const mapped: OnlineExamQuestion[] = toImport.slice(0, 10).map(qb => ({
-                            id: 'eq_' + qb.id + '_' + Date.now(),
-                            questionText: qb.questionText,
-                            type: qb.type,
-                            options: qb.options,
-                            correctAnswerIndex: qb.correctAnswerIndex,
-                            points: qb.points || 10,
-                            explanation: qb.explanation,
-                          }));
-                          setExamForm(prev => ({ ...prev, questions: [...prev.questions, ...mapped] }));
-                          triggerNotification(t(`تم استيراد ${mapped.length} سؤال من بنك الأسئلة`, `Imported ${mapped.length} questions from Question Bank`));
-                        }}
-                        className="rounded-lg bg-brand-cyan/15 border border-brand-cyan/30 text-brand-cyan hover:bg-brand-cyan hover:text-brand-dark px-3 py-1 text-[11px] font-bold transition-all cursor-pointer"
-                      >
-                        {t('استيراد من بنك الأسئلة للمادة', 'Import from Subject Question Bank')}
-                      </button>
-                    </div>
-
-                    {examForm.questions.length > 0 && (
-                      <div className="space-y-2 max-h-48 overflow-y-auto pr-1">
-                        {examForm.questions.map((eq, idx) => (
-                          <div key={eq.id || idx} className="flex items-start justify-between gap-2 rounded-lg bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 p-2.5">
-                            <div className="space-y-1 flex-1">
-                              <p className="font-bold text-slate-900 dark:text-white">
-                                <span className="text-brand-cyan font-mono mr-1">Q{idx + 1}:</span> {eq.questionText}
-                              </p>
-                              <p className="text-[10px] text-emerald-700 dark:text-emerald-400">
-                                {t('الإجابة الصحيحة:', 'Correct:')} {eq.options[eq.correctAnswerIndex]} • {eq.points || 10} {t('درجات', 'pts')}
-                              </p>
-                            </div>
-                            <button
-                              type="button"
-                              onClick={() => setExamForm(prev => ({ ...prev, questions: prev.questions.filter((_, i) => i !== idx) }))}
-                              className="p-1 text-red-600 dark:text-red-400 hover:text-red-300 cursor-pointer"
-                            >
-                              <Trash2 className="h-3.5 w-3.5" />
-                            </button>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-
-                    {/* Quick Add Question Inline */}
-                    <div className="rounded-lg bg-slate-50 dark:bg-slate-950/90 border border-slate-200 dark:border-slate-800 p-3 space-y-2.5">
-                      <p className="font-bold text-slate-700 dark:text-slate-300">{t('إضافة سؤال مباشر لهذا الامتحان:', 'Add question directly:')}</p>
-                      <input
-                        type="text"
-                        value={tempOnlineQ.questionText}
-                        onChange={e => setTempOnlineQ(prev => ({ ...prev, questionText: e.target.value }))}
-                        placeholder={t('نص السؤال...', 'Question text...')}
-                        className="w-full rounded-lg bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-2 text-xs text-slate-900 dark:text-white"
-                      />
-                      <div className="grid grid-cols-2 gap-2">
-                        <select
-                          value={tempOnlineQ.type}
-                          onChange={e => setTempOnlineQ(prev => ({ ...prev, type: e.target.value as any, correctAnswerIndex: 0 }))}
-                          className="rounded-lg bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-2 text-xs text-slate-900 dark:text-white"
-                        >
-                          <option value="multiple_choice">{t('اختيار من متعدد', 'Multiple Choice')}</option>
-                          <option value="true_false">{t('صح أم خطأ', 'True / False')}</option>
-                        </select>
-                        <input
-                          type="number"
-                          min={1}
-                          value={tempOnlineQ.points}
-                          onChange={e => setTempOnlineQ(prev => ({ ...prev, points: parseInt(e.target.value) || 10 }))}
-                          placeholder={t('الدرجة', 'Points')}
-                          className="rounded-lg bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-2 text-xs text-slate-900 dark:text-white font-mono"
-                        />
-                      </div>
-                      {tempOnlineQ.type === 'multiple_choice' ? (
-                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                          {tempOnlineQ.options.map((opt, oi) => (
-                            <div key={oi} className="flex items-center gap-1.5">
-                              <input
-                                type="radio"
-                                name="tempOnlineQCorrect"
-                                checked={tempOnlineQ.correctAnswerIndex === oi}
-                                onChange={() => setTempOnlineQ(prev => ({ ...prev, correctAnswerIndex: oi }))}
-                                className="accent-emerald-500 cursor-pointer"
-                              />
-                              <input
-                                type="text"
-                                value={opt}
-                                onChange={e => {
-                                  const next = [...tempOnlineQ.options];
-                                  next[oi] = e.target.value;
-                                  setTempOnlineQ(prev => ({ ...prev, options: next }));
-                                }}
-                                placeholder={`${t('اختيار', 'Option')} ${oi + 1}`}
-                                className="flex-1 rounded-lg bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-1.5 text-xs text-slate-900 dark:text-white"
-                              />
-                            </div>
-                          ))}
-                        </div>
-                      ) : (
-                        <div className="flex items-center gap-4">
-                          {[t('صح (True)', 'True'), t('خطأ (False)', 'False')].map((lbl, oi) => (
-                            <label key={oi} className="flex items-center gap-1.5 cursor-pointer text-slate-900 dark:text-white">
-                              <input
-                                type="radio"
-                                name="tempOnlineQTF"
-                                checked={tempOnlineQ.correctAnswerIndex === oi}
-                                onChange={() => setTempOnlineQ(prev => ({ ...prev, correctAnswerIndex: oi }))}
-                                className="accent-emerald-500 cursor-pointer"
-                              />
-                              <span>{lbl}</span>
-                            </label>
-                          ))}
-                        </div>
-                      )}
-                      <button
-                        type="button"
-                        onClick={() => {
-                          if (!tempOnlineQ.questionText.trim()) return;
-                          const opts = tempOnlineQ.type === 'true_false'
-                            ? [t('صح', 'True'), t('خطأ', 'False')]
-                            : tempOnlineQ.options.map(o => o.trim()).filter(Boolean);
-                          if (opts.length < 2) return;
-                          const nextQ: OnlineExamQuestion = {
-                            id: 'eq_' + Date.now(),
-                            questionText: tempOnlineQ.questionText.trim(),
-                            type: tempOnlineQ.type,
-                            options: opts,
-                            correctAnswerIndex: Math.min(tempOnlineQ.correctAnswerIndex, opts.length - 1),
-                            points: tempOnlineQ.points || 10,
-                            explanation: tempOnlineQ.explanation.trim(),
-                          };
-                          setExamForm(prev => ({ ...prev, questions: [...prev.questions, nextQ] }));
-                          setTempOnlineQ({
-                            questionText: '',
-                            type: 'multiple_choice',
-                            options: ['', '', '', ''],
-                            correctAnswerIndex: 0,
-                            points: 10,
-                            explanation: '',
-                          });
-                        }}
-                        className="w-full rounded-lg bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-brand-cyan py-2 text-xs font-bold cursor-pointer"
-                      >
-                        + {t('إضافة السؤال للقائمة', 'Add Question to Exam')}
-                      </button>
-                    </div>
-                  </div>
-                )}
-
-                <div>
-                  <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1 flex items-center gap-1.5 text-brand-cyan">
-                    <FileText className="h-4 w-4" />
-                    {examForm.isOnlineExam ? t('رابط ملف ورقة الأسئلة (اختياري PDF)', 'Questions PDF URL (Optional)') : t('رابط ملف ورقة الأسئلة (PDF)', 'Questions PDF URL')}
-                  </label>
-                  <input
-                    type="url"
-                    required={!examForm.isOnlineExam}
-                    value={examForm.questionsPdfUrl}
-                    onChange={e => setExamForm(prev => ({ ...prev, questionsPdfUrl: e.target.value }))}
-                    placeholder="https://.../exam-questions.pdf"
-                    className="w-full rounded-xl bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-2.5 text-xs text-slate-900 dark:text-white focus:outline-none focus:border-brand-cyan font-mono"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1 flex items-center gap-1.5 text-emerald-700 dark:text-emerald-400">
-                    <CheckCircle2 className="h-4 w-4" />
-                    {t('رابط ملف نموذج الإجابة النموذجي (اختياري PDF)', 'Model Answer PDF URL (Optional)')}
-                  </label>
-                  <input
-                    type="url"
-                    value={examForm.modelAnswerUrl}
-                    onChange={e => setExamForm(prev => ({ ...prev, modelAnswerUrl: e.target.value }))}
-                    placeholder="https://.../model-answer.pdf"
-                    className="w-full rounded-xl bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-2.5 text-xs text-slate-900 dark:text-white focus:outline-none focus:border-brand-cyan font-mono"
-                  />
-                </div>
-
-                <div className="flex justify-end gap-3 pt-3 border-t border-slate-200 dark:border-slate-800">
-                  <button
-                    type="button"
-                    onClick={() => setActiveContentModal(null)}
-                    className="rounded-xl bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 px-5 py-2.5 text-xs font-bold text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white cursor-pointer"
-                  >
-                    {t('إلغاء', 'Cancel')}
-                  </button>
-                  <button
-                    type="submit"
-                    disabled={actionLoading}
-                    className="rounded-xl bg-brand-cyan text-white dark:text-slate-950 hover:bg-brand-cyan-light px-6 py-2.5 text-xs font-black transition-all cursor-pointer shadow-lg shadow-cyan-950/20 disabled:opacity-50"
-                  >
-                    {actionLoading ? t('جاري الحفظ...', 'Saving...') : t('حفظ ونشر الامتحان', 'Save Exam')}
-                  </button>
-                </div>
-              </form>
-            )}
-
-            {/* 4. SHEET FORM MODAL */}
-            {activeContentModal === 'sheet' && (
-              <form onSubmit={handleSaveSheet} className="space-y-4">
-                <div className="border-b border-slate-200 dark:border-slate-800 pb-3">
-                  <h3 className="text-lg font-black text-slate-900 dark:text-white flex items-center gap-2">
-                    <FileCheck className="h-5 w-5 text-purple-400" />
-                    <span>{editingContentId ? t('تعديل الشيت', 'Edit Sheet') : t('إضافة شيت تدريبي جديد', 'Add New Sheet')}</span>
-                  </h3>
-                  <p className="text-xs text-slate-600 dark:text-slate-400 mt-1">{t('اختر ما إذا كان الشيت خاص بمحاضرة أو بسكشن عملي.', 'Specify whether sheet belongs to a lecture or section.')}</p>
-                </div>
-
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                  <div>
-                    <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">{t('نوع الشيت', 'Sheet Type')}</label>
-                    <select
-                      value={sheetForm.type}
-                      onChange={e => setSheetForm(prev => ({ ...prev, type: e.target.value as any }))}
-                      className="w-full rounded-xl bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-2.5 text-xs text-slate-900 dark:text-white focus:outline-none focus:border-brand-cyan cursor-pointer"
-                    >
-                      <option value="lecture_sheet">📚 {t('شيت محاضرة', 'Lecture Sheet')}</option>
-                      <option value="section_sheet">🧪 {t('شيت سكشن', 'Section Sheet')}</option>
-                    </select>
-                  </div>
-
-                  <div>
-                    <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">{t('المادة الدراسية', 'Subject')}</label>
-                    <select
-                      value={sheetForm.subject}
-                      onChange={e => setSheetForm(prev => ({ ...prev, subject: e.target.value }))}
-                      className="w-full rounded-xl bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-2.5 text-xs text-slate-900 dark:text-white focus:outline-none focus:border-brand-cyan cursor-pointer"
-                    >
-                      {['Physics', 'Python', 'IT Essentials', 'Mathematics', 'Cyber Security', 'English'].map(subj => (
-                        <option key={subj} value={subj}>{subj}</option>
-                      ))}
-                    </select>
-                  </div>
-
-                  <div>
-                    <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
-                      {sheetForm.type === 'lecture_sheet' ? t('رقم المحاضرة التابع لها', 'Lecture #') : t('رقم السكشن التابع له', 'Section #')}
-                    </label>
-                    <input
-                      type="number"
-                      min={1}
-                      value={sheetForm.type === 'lecture_sheet' ? sheetForm.lectureNumber : sheetForm.sectionNumber}
-                      onChange={e => {
-                        const val = parseInt(e.target.value) || 1;
-                        if (sheetForm.type === 'lecture_sheet') {
-                          setSheetForm(prev => ({ ...prev, lectureNumber: val }));
-                        } else {
-                          setSheetForm(prev => ({ ...prev, sectionNumber: val }));
-                        }
-                      }}
-                      className="w-full rounded-xl bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-2.5 text-xs text-slate-900 dark:text-white focus:outline-none focus:border-brand-cyan"
-                    />
-                  </div>
-                </div>
-
-                <div>
-                  <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">{t('عنوان الشيت', 'Sheet Title')}</label>
-                  <input
-                    type="text"
-                    required
-                    value={sheetForm.title}
-                    onChange={e => setSheetForm(prev => ({ ...prev, title: e.target.value }))}
-                    placeholder={t('مثال: شيت مسائل وتطبيقات الحركة الدائرية', 'Sheet title...')}
-                    className="w-full rounded-xl bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-2.5 text-xs text-slate-900 dark:text-white focus:outline-none focus:border-brand-cyan"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1 flex items-center gap-1.5 text-brand-cyan">
-                    <Download className="h-4 w-4" />
-                    {t('رابط ملف الشيت (PDF)', 'Sheet PDF Document URL')}
-                  </label>
-                  <input
-                    type="url"
-                    required
-                    value={sheetForm.fileUrl}
-                    onChange={e => setSheetForm(prev => ({ ...prev, fileUrl: e.target.value }))}
-                    placeholder="https://.../sheet-1.pdf"
-                    className="w-full rounded-xl bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-2.5 text-xs text-slate-900 dark:text-white focus:outline-none focus:border-brand-cyan font-mono"
-                  />
-                </div>
-
-                <div className="flex justify-end gap-3 pt-3 border-t border-slate-200 dark:border-slate-800">
-                  <button
-                    type="button"
-                    onClick={() => setActiveContentModal(null)}
-                    className="rounded-xl bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 px-5 py-2.5 text-xs font-bold text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white cursor-pointer"
-                  >
-                    {t('إلغاء', 'Cancel')}
-                  </button>
-                  <button
-                    type="submit"
-                    disabled={actionLoading}
-                    className="rounded-xl bg-brand-cyan text-white dark:text-slate-950 hover:bg-brand-cyan-light px-6 py-2.5 text-xs font-black transition-all cursor-pointer shadow-lg shadow-cyan-950/20 disabled:opacity-50"
-                  >
-                    {actionLoading ? t('جاري الحفظ...', 'Saving...') : t('حفظ ونشر الشيت', 'Save Sheet')}
-                  </button>
-                </div>
-              </form>
-            )}
 
             {/* 5. QUESTION BANK FORM MODAL */}
             {activeContentModal === 'question_bank' && (
@@ -7943,7 +6677,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
 
             {/* Modal Title */}
             <h3 className="text-lg sm:text-xl font-bold text-slate-900 dark:text-white mb-5 sm:mb-6 border-b border-slate-200 dark:border-slate-800 pb-3">
-              {modalType === 'add' ? t('إضافة عنصر جديد', 'Add New Record') : modalType === 'duplicate' ? t('تكرار الكورس', 'Duplicate Course Record') : t('تعديل البيانات', 'Modify Record')}
+              {modalType === 'add' ? t('إضافة عنصر جديد', 'Add New Record') : modalType === 'duplicate' ? t('تكرار المقرر الدراسي', 'Duplicate Subject Record') : t('تعديل البيانات', 'Modify Record')}
             </h3>
 
             {/* Form Routing */}
@@ -7976,7 +6710,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
                     <label className="block mb-1.5 font-semibold text-slate-900 dark:text-white">{t('الوصف بالعربية', 'Arabic Description')}</label>
                     <textarea
                       rows={3}
-                      placeholder="اكتب وصف الكورس بالتفصيل..."
+                      placeholder="اكتب وصف المقرر الدراسي بالتفصيل..."
                       value={courseForm.descriptionAr}
                       onChange={e => setCourseForm({ ...courseForm, descriptionAr: e.target.value })}
                       className="w-full rounded-xl bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-3 text-slate-900 dark:text-white focus:outline-none focus:border-brand-cyan"
@@ -7994,10 +6728,10 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
                   </div>
 
                   <div>
-                    <label className="block mb-1.5 font-semibold text-slate-900 dark:text-white">{t('اسم المعلم المسؤول', 'Teacher Name')}</label>
+                    <label className="block mb-1.5 font-semibold text-slate-900 dark:text-white">{t('المشرف الأكاديمي المسؤول', 'Academic Instructor')}</label>
                     <input
                       type="text"
-                      placeholder="م. محمد عبد التواب"
+                      placeholder="Eng/Mohamed abdal tawab"
                       value={courseForm.teacherName}
                       onChange={e => setCourseForm({ ...courseForm, teacherName: e.target.value })}
                       className="w-full rounded-xl bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-3 text-slate-900 dark:text-white focus:outline-none focus:border-brand-cyan"
@@ -8171,7 +6905,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
                       onChange={(url) => setCourseForm(prev => ({ ...prev, videoUrl: url }))}
                       courseId={selectedId}
                       onPreviewUrl={(url) => setAdminVideoPreviewUrl(url)}
-                      label={t('فيديو مقدمة الكورس', 'Course Intro Video')}
+                      label={t('فيديو تعريفي للمقرر', 'Subject Intro Video')}
                     />
                   </div>
 
@@ -8187,12 +6921,12 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
                   </div>
                 </div>
 
-                {/* قسم محتوى الكورس (الوحدات والدروس) */}
+                {/* قسم محتوى المقرر (الوحدات والموضوعات) */}
                 <div className="border-t border-slate-200 dark:border-slate-800 pt-5 space-y-4">
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-2">
                       <Layers className="h-5 w-5 text-brand-cyan" />
-                      <h4 className="font-bold text-slate-900 dark:text-white text-base">{t('محتوى الكورس (الوحدات والدروس)', 'Course Content (Units & Lessons)')}</h4>
+                      <h4 className="font-bold text-slate-900 dark:text-white text-base">{t('محتوى المقرر (الوحدات والموضوعات)', 'Subject Syllabus (Units & Topics)')}</h4>
                     </div>
                     <button
                       type="button"
@@ -8368,7 +7102,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
                                       <option value="video">{t('فيديو', 'Video')}</option>
                                       <option value="pdf">{t('ملف PDF', 'PDF File')}</option>
                                       <option value="quiz">{t('اختبار', 'Quiz')}</option>
-                                      <option value="assignment">{t('واجب', 'Assignment')}</option>
+                                      <option value="assignment">{t('تكليف دراسي', 'Assignment')}</option>
                                     </select>
                                   </div>
                                                                     <div className="sm:col-span-2">
@@ -8560,7 +7294,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
                       onChange={e => setCourseForm({ ...courseForm, featured: e.target.checked })}
                       className="h-4 w-4 rounded bg-slate-50 dark:bg-slate-900 border-slate-200 dark:border-slate-800 text-brand-cyan"
                     />
-                    <span>{t('كورس مميز (Hero Section)', 'Featured Course')}</span>
+                    <span>{t('مقرر مميز (Hero Section)', 'Featured Subject')}</span>
                   </label>
 
                   <label className="flex items-center gap-2 cursor-pointer font-bold text-slate-900 dark:text-white">
@@ -8570,7 +7304,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
                       onChange={e => setCourseForm({ ...courseForm, popular: e.target.checked })}
                       className="h-4 w-4 rounded bg-slate-50 dark:bg-slate-900 border-slate-200 dark:border-slate-800 text-brand-cyan"
                     />
-                    <span>{t('كورس شائع (بقعة الضوء)', 'Popular Course')}</span>
+                    <span>{t('مقرر أساسي (بقعة الضوء)', 'Popular Subject')}</span>
                   </label>
 
                   <label className="flex items-center gap-2 cursor-pointer font-bold text-slate-900 dark:text-white">
@@ -8580,7 +7314,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
                       onChange={e => setCourseForm({ ...courseForm, published: e.target.checked })}
                       className="h-4 w-4 rounded bg-slate-50 dark:bg-slate-900 border-slate-200 dark:border-slate-800 text-brand-cyan"
                     />
-                    <span>{t('نشر فوراً للجمهور والموقع المباشر', 'Publish Course Immediately')}</span>
+                    <span>{t('نشر فوراً لطلاب القسم', 'Publish Subject Immediately')}</span>
                   </label>
 
                 </div>
@@ -8858,12 +7592,12 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
               </form>
             )}
 
-            {/* Teacher Form modal */}
+            {/* Supervisor / Faculty Form modal */}
             {activeTab === 'teachers' && (
               <form onSubmit={handleTeacherSubmit} className="space-y-5 text-xs text-slate-700 dark:text-slate-300">
                 <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                   <div>
-                    <label className="block mb-1.5 font-semibold text-slate-900 dark:text-white">{t('اسم المعلم بالعربية', 'Teacher Name (Arabic)')}</label>
+                    <label className="block mb-1.5 font-semibold text-slate-900 dark:text-white">{t('اسم المشرف الأكاديمي بالعربية', 'Academic Supervisor Name (Arabic)')}</label>
                     <input
                       type="text"
                       required
@@ -8873,7 +7607,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
                     />
                   </div>
                   <div>
-                    <label className="block mb-1.5 font-semibold text-slate-900 dark:text-white">{t('اسم المعلم بالإنجليزية', 'Teacher Name (English)')}</label>
+                    <label className="block mb-1.5 font-semibold text-slate-900 dark:text-white">{t('اسم المشرف الأكاديمي بالإنجليزية', 'Academic Supervisor Name (English)')}</label>
                     <input
                       type="text"
                       required
@@ -8883,7 +7617,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
                     />
                   </div>
                   <div>
-                    <label className="block mb-1.5 font-semibold text-slate-900 dark:text-white">{t('البريد الإلكتروني للاتصال', 'Teacher Email')}</label>
+                    <label className="block mb-1.5 font-semibold text-slate-900 dark:text-white">{t('البريد الإلكتروني للاتصال', 'Academic Email')}</label>
                     <input
                       type="email"
                       required
@@ -8893,7 +7627,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
                     />
                   </div>
                   <div>
-                    <label className="block mb-1.5 font-semibold text-slate-900 dark:text-white">{t('رقم الهاتف للتواصل', 'Teacher Phone')}</label>
+                    <label className="block mb-1.5 font-semibold text-slate-900 dark:text-white">{t('رقم الهاتف للتواصل', 'Contact Phone')}</label>
                     <input
                       type="text"
                       value={teacherForm.phone || ''}
@@ -8902,7 +7636,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
                     />
                   </div>
                   <div className="sm:col-span-2">
-                    <label className="block mb-1.5 font-semibold text-slate-900 dark:text-white">{t('السيرة الذاتية والخبرات بالعربية', 'Teacher Bio (Arabic)')}</label>
+                    <label className="block mb-1.5 font-semibold text-slate-900 dark:text-white">{t('السيرة الذاتية والخبرات بالعربية', 'Academic Bio (Arabic)')}</label>
                     <textarea
                       rows={3}
                       value={teacherForm.bioAr || ''}
@@ -8911,7 +7645,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
                     />
                   </div>
                   <div className="sm:col-span-2">
-                    <label className="block mb-1.5 font-semibold text-slate-900 dark:text-white">{t('السيرة الذاتية والخبرات بالإنجليزية', 'Teacher Bio (English)')}</label>
+                    <label className="block mb-1.5 font-semibold text-slate-900 dark:text-white">{t('السيرة الذاتية والخبرات بالإنجليزية', 'Academic Bio (English)')}</label>
                     <textarea
                       rows={3}
                       value={teacherForm.bioEn || ''}
@@ -8921,7 +7655,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
                   </div>
                   <div className="sm:col-span-2">
                     <FileUploadField
-                      label={t('الصورة الشخصية للمعلم', 'Teacher Profile Image')}
+                      label={t('الصورة الشخصية للمشرف الأكاديمي', 'Supervisor Profile Image')}
                       value={teacherForm.imageUrl}
                       onChange={url => setTeacherForm(prev => ({ ...prev, imageUrl: url }))}
                       accept="image/*"
@@ -8929,7 +7663,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
                     />
                   </div>
                   <div>
-                    <label className="block mb-1.5 font-semibold text-slate-900 dark:text-white">{t('التقييم المستحق (نجوم 1-5)', 'Teacher Rating')}</label>
+                    <label className="block mb-1.5 font-semibold text-slate-900 dark:text-white">{t('التقييم المستحق (نجوم 1-5)', 'Rating')}</label>
                     <input
                       type="number"
                       min={1}
@@ -8945,7 +7679,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
 
                 <div className="flex justify-end gap-3 pt-5 border-t border-slate-200 dark:border-slate-900">
                   <button type="button" onClick={() => setIsModalOpen(false)} className="rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900 px-5 py-3 font-bold text-slate-700 dark:text-slate-300">{t('إلغاء', 'Cancel')}</button>
-                  <button type="submit" disabled={actionLoading} className="rounded-xl bg-brand-cyan text-white dark:text-slate-950 hover:bg-brand-cyan-light px-6 py-3 font-bold">{t('حفظ بيانات المعلم', 'Save Teacher')}</button>
+                  <button type="submit" disabled={actionLoading} className="rounded-xl bg-brand-cyan text-white dark:text-slate-950 hover:bg-brand-cyan-light px-6 py-3 font-bold">{t('حفظ بيانات المشرف الأكاديمي', 'Save Supervisor')}</button>
                 </div>
               </form>
             )}
@@ -9064,7 +7798,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
                   </div>
 
                   <div>
-                    <label className="block mb-1.5 font-semibold text-slate-900 dark:text-white">{t('الكورس المطلوب الاشتراك به', 'Subscribing Course')}</label>
+                    <label className="block mb-1.5 font-semibold text-slate-900 dark:text-white">{t('المقرر الدراسي المطلوب تفعيله', 'Target Subject')}</label>
                     <select
                       value={orderForm.courseId}
                       onChange={e => {
@@ -9112,14 +7846,14 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
               <form onSubmit={handleQuizSubmit} className="space-y-5 text-xs text-slate-700 dark:text-slate-300">
                 <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                   <div>
-                    <label className="block mb-1.5 font-semibold text-slate-900 dark:text-white">{t('اختيار الكورس المرتبط بالامتحان', 'Associated Course')}</label>
+                    <label className="block mb-1.5 font-semibold text-slate-900 dark:text-white">{t('اختيار المقرر الدراسي المرتبط بالاختبار', 'Associated Subject')}</label>
                     <select
                       value={quizForm.courseId}
                       onChange={e => setQuizForm({ ...quizForm, courseId: e.target.value })}
                       className="w-full rounded-xl bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-3 text-slate-900 dark:text-white focus:outline-none"
                     >
-                      <option value="">{t('عام لجميع طلاب المرحلة (بدون كورس محدد)', 'General for All Grade Students (No Specific Course)')}</option>
-                      <option value="all">{t('جميع الكورسات', 'All Courses')}</option>
+                      <option value="">{t('عام لجميع طلاب الفرقة (بدون مقرر محدد)', 'General for All Year Students')}</option>
+                      <option value="all">{t('جميع المقررات الدراسية', 'All Subjects')}</option>
                       {courses.map(c => (
                         <option key={c.id} value={c.id}>{t(c.titleAr, c.titleEn)}</option>
                       ))}
@@ -9391,7 +8125,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
               <form onSubmit={handleAssignmentTaskSubmit} className="space-y-5 text-xs text-slate-700 dark:text-slate-300">
                 <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                   <div>
-                    <label className="block mb-1.5 font-semibold text-slate-900 dark:text-white">{t('إتاحة الواجب', 'Assignment Availability')}</label>
+                    <label className="block mb-1.5 font-semibold text-slate-900 dark:text-white">{t('إتاحة التكليف', 'Assignment Availability')}</label>
                     <select
                       value={assignmentTaskForm.visibility || 'free'}
                       onChange={e => {
@@ -9405,8 +8139,8 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
                       }}
                       className="w-full rounded-xl bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-3 text-slate-900 dark:text-white focus:outline-none font-bold"
                     >
-                      <option value="free">🌍 {t('مجاني', 'Free')}</option>
-                      <option value="course">🔒 {t('للمشتركين في الكورس', 'Course Subscribers Only')}</option>
+                      <option value="free">🌍 {t('مجاني للجميع', 'Open to All Students')}</option>
+                      <option value="course">🔒 {t('لملتحقي المقرر الدراسي', 'Enrolled Subject Students Only')}</option>
                     </select>
                   </div>
 
@@ -9426,7 +8160,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
                   </div>
 
                   <div>
-                    <label className="block mb-1.5 font-semibold text-slate-900 dark:text-white">{t('عنوان الواجب بالعربية', 'Assignment Title (Arabic)')}</label>
+                    <label className="block mb-1.5 font-semibold text-slate-900 dark:text-white">{t('عنوان التكليف بالعربية', 'Assignment Title (Arabic)')}</label>
                     <input
                       type="text"
                       required
@@ -9437,7 +8171,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
                   </div>
 
                   <div>
-                    <label className="block mb-1.5 font-semibold text-slate-900 dark:text-white">{t('عنوان الواجب بالإنجليزية', 'Assignment Title (English)')}</label>
+                    <label className="block mb-1.5 font-semibold text-slate-900 dark:text-white">{t('عنوان التكليف بالإنجليزية', 'Assignment Title (English)')}</label>
                     <input
                       type="text"
                       required
@@ -9454,7 +8188,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
                       value={assignmentTaskForm.descriptionAr || ''}
                       onChange={e => setAssignmentTaskForm({ ...assignmentTaskForm, descriptionAr: e.target.value })}
                       className="w-full rounded-xl bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-3 text-slate-900 dark:text-white focus:outline-none"
-                      placeholder={t('اكتب الأسئلة المطلوبة أو تعليمات الحل هنا...', 'Write instructions or homework questions here...')}
+                      placeholder={t('اكتب الأسئلة المطلوبة أو تعليمات الحل هنا...', 'Write instructions or assignment questions here...')}
                     />
                   </div>
 
@@ -9465,7 +8199,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
                       value={assignmentTaskForm.pdfUrl || ''}
                       onChange={e => setAssignmentTaskForm({ ...assignmentTaskForm, pdfUrl: e.target.value })}
                       className="w-full rounded-xl bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-3 text-slate-900 dark:text-white font-mono"
-                      placeholder="https://example.com/homework.pdf"
+                      placeholder="https://example.com/assignment.pdf"
                     />
                   </div>
 
@@ -9481,7 +8215,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
                   </div>
 
                   <div>
-                    <label className="block mb-1.5 font-semibold text-slate-900 dark:text-white">{t('الدرجة النهائية القصوى للواجب', 'Total Grade / Score')}</label>
+                    <label className="block mb-1.5 font-semibold text-slate-900 dark:text-white">{t('الدرجة النهائية القصوى للتكليف', 'Total Grade / Score')}</label>
                     <input
                       type="number"
                       required
@@ -9544,8 +8278,8 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
                       onChange={e => setAdminForm({ ...adminForm, role: e.target.value as 'super' | 'editor' })}
                       className="w-full rounded-xl bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-3 text-slate-900 dark:text-white"
                     >
-                      <option value="editor">{t('محرر محتوى (محدود)', 'Content Editor')}</option>
-                      <option value="super">{t('مدير عام الأكاديمية (كامل)', 'Super Admin (Full)')}</option>
+                      <option value="editor">{t('محرر أكاديمي (محدود)', 'Academic Editor')}</option>
+                      <option value="super">{t('مدير المنصة الجامعية (صلاحية كاملة)', 'Platform Administrator (Full)')}</option>
                     </select>
                   </div>
                 </div>
@@ -9650,10 +8384,10 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
                       <div className="w-full h-full flex flex-col items-center justify-center text-slate-500 dark:text-slate-400 p-6 text-center">
                         <Video className="h-12 w-12 text-slate-600 mb-2" />
                         <p className="text-xs font-bold text-slate-600 dark:text-slate-400">
-                          {t('لم يتم إرفاق رابط فيديو لهذا الكورس أو دروسه بعد.', 'No video URL attached to this course yet.')}
+                          {t('لم يتم إرفاق رابط فيديو لهذا المقرر أو محاضراته بعد.', 'No video URL attached to this subject yet.')}
                         </p>
                         <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-1">
-                          {t('يمكنك تعديل الكورس وإضافة رابط YouTube أو فيديو من لوحة التحكم.', 'Edit the course to add a YouTube URL or upload a video file.')}
+                          {t('يمكنك تعديل المقرر وإضافة رابط YouTube أو فيديو من لوحة التحكم.', 'Edit the subject to add a YouTube URL or upload a video file.')}
                         </p>
                       </div>
                     )}
@@ -9669,7 +8403,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
                         ⏱️ {normCourse.duration || '20:00'}
                       </span>
                       <span className="text-slate-600 dark:text-slate-400 font-mono">
-                        📚 {allLessons.length} {t('حصص ودروس', 'Lessons')}
+                        📚 {allLessons.length} {t('محاضرات وسكاشن', 'Lectures & Sections')}
                       </span>
                       <span className="text-emerald-700 dark:text-emerald-400 font-bold bg-emerald-500/10 px-2.5 py-0.5 rounded text-[11px]">
                         {t('مجاني بالكامل 100% - قسم IT', '100% Free - IT Dept')}
@@ -9739,7 +8473,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
                       className="flex-1 rounded-xl bg-blue-600/20 hover:bg-blue-600/30 text-blue-700 dark:text-blue-300 border border-blue-500/30 py-2.5 text-xs font-bold transition-all flex items-center justify-center gap-1.5 cursor-pointer"
                     >
                       <Edit className="h-4 w-4" />
-                      <span>{t('تعديل الكورس', 'Edit Course')}</span>
+                      <span>{t('تعديل المقرر الدراسي', 'Edit Subject')}</span>
                     </button>
                     <button
                       type="button"

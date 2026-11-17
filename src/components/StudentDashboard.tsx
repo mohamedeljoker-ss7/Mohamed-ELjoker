@@ -3,16 +3,20 @@ import {
   Course, Lesson, Quiz, UserAuth, Assignment, AssignmentSubmission, Certificate, ChatMessage, LessonComment, Notification, Category, Order,
   LectureItem, SectionItem, ExamItem, SheetItem, QuestionBankItem, ScheduleItem, StudentInquiry, ExamSubmission
 } from '../types';
-import { dbService, authService, firestoreDb, firebaseAuth, waitForFirebaseAuth } from '../firebase';
+import { dbService, authService, firestoreDb, firebaseAuth, waitForFirebaseAuth, isAdminEmail } from '../firebase';
 import { doc, getDoc, setDoc, onSnapshot } from 'firebase/firestore';
 import { useLanguage } from './LanguageContext';
 import { verifyCourseAccess, formatVideoEmbedUrl, formatPdfEmbedUrl, normalizeCourseLessons } from '../utils/authAccess';
 import { triggerFileDownload, getFileFromIndexedDB } from '../utils/videoStorage';
 import { getFileFromFirestoreChunks } from '../utils/firestoreMediaStorage';
-import { doesCourseMatchStudent, doesCourseMatchStudentGrade, ACADEMIC_GRADES, ACADEMIC_SUBJECTS, getGradeName, getCourseDisplayTitle, normalizeGradeCode } from '../utils/gradeMatching';
+import { doesCourseMatchStudent, doesCourseMatchStudentGrade, ACADEMIC_GRADES, ACADEMIC_SEMESTERS, ACADEMIC_SUBJECTS, getGradeName, getSemesterName, getCourseDisplayTitle, normalizeGradeCode, normalizeSemesterCode } from '../utils/gradeMatching';
 import { SubscriptionRequiredView } from './SubscriptionRequiredView';
 import { CustomVideoPlayer } from './CustomVideoPlayer';
 import { getCourseFallbackImage } from '../utils/platformAssets';
+import { StudentLecturesView } from './lms/StudentLecturesView';
+import { StudentSectionsView } from './lms/StudentSectionsView';
+import { StudentSheetsView } from './lms/StudentSheetsView';
+import { StudentExamsView } from './lms/StudentExamsView';
 import { 
   BookOpen, Video, Award, Send, User, ChevronRight, Download, Upload, CheckCircle2,
   Clock, Sparkles, MessageSquare, Bell, LogOut, Check, X, ShieldAlert, FileText, ChevronLeft,
@@ -161,19 +165,8 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({ onLogout, on
   const [inquiries, setInquiries] = useState<StudentInquiry[]>([]);
   const [examSubmissions, setExamSubmissions] = useState<ExamSubmission[]>([]);
 
-  const [courseFilter, setCourseFilter] = useState<string>('all');
-  const [watchStatusFilter, setWatchStatusFilter] = useState<'all' | 'watched' | 'unwatched'>('all');
-  const [sheetsTypeFilter, setSheetsTypeFilter] = useState<'all' | 'lecture_sheet' | 'section_sheet'>('all');
-  const [contentSearch, setContentSearch] = useState<string>('');
   const [activeVideoModal, setActiveVideoModal] = useState<{ url: string; title: string } | null>(null);
   const [activePdfModal, setActivePdfModal] = useState<{ url: string; title: string } | null>(null);
-
-  // Interactive Online Exam Runner (ExamItem)
-  const [activeOnlineExam, setActiveOnlineExam] = useState<ExamItem | null>(null);
-  const [onlineExamAnswers, setOnlineExamAnswers] = useState<Record<string, number>>({});
-  const [onlineExamTimeLeft, setOnlineExamTimeLeft] = useState<number>(0);
-  const [onlineExamSubmitted, setOnlineExamSubmitted] = useState<ExamSubmission | null>(null);
-  const [isSubmittingOnlineExam, setIsSubmittingOnlineExam] = useState(false);
 
   // Question Bank UI states
   const [qbSubjectFilter, setQbSubjectFilter] = useState<string>('all');
@@ -256,6 +249,22 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({ onLogout, on
   const [activeLesson, setActiveLesson] = useState<Lesson | null>(null);
   const [activeQuiz, setActiveQuiz] = useState<Quiz | null>(null);
   const allPublishedCoursesRef = useRef<Course[]>([]);
+  const categoriesRef = useRef<Category[]>([]);
+  const myOrdersRef = useRef<Order[]>([]);
+  const selectedCourseSyncSigRef = useRef<string>('');
+  const activeLessonIdRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    categoriesRef.current = categories;
+  }, [categories]);
+
+  useEffect(() => {
+    myOrdersRef.current = myOrders;
+  }, [myOrders]);
+
+  useEffect(() => {
+    activeLessonIdRef.current = activeLesson?.id || null;
+  }, [activeLesson?.id]);
 
   // Loading / Messages
   const [loading, setLoading] = useState(true);
@@ -264,7 +273,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({ onLogout, on
   const [actionLoading, setActionLoading] = useState(false);
 
   // Forms
-  const [profileForm, setProfileForm] = useState({ name: '', phone: '', bio: '', grade: 'year1' });
+  const [profileForm, setProfileForm] = useState({ name: '', phone: '', bio: '', grade: 'year1', semester: 'term1' });
   const [newCommentText, setNewCommentText] = useState('');
   const [homeworkText, setHomeworkText] = useState('');
   const [homeworkFile, setHomeworkFile] = useState<File | null>(null);
@@ -319,13 +328,31 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({ onLogout, on
         return;
       }
       setCurrentUser(user);
-      setProfileForm({ name: user.name, phone: user.phone, bio: user.bio || '', grade: normalizeGradeCode(user.grade) || 'year1' });
+      setProfileForm({ name: user.name, phone: user.phone, bio: user.bio || '', grade: normalizeGradeCode(user.grade) || 'year1', semester: normalizeSemesterCode(user.semester) || 'term1' });
 
       await waitForFirebaseAuth();
       const hasFbUser = !dbService.isRealFirebase() || Boolean(firebaseAuth?.currentUser);
       const effectiveUid = firebaseAuth?.currentUser?.uid || user.id;
-      const isStaff = user.role === 'admin' || user.role === 'teacher';
-      const isApprovedUser = isStaff || (user.status === 'active' && user.isApproved !== false);
+
+      // Refresh user from Firestore directly first so approval status & purchasedCourseIds are current
+      let latestUser = { ...user };
+      if (hasFbUser && (firebaseAuth?.currentUser?.uid || user.id || (user as any).uid)) {
+        try {
+          const targetDocId = firebaseAuth?.currentUser?.uid || user.id || (user as any).uid;
+          const uRef = doc(firestoreDb, 'users', targetDocId);
+          const uSnap = await getDoc(uRef);
+          if (uSnap.exists()) {
+            const fbData = uSnap.data() as UserAuth;
+            latestUser = { ...latestUser, ...fbData };
+            localStorage.setItem('academy_active_user', JSON.stringify(latestUser));
+          }
+        } catch (e) {
+          console.warn("Notice refreshing user from Firestore:", e);
+        }
+      }
+
+      const isStaff = latestUser.role === 'admin' || latestUser.role === 'teacher' || isAdminEmail(firebaseAuth?.currentUser?.email || latestUser.email || '');
+      const isApprovedUser = isStaff || (latestUser.status === 'active' && latestUser.isApproved === true);
       const scopedStudentOrderArg = isStaff ? undefined : effectiveUid;
 
       // Load all published courses, categories, and (when signed in) student-scoped/approved resources
@@ -341,21 +368,6 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({ onLogout, on
 
       setCategories(allCategories);
       setMyOrders(allOrders);
-
-      // Refresh user from Firestore directly to ensure purchasedCourseIds is up to date
-      let latestUser = { ...user };
-      try {
-        if (user.id || (user as any).uid) {
-          const uRef = doc(firestoreDb, 'users', user.id || (user as any).uid);
-          const uSnap = await getDoc(uRef);
-          if (uSnap.exists()) {
-            const fbData = uSnap.data() as UserAuth;
-            latestUser = { ...latestUser, ...fbData };
-          }
-        }
-      } catch (e) {
-        console.error("Error refreshing user from Firestore:", e);
-      }
 
       // Only published courses for students
       const publishedCourses = allCoursesRaw.filter(c => c.published !== false);
@@ -374,7 +386,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({ onLogout, on
       const mergedPurchased = enrolled.map(c => c.id);
       latestUser.purchasedCourseIds = mergedPurchased;
       setCurrentUser(latestUser);
-      setProfileForm({ name: latestUser.name || '', phone: latestUser.phone || '', bio: latestUser.bio || '', grade: normalizeGradeCode(latestUser.grade) || 'year1' });
+      setProfileForm({ name: latestUser.name || '', phone: latestUser.phone || '', bio: latestUser.bio || '', grade: normalizeGradeCode(latestUser.grade) || 'year1', semester: normalizeSemesterCode(latestUser.semester) || 'term1' });
       localStorage.setItem('academy_active_user', JSON.stringify(latestUser));
 
       setCourses(finalCourses);
@@ -397,7 +409,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({ onLogout, on
   // Set up real-time listeners for lectures, sections, exams, sheets, question bank, schedule (only for approved students/staff)
   useEffect(() => {
     if (!currentUser) return;
-    const isApproved = currentUser.role === 'admin' || currentUser.role === 'teacher' || (currentUser.status === 'active' && currentUser.isApproved !== false);
+    const isApproved = currentUser.role === 'admin' || currentUser.role === 'teacher' || isAdminEmail(currentUser.email || '') || (currentUser.status === 'active' && currentUser.isApproved === true);
     if (!isApproved) return;
 
     let cancelled = false;
@@ -451,20 +463,47 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({ onLogout, on
 
   // Set up real-time courses and orders listener for automatic updates when admin approves/publishes
   useEffect(() => {
-    if (!currentUser) return;
+    if (!currentUser?.id) return;
     let cancelled = false;
     let unsubCourses: (() => void) | undefined;
     let unsubOrders: (() => void) | undefined;
 
+    const stableUserUpdate = (nextUser: UserAuth) => {
+      setCurrentUser(prev => {
+        if (
+          prev &&
+          prev.id === nextUser.id &&
+          prev.name === nextUser.name &&
+          prev.email === nextUser.email &&
+          prev.phone === nextUser.phone &&
+          prev.grade === nextUser.grade &&
+          prev.semester === nextUser.semester &&
+          prev.department === nextUser.department &&
+          prev.status === nextUser.status &&
+          prev.isApproved === nextUser.isApproved &&
+          prev.role === nextUser.role &&
+          prev.forceLogoutVersion === nextUser.forceLogoutVersion &&
+          JSON.stringify(prev.purchasedCourseIds || []) === JSON.stringify(nextUser.purchasedCourseIds || [])
+        ) {
+          return prev;
+        }
+        try {
+          localStorage.setItem('academy_active_user', JSON.stringify(nextUser));
+        } catch {}
+        return nextUser;
+      });
+    };
+
     unsubCourses = dbService.listenToCourses((allCoursesRaw) => {
+      if (cancelled) return;
       const publishedCourses = allCoursesRaw.filter(c => c.published !== false);
       allPublishedCoursesRef.current = publishedCourses;
       const gradeCourses = publishedCourses.filter(c => 
-        doesCourseMatchStudent(c, currentUser.grade, currentUser.department, categories)
+        doesCourseMatchStudent(c, currentUser.grade, currentUser.department, categoriesRef.current)
       );
       const finalCourses = gradeCourses.length > 0 ? gradeCourses : publishedCourses;
       setCourses(finalCourses);
-      const enrolled = publishedCourses.filter(c => verifyCourseAccess(currentUser, c, myOrders).allowed);
+      const enrolled = publishedCourses.filter(c => verifyCourseAccess(currentUser, c, myOrdersRef.current).allowed);
       setMyCourses(enrolled);
     });
 
@@ -476,87 +515,85 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({ onLogout, on
       unsubOrders = dbService.listenToOrders((allOrders) => {
         if (cancelled) return;
         setMyOrders(allOrders);
-        const coursesToFilter = allPublishedCoursesRef.current.length > 0 ? allPublishedCoursesRef.current : courses;
+        myOrdersRef.current = allOrders;
+        const coursesToFilter = allPublishedCoursesRef.current;
         const enrolled = coursesToFilter.filter(c => verifyCourseAccess(currentUser, c, allOrders).allowed);
         setMyCourses(enrolled);
-        
         const updatedPurchased = enrolled.map(c => c.id);
-        const userWithUpdatedCourses = { ...currentUser, purchasedCourseIds: updatedPurchased };
-        setCurrentUser(userWithUpdatedCourses);
-        localStorage.setItem('academy_active_user', JSON.stringify(userWithUpdatedCourses));
+        stableUserUpdate({ ...currentUser, purchasedCourseIds: updatedPurchased });
       }, scopedOrderUid);
     })();
 
-      let unsubUser: (() => void) | undefined;
-      if (firebaseAuth?.currentUser || !dbService.isRealFirebase()) {
-        const targetUid = firebaseAuth?.currentUser?.uid || currentUser.id || (currentUser as any).uid;
-        if (targetUid) {
-          try {
-            const uRef = doc(firestoreDb, 'users', targetUid);
-            unsubUser = onSnapshot(uRef, (snap) => {
-              if (snap.exists()) {
-                const fbData = snap.data() as UserAuth;
-                const savedLocal = localStorage.getItem('academy_active_user');
-                let localTime = Date.now();
-                if (savedLocal) {
-                  try { localTime = JSON.parse(savedLocal).lastLoginTimestamp || Date.now(); } catch {}
-                }
-                const updatedUser = { ...currentUser, ...fbData };
-                const loginTime = updatedUser.lastLoginTimestamp || localTime;
-                updatedUser.lastLoginTimestamp = loginTime;
-
-                const globalVerStr = localStorage.getItem('academy_global_force_logout_ver');
-                const globalVer = globalVerStr ? Number(globalVerStr) : 0;
-                const userVer = fbData.forceLogoutVersion ? Number(fbData.forceLogoutVersion) : 0;
-
-                if ((globalVer > 0 && loginTime < globalVer) || (userVer > 0 && loginTime < userVer)) {
-                  authService.logout();
-                  onLogout();
-                  alert('تم إنهاء جميع جلسات الدخول وتسجيل الخروج من المنصة بواسطة إدارة المنصة وقسم IT.');
-                  return;
-                }
-                const coursesToFilter = allPublishedCoursesRef.current.length > 0 ? allPublishedCoursesRef.current : courses;
-                const enrolled = coursesToFilter.filter(c => verifyCourseAccess(updatedUser, c, myOrders).allowed);
-                const updatedPurchased = enrolled.map(c => c.id);
-                const finalUser = { ...updatedUser, purchasedCourseIds: updatedPurchased };
-                setCurrentUser(finalUser);
-                localStorage.setItem('academy_active_user', JSON.stringify(finalUser));
-                setMyCourses(enrolled);
+    let unsubUser: (() => void) | undefined;
+    if (firebaseAuth?.currentUser || !dbService.isRealFirebase()) {
+      const targetUid = firebaseAuth?.currentUser?.uid || currentUser.id || (currentUser as any).uid;
+      if (targetUid) {
+        try {
+          const uRef = doc(firestoreDb, 'users', targetUid);
+          unsubUser = onSnapshot(uRef, (snap) => {
+            if (cancelled) return;
+            if (snap.exists()) {
+              const fbData = snap.data() as UserAuth;
+              const savedLocal = localStorage.getItem('academy_active_user');
+              let localTime = Date.now();
+              if (savedLocal) {
+                try { localTime = JSON.parse(savedLocal).lastLoginTimestamp || Date.now(); } catch {}
               }
-            });
-          } catch (err) {
-            console.error("User doc listener err:", err);
-          }
+              const updatedUser = { ...currentUser, ...fbData };
+              const loginTime = updatedUser.lastLoginTimestamp || localTime;
+              updatedUser.lastLoginTimestamp = loginTime;
+
+              const globalVerStr = localStorage.getItem('academy_global_force_logout_ver');
+              const globalVer = globalVerStr ? Number(globalVerStr) : 0;
+              const userVer = fbData.forceLogoutVersion ? Number(fbData.forceLogoutVersion) : 0;
+
+              if ((globalVer > 0 && loginTime < globalVer) || (userVer > 0 && loginTime < userVer)) {
+                authService.logout();
+                onLogout();
+                alert('تم إنهاء جميع جلسات الدخول وتسجيل الخروج من المنصة بواسطة إدارة المنصة وقسم IT.');
+                return;
+              }
+              const coursesToFilter = allPublishedCoursesRef.current;
+              const enrolled = coursesToFilter.filter(c => verifyCourseAccess(updatedUser, c, myOrdersRef.current).allowed);
+              const updatedPurchased = enrolled.map(c => c.id);
+              const finalUser = { ...updatedUser, purchasedCourseIds: updatedPurchased };
+              stableUserUpdate(finalUser);
+              setMyCourses(enrolled);
+            }
+          });
+        } catch (err) {
+          console.error("User doc listener err:", err);
         }
       }
+    }
 
-      const isStaff = currentUser.role === 'admin' || currentUser.role === 'teacher';
-      const isApprovedUser = isStaff || (currentUser.status === 'active' && currentUser.isApproved !== false);
-      const scopedStudentId = isStaff ? undefined : (firebaseAuth?.currentUser?.uid || currentUser.id);
+    const isStaff = currentUser.role === 'admin' || currentUser.role === 'teacher' || isAdminEmail(currentUser.email || '');
+    const isApprovedUser = isStaff || (currentUser.status === 'active' && currentUser.isApproved === true);
+    const scopedStudentId = isStaff ? undefined : (firebaseAuth?.currentUser?.uid || currentUser.id);
 
-      let unsubQuizzes: (() => void) | undefined;
-      let unsubAssignmentTasks: (() => void) | undefined;
-      let unsubAssignmentSubmissions: (() => void) | undefined;
+    let unsubQuizzes: (() => void) | undefined;
+    let unsubAssignmentTasks: (() => void) | undefined;
+    let unsubAssignmentSubmissions: (() => void) | undefined;
 
-      (async () => {
-        await waitForFirebaseAuth();
-        if (cancelled) return;
-        if (dbService.isRealFirebase() && !firebaseAuth?.currentUser) return;
+    (async () => {
+      await waitForFirebaseAuth();
+      if (cancelled) return;
+      if (dbService.isRealFirebase() && !firebaseAuth?.currentUser) return;
 
-        if (isApprovedUser) {
-          unsubQuizzes = dbService.listenToQuizzes((realtimeQuizzes) => {
-            if (!cancelled) setQuizzes(realtimeQuizzes);
-          });
-          unsubAssignmentTasks = dbService.listenToAssignmentTasks((realtimeTasks) => {
-            if (!cancelled) setAssignmentTasks(realtimeTasks);
-          });
+      if (isApprovedUser) {
+        unsubQuizzes = dbService.listenToQuizzes((realtimeQuizzes) => {
+          if (!cancelled) setQuizzes(realtimeQuizzes);
+        });
+        unsubAssignmentTasks = dbService.listenToAssignmentTasks((realtimeTasks) => {
+          if (!cancelled) setAssignmentTasks(realtimeTasks);
+        });
+      }
+      unsubAssignmentSubmissions = dbService.listenToAssignmentSubmissions((realtimeSubs) => {
+        if (!cancelled && currentUser) {
+          setAssignments(realtimeSubs.filter(s => s.studentId === (firebaseAuth?.currentUser?.uid || currentUser.id) || s.studentId === currentUser.id));
         }
-        unsubAssignmentSubmissions = dbService.listenToAssignmentSubmissions((realtimeSubs) => {
-          if (!cancelled && currentUser) {
-            setAssignments(realtimeSubs.filter(s => s.studentId === (firebaseAuth?.currentUser?.uid || currentUser.id) || s.studentId === currentUser.id));
-          }
-        }, scopedStudentId);
-      })();
+      }, scopedStudentId);
+    })();
 
     return () => {
       cancelled = true;
@@ -567,23 +604,33 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({ onLogout, on
       if (unsubAssignmentSubmissions) unsubAssignmentSubmissions();
       if (unsubUser) unsubUser();
     };
-  }, [currentUser?.id, currentUser?.email, currentUser?.grade, currentUser?.department, currentUser?.status, currentUser?.isApproved, categories]);
+  }, [currentUser?.id, currentUser?.email, currentUser?.grade, currentUser?.department, currentUser?.status, currentUser?.isApproved]);
 
+  const selectedCourseId = selectedCourse?.id;
   useEffect(() => {
-    if (selectedCourse && (courses.length > 0 || myCourses.length > 0)) {
-      const liveCourseRaw = courses.find(c => c.id === selectedCourse.id) || myCourses.find(c => c.id === selectedCourse.id);
-      if (liveCourseRaw && liveCourseRaw !== selectedCourse) {
-        const liveCourse = normalizeCourseLessons(liveCourseRaw);
-        setSelectedCourse(liveCourse);
-        if (activeLesson) {
-          const liveLesson = liveCourse.lessons?.find(l => l.id === activeLesson.id) || liveCourse.lessons?.[0] || null;
-          if (liveLesson) setActiveLesson(liveLesson);
-        } else if (liveCourse.lessons && liveCourse.lessons.length > 0) {
-          setActiveLesson(liveCourse.lessons[0]);
-        }
-      }
+    if (!selectedCourseId || (courses.length === 0 && myCourses.length === 0)) return;
+    const liveCourseRaw = courses.find(c => c.id === selectedCourseId) || myCourses.find(c => c.id === selectedCourseId);
+    if (!liveCourseRaw) return;
+    const sig = JSON.stringify({
+      id: liveCourseRaw.id,
+      titleAr: liveCourseRaw.titleAr,
+      lessonsLen: liveCourseRaw.lessons?.length || 0,
+      unitsLen: liveCourseRaw.units?.length || 0,
+      videoUrl: liveCourseRaw.videoUrl,
+      pdfUrl: liveCourseRaw.pdfUrl
+    });
+    if (selectedCourseSyncSigRef.current === sig) return;
+    selectedCourseSyncSigRef.current = sig;
+    const liveCourse = normalizeCourseLessons(liveCourseRaw);
+    setSelectedCourse(liveCourse);
+    const currentLessonId = activeLessonIdRef.current;
+    if (currentLessonId) {
+      const liveLesson = liveCourse.lessons?.find(l => l.id === currentLessonId) || liveCourse.lessons?.[0] || null;
+      if (liveLesson) setActiveLesson(liveLesson);
+    } else if (liveCourse.lessons && liveCourse.lessons.length > 0) {
+      setActiveLesson(liveCourse.lessons[0]);
     }
-  }, [courses, myCourses, selectedCourse, activeLesson]);
+  }, [courses, myCourses, selectedCourseId]);
 
   useEffect(() => {
     if (activeTab === ('subscription-required' as any) && selectedCourse) {
@@ -705,7 +752,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({ onLogout, on
   // Set up real-time comments listener
   useEffect(() => {
     if (!selectedCourse || !activeLesson) return;
-    const isApprovedUser = currentUser?.role === 'admin' || currentUser?.role === 'teacher' || (currentUser?.status === 'active' && currentUser?.isApproved !== false);
+    const isApprovedUser = currentUser?.role === 'admin' || currentUser?.role === 'teacher' || isAdminEmail(currentUser?.email || '') || (currentUser?.status === 'active' && currentUser?.isApproved === true);
     if (!isApprovedUser) return;
 
     let cancelled = false;
@@ -725,7 +772,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({ onLogout, on
       cancelled = true;
       if (typeof unsubscribe === 'function') unsubscribe();
     };
-  }, [selectedCourse, activeLesson, currentUser?.role, currentUser?.status, currentUser?.isApproved]);
+  }, [selectedCourse?.id, activeLesson?.id, currentUser?.role, currentUser?.status, currentUser?.isApproved]);
 
   const handleAddReview = async () => {
     if (!userComment.trim()) {
@@ -746,11 +793,11 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({ onLogout, on
         rating: userRating,
         commentAr: userComment,
         commentEn: userComment,
-        approved: false // Set to false so the teacher can approve it in the admin panel!
+        approved: false // Pending administrator approval
       });
       setReviewSubmitted(true);
       setUserComment('');
-      setSuccessMsg(t('شكراً لتقييمك! تم إرسال التقييم وسيقوم المهندس محمد عبد التواب بمراجعته قريباً للظهور في الصفحة الرئيسية.', 'Thank you! Your review has been submitted and is pending teacher approval.'));
+      setSuccessMsg(t('شكراً لتقييمك! تم إرسال التقييم وسيتم مراجعته من قبل إدارة المنصة للظهور في الصفحة الرئيسية.', 'Thank you! Your review has been submitted and is pending administrator approval.'));
     } catch (err) {
       console.error("Error submitting review:", err);
       setReviewError(t('فشل إرسال التقييم. حاول مرة أخرى.', 'Failed to submit review. Try again.'));
@@ -834,12 +881,12 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({ onLogout, on
             userId: currentUser.id,
             titleAr: '🎉 تهانينا! حصلت على شهادة جديدة',
             titleEn: '🎉 Congratulations! You earned a new certificate',
-            bodyAr: `لقد أكملت بنجاح كورس "${selectedCourse.titleAr}". شهادة التخرج الخاصة بك جاهزة الآن للعرض والتحميل!`,
-            bodyEn: `You have successfully completed "${selectedCourse.titleEn}". Your graduation certificate is ready!`,
+            bodyAr: `لقد أكملت بنجاح المقرر الدراسي "${selectedCourse.titleAr}". شهادة الإتمام الخاصة بك جاهزة الآن للعرض والتحميل!`,
+            bodyEn: `You have successfully completed "${selectedCourse.titleEn}". Your completion certificate is ready!`,
             isRead: false,
             createdAt: new Date().toISOString()
           });
-          setSuccessMsg(t('تهانينا! لقد أكملت الكورس بنجاح وحصلت على شهادة التخرج.', 'Congratulations! You completed the course and earned a certificate.'));
+          setSuccessMsg(t('تهانينا! لقد أكملت المقرر الدراسي بنجاح وحصلت على شهادة الإتمام.', 'Congratulations! You completed the subject and earned a certificate.'));
         }
       }
     } catch (err) {
@@ -874,10 +921,10 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({ onLogout, on
     const task = taskToSubmit || selectedTaskForSubmission;
     const targetCourseId = task?.courseId || selectedCourse?.id || '';
     const targetLessonId = activeLesson?.id || '';
-    const targetHomeworkAr = task?.titleAr || activeLesson?.homework || t('واجب مدرسي', 'Homework Task');
+    const targetHomeworkAr = task?.titleAr || activeLesson?.homework || t('تكليف جامعي', 'Academic Assignment');
 
     if (!homeworkText.trim() && !homeworkFile) {
-      setErrorMsg(t('برجاء كتابة نص الإجابة أو إرفاق صورة/ملف الحل للواجب.', 'Please provide solution text or attach a homework file/image.'));
+      setErrorMsg(t('برجاء كتابة نص الإجابة أو إرفاق صورة/ملف الحل للتكليف.', 'Please provide solution text or attach an assignment file/image.'));
       return;
     }
 
@@ -912,10 +959,10 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({ onLogout, on
       setHomeworkFile(null);
       setIsSubmissionModalOpen(false);
       setSelectedTaskForSubmission(null);
-      setSuccessMsg(t('تم تسليم الواجب بنجاح للمصحح المساعد!', 'Homework submitted successfully!'));
+      setSuccessMsg(t('تم تسليم التكليف بنجاح للمراجعة والتقييم!', 'Assignment submitted successfully!'));
       setTimeout(() => setSuccessMsg(''), 4000);
     } catch (err: any) {
-      setErrorMsg(err.message || 'Failed to submit homework');
+      setErrorMsg(err.message || 'Failed to submit assignment');
     } finally {
       setActionLoading(false);
     }
@@ -930,7 +977,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({ onLogout, on
     if (quiz.courseId && quiz.courseId !== 'all' && quiz.courseId.trim() !== '') {
       const isSubscribed = isStudentSubscribedToCourse(quiz.courseId);
       if (!isSubscribed) {
-        alert(t('عفواً، يجب الاشتراك في الكورس المرتبط بالامتحان أولاً.', 'You must enroll in the associated course first to take this exam.'));
+        alert(t('عفواً، يجب تفعيل المقرر الدراسي المرتبط بالامتحان أولاً.', 'Subject access must be activated first to take this exam.'));
         return;
       }
     }
@@ -1129,7 +1176,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({ onLogout, on
     return () => {
       clearInterval(timerInterval);
     };
-  }, [activeQuiz, currentUser]);
+  }, [activeQuiz?.id, activeQuiz?.timeLimit, currentUser?.id]);
 
   const formatQuizTime = (totalSeconds: number) => {
     const mins = Math.floor(totalSeconds / 60);
@@ -1166,86 +1213,6 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({ onLogout, on
     }
   };
 
-  // Interactive Online Exam Runner (ExamItem)
-  const handleStartOnlineExam = (exam: ExamItem) => {
-    const existingSub = examSubmissions.find(s => s.examId === exam.id);
-    if (existingSub) {
-      setActiveOnlineExam(exam);
-      setOnlineExamSubmitted(existingSub);
-      setOnlineExamAnswers(existingSub.answers || {});
-      return;
-    }
-    setActiveOnlineExam(exam);
-    setOnlineExamSubmitted(null);
-    setOnlineExamAnswers({});
-    const mins = exam.durationMinutes && exam.durationMinutes > 0 ? exam.durationMinutes : 30;
-    setOnlineExamTimeLeft(mins * 60);
-  };
-
-  const handleSubmitOnlineExam = useCallback(async () => {
-    if (!activeOnlineExam || !currentUser || isSubmittingOnlineExam || onlineExamSubmitted) return;
-    setIsSubmittingOnlineExam(true);
-    try {
-      const questions = activeOnlineExam.questions || [];
-      let scorePoints = 0;
-      let totalPoints = 0;
-      let correctCount = 0;
-      questions.forEach(q => {
-        const pts = q.points || 1;
-        totalPoints += pts;
-        const rightIdx = q.correctAnswerIndex ?? q.correctAnswer ?? 0;
-        if (onlineExamAnswers[q.id] === rightIdx) {
-          scorePoints += pts;
-          correctCount++;
-        }
-      });
-      const safeTotal = totalPoints > 0 ? totalPoints : Math.max(1, questions.length);
-      const percentage = Math.round((scorePoints / safeTotal) * 100);
-      const saved = await dbService.submitExamResult({
-        examId: activeOnlineExam.id,
-        examTitle: activeOnlineExam.title,
-        courseId: activeOnlineExam.courseId || 'all',
-        courseTitle: activeOnlineExam.courseTitle || activeOnlineExam.subject || 'IT',
-        subject: activeOnlineExam.subject || activeOnlineExam.courseTitle || 'IT',
-        studentId: currentUser.id,
-        studentName: currentUser.name,
-        studentEmail: currentUser.email,
-        answers: onlineExamAnswers,
-        score: scorePoints,
-        totalPoints: safeTotal,
-        percentage,
-        correctCount,
-        totalQuestions: questions.length
-      });
-      setOnlineExamSubmitted(saved);
-      setSuccessMsg(t('تم تسليم الامتحان الإلكتروني وتسجيل الدرجة بنجاح!', 'Online exam submitted and graded successfully!'));
-      setTimeout(() => setSuccessMsg(''), 4000);
-    } catch (e) {
-      console.error('Online exam submit failed:', e);
-      setErrorMsg(t('تعذر تسليم الامتحان، حاول مرة أخرى.', 'Failed to submit online exam.'));
-    } finally {
-      setIsSubmittingOnlineExam(false);
-    }
-  }, [activeOnlineExam, currentUser, isSubmittingOnlineExam, onlineExamSubmitted, onlineExamAnswers, t]);
-
-  useEffect(() => {
-    if (!activeOnlineExam || onlineExamSubmitted) return;
-    if (onlineExamTimeLeft <= 0) {
-      handleSubmitOnlineExam();
-      return;
-    }
-    const timer = setInterval(() => {
-      setOnlineExamTimeLeft(prev => {
-        if (prev <= 1) {
-          clearInterval(timer);
-          return 0;
-        }
-        return prev - 1;
-      });
-    }, 1000);
-    return () => clearInterval(timer);
-  }, [activeOnlineExam, onlineExamSubmitted, onlineExamTimeLeft, handleSubmitOnlineExam]);
-
   const handleSubmitInquiry = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!currentUser || !inquiryTitle.trim() || !inquiryMessage.trim()) return;
@@ -1264,7 +1231,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({ onLogout, on
       });
       setInquiryTitle('');
       setInquiryMessage('');
-      setSuccessMsg(t('تم إرسال استفسارك للأكاديمية وسيتم الرد عليه قريباً!', 'Your inquiry has been submitted successfully!'));
+      setSuccessMsg(t('تم إرسال استفسارك لإدارة المنصة الجامعية وسيتم الرد عليه قريباً!', 'Your academic inquiry has been submitted successfully!'));
       setTimeout(() => setSuccessMsg(''), 4000);
     } catch (err) {
       console.error('Failed to submit inquiry:', err);
@@ -1404,7 +1371,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({ onLogout, on
         triggerFileDownload(cleanUrl, task.titleAr || task.titleEn || 'assignment_sheet.pdf');
         return;
       } else {
-        alert(t('عفواً، يتطلب تنزيل الشيت الاشتراك في كورس هذا الصف الدراسي أولاً.', 'You must subscribe to a course first to download this sheet.'));
+        alert(t('عفواً، يرجى تفعيل الوصول للمقررات الدراسية أولاً لتنزيل هذا الملف.', 'Please ensure your academic access is activated to download this sheet.'));
         return;
       }
     }
@@ -1513,7 +1480,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({ onLogout, on
                 <h2 className="text-xl font-black text-slate-900 dark:text-white flex items-center gap-2 justify-center md:justify-start flex-wrap">
                   <span>{currentUser.name}</span>
                   <span className="text-[11px] font-bold font-mono text-brand-cyan-dark dark:text-brand-cyan-light">
-                    • {getGradeName(currentUser.grade || 'year1')}
+                    • {getGradeName(currentUser.grade || 'year1')} • {getSemesterName(currentUser.semester || 'term1', language)}
                   </span>
                 </h2>
                 <p className="text-xs text-slate-500 dark:text-slate-400 mt-1 font-mono">{currentUser.email} • {currentUser.phone || t('لا يوجد هاتف', 'No mobile number')}</p>
@@ -1532,7 +1499,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({ onLogout, on
                       ? 'border-amber-500/40 bg-amber-500/10 text-amber-600 dark:text-amber-300 hover:bg-amber-500/20'
                       : 'border-slate-200 dark:border-slate-800 bg-slate-100 dark:bg-slate-900/50 hover:bg-slate-200 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300'
                   }`}
-                  title={t('إشعارات الأكاديمية الفورية', 'Academy Alerts')}
+                  title={t('إشعارات المنصة الجامعية الفورية', 'University Alerts')}
                 >
                   <Bell className={`h-4 w-4 ${unreadNotificationsCount > 0 ? 'text-amber-500 dark:text-amber-400' : 'text-slate-400'}`} />
                   <span className="hidden sm:inline">{t('الإشعارات', 'Notifications')}</span>
@@ -1556,7 +1523,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({ onLogout, on
                       <div className="flex items-center justify-between border-b border-slate-200 dark:border-slate-800/80 pb-2.5">
                         <span className="text-xs font-bold text-slate-900 dark:text-white flex items-center gap-1.5">
                           <BellRing className="h-4 w-4 text-brand-cyan" />
-                          {t('إشعارات الأكاديمية الفورية', 'Academy Alerts')}
+                          {t('إشعارات المنصة الجامعية الفورية', 'University Alerts')}
                         </span>
                         <div className="flex items-center gap-2">
                           {unreadNotificationsCount > 0 && (
@@ -1869,7 +1836,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({ onLogout, on
                 }`}
               >
                 <Bell className={`h-4.5 w-4.5 shrink-0 ${unreadNotificationsCount > 0 ? (activeTab === 'notifications' ? 'text-brand-dark' : 'text-amber-500') : ''}`} />
-                <span>{t('إشعارات الأكاديمية', 'Academy Notifications')}</span>
+                <span>{t('إشعارات المنصة الجامعية', 'University Notifications')}</span>
                 {unreadNotificationsCount > 0 && (
                   <span className={`mr-auto rtl:mr-auto ltr:ml-auto text-[10px] font-bold px-2 py-0.5 rounded-full font-mono tabular-nums ${
                     activeTab === 'notifications' ? 'bg-brand-dark text-amber-300' : 'bg-amber-500/20 text-amber-600 dark:text-amber-300'
@@ -1886,7 +1853,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({ onLogout, on
                 }`}
               >
                 <MessageSquare className="h-4.5 w-4.5 shrink-0" />
-                <span>{t('استشارة المهندس والمساعدين', 'Live Support Chat')}</span>
+                <span>{t('التواصل المباشر مع الإدارة', 'Live Academic Support')}</span>
               </button>
 
               <button
@@ -1906,7 +1873,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({ onLogout, on
                 <div className="flex items-center justify-between border-b border-slate-200 dark:border-slate-900 pb-2">
                   <span className="text-xs font-bold flex items-center gap-1.5 text-slate-800 dark:text-white">
                     <Bell className="h-4 w-4 text-brand-cyan" />
-                    {t('إشعارات الأكاديمية الفورية', 'Academic Alerts')}
+                    {t('إشعارات المنصة الجامعية الفورية', 'Academic Alerts')}
                   </span>
                   <span className="text-brand-cyan text-[10px] font-mono font-bold tabular-nums">
                     {unreadNotificationsCount} {t('جديد', 'New')}
@@ -2013,13 +1980,13 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({ onLogout, on
                     <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
                       
                       <div className="rounded-2xl glass p-5 border border-slate-200 dark:border-slate-800 bg-white/80 dark:bg-slate-950/40">
-                        <p className="text-slate-500 dark:text-slate-400 text-[11px] font-bold uppercase tracking-wider">{t('المواد الدراسية الـ 6', 'IT Subjects')}</p>
+                        <p className="text-slate-500 dark:text-slate-400 text-[11px] font-bold uppercase tracking-wider">{t('المواد الدراسية (IT)', 'IT Subjects')}</p>
                         <h4 className="text-3xl font-black text-slate-900 dark:text-white mt-2 font-mono tabular-nums">{courses.length}</h4>
                         <button 
                           onClick={() => setActiveTab('my-courses')} 
                           className="text-[11px] text-brand-cyan hover:underline mt-3 font-bold flex items-center gap-1 cursor-pointer"
                         >
-                          {t('عرض المقررات الـ 6', 'Browse subjects')}
+                          {t('عرض المواد الدراسية', 'Browse subjects')}
                           <ChevronRight className="h-3 w-3 rtl:rotate-180" />
                         </button>
                       </div>
@@ -2172,11 +2139,11 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({ onLogout, on
                       </div>
                     )}
 
-                    {/* Homework list overview */}
+                    {/* Academic submissions overview */}
                     <div className="rounded-2xl glass bg-white/85 dark:bg-slate-950/40 border border-slate-200 dark:border-slate-800/80 p-6 space-y-4">
                       <h3 className="font-bold text-slate-900 dark:text-white text-sm flex items-center gap-2">
                         <FileText className="h-5 w-5 text-brand-cyan" />
-                        {t('حالة تسليم الواجبات المنزلية', 'My Homework Submissions Status')}
+                        {t('حالة تسليم التكليفات والشيتات', 'My Academic Submissions Status')}
                       </h3>
 
                       {assignments.length > 0 ? (
@@ -2187,7 +2154,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({ onLogout, on
                                 <span className={`inline-flex px-2 py-0.5 rounded text-[9px] font-bold font-mono mb-2 ${
                                   assign.status === 'graded' ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20' : 'bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20'
                                 }`}>
-                                  {assign.status === 'graded' ? t('تم التصحيح والتقييم', 'Graded') : t('قيد مراجعة المصححين', 'Pending Correcting')}
+                                  {assign.status === 'graded' ? t('تم التقييم ورصد الدرجة', 'Graded') : t('قيد مراجعة المشرف الأكاديمي', 'Pending Review')}
                                 </span>
                                 <h4 className="font-black text-slate-900 dark:text-white">{assign.homeworkAr}</h4>
                                 <p className="text-[10px] text-slate-500 dark:text-slate-400 mt-1 font-mono">{t('تاريخ التسليم:', 'Submitted date:')} {assign.date}</p>
@@ -2201,7 +2168,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({ onLogout, on
                                     <span className="text-brand-cyan font-black font-mono text-sm">{assign.grade}</span>
                                   </div>
                                   <p className="text-[10px] text-slate-700 dark:text-slate-300 italic leading-normal">
-                                    <strong>{t('ملاحظة المهندس:', 'Teacher feedback:')}</strong> {assign.feedback || t('ممتاز واصل المذاكرة والدراسة!', 'Excellent!')}
+                                    <strong>{t('ملاحظة المشرف الأكاديمي:', 'Supervisor feedback:')}</strong> {assign.feedback || t('ممتاز واصل التفوق الدراسي!', 'Excellent!')}
                                   </p>
                                 </div>
                               )}
@@ -2209,7 +2176,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({ onLogout, on
                           ))}
                         </div>
                       ) : (
-                        <p className="text-xs text-slate-500">{t('لا يوجد واجبات مسلمة حالياً.', 'No submitted assignments found.')}</p>
+                        <p className="text-xs text-slate-500">{t('لا توجد تكليفات مسلمة حالياً.', 'No submitted assignments found.')}</p>
                       )}
                     </div>
 
@@ -2235,189 +2202,22 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({ onLogout, on
                       />
                     );
                   }
-
-                  const watchedIds = currentUser?.watchedLessonIds || [];
-                  const favIds = currentUser?.favorites || currentUser?.bookmarkedLectureIds || [];
-
-                  const filteredLectures = lectures.filter(lec => {
-                    const lecSubj = lec.subject || lec.courseTitle || '';
-                    const matchesCourse = courseFilter === 'all' || (lecSubj && (lecSubj.toLowerCase().includes(courseFilter.toLowerCase()) || courseFilter.toLowerCase().includes(lecSubj.toLowerCase())));
-                    const isWatched = watchedIds.includes(lec.id);
-                    const matchesWatch = watchStatusFilter === 'all' || (watchStatusFilter === 'watched' ? isWatched : !isWatched);
-                    const q = contentSearch.trim().toLowerCase();
-                    const matchesSearch = !q || 
-                      lec.title.toLowerCase().includes(q) || 
-                      (lecSubj && lecSubj.toLowerCase().includes(q)) ||
-                      (lec.description && lec.description.toLowerCase().includes(q));
-                    return matchesCourse && matchesWatch && matchesSearch;
-                  });
-
                   return (
                     <motion.div
                       key="lectures"
                       initial={{ opacity: 0, y: 10 }}
                       animate={{ opacity: 1, y: 0 }}
                       exit={{ opacity: 0 }}
-                      className="space-y-6"
                     >
-                      {/* Header & Controls */}
-                      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 border-b border-slate-200 dark:border-slate-800 pb-4">
-                        <div>
-                          <h3 className="font-black text-slate-900 dark:text-white text-base sm:text-lg flex items-center gap-2">
-                            <BookOpen className="h-5 w-5 text-brand-cyan" />
-                            {t('المحاضرات الأكاديمية (قسم IT)', 'Academic Lectures (IT Dept)')}
-                          </h3>
-                          <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
-                            {t('شاهد شروحات المحاضرات عبر مشغل YouTube الرسمي وحمّل مذكرات الـ PDF وتابع تقدمك.', 'Watch lectures via official YouTube player, download PDFs, and track progress.')}
-                          </p>
-                        </div>
-                        <div className="flex items-center gap-2">
-                          {(['all', 'watched', 'unwatched'] as const).map(st => (
-                            <button
-                              key={st}
-                              type="button"
-                              onClick={() => setWatchStatusFilter(st)}
-                              className={`px-3 py-1.5 rounded-lg text-[11px] font-bold cursor-pointer border transition-colors ${
-                                watchStatusFilter === st
-                                  ? 'bg-brand-cyan text-white dark:text-slate-950 border-brand-cyan'
-                                  : 'bg-white dark:bg-slate-900 text-slate-600 dark:text-slate-300 border-slate-200 dark:border-slate-800'
-                              }`}
-                            >
-                              {st === 'all' ? t('الكل', 'All') : st === 'watched' ? t('المكتملة', 'Watched') : t('لم تُشاهد', 'Unwatched')}
-                            </button>
-                          ))}
-                        </div>
-                      </div>
-
-                      {/* Filter Pills & Search */}
-                      <div className="flex flex-col md:flex-row gap-3">
-                        <div className="relative flex-1">
-                          <Search className="absolute right-3.5 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-500 pointer-events-none" />
-                          <input
-                            type="text"
-                            value={contentSearch}
-                            onChange={(e) => setContentSearch(e.target.value)}
-                            placeholder={t('ابحث في عنوان المحاضرة أو المادة...', 'Search lecture title or subject...')}
-                            className="w-full rounded-xl bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 pr-10 pl-4 py-2.5 text-xs text-slate-900 dark:text-white placeholder-slate-500 focus:outline-none focus:border-brand-cyan transition-colors"
-                          />
-                        </div>
-                        <div className="flex items-center gap-2 overflow-x-auto pb-1 max-w-full">
-                          {['all', 'Physics', 'Python', 'IT Essentials', 'Mathematics', 'Cyber Security', 'English'].map(subj => {
-                            const labels: Record<string, string> = {
-                              'all': t('جميع المواد', 'All Subjects'),
-                              'Physics': t('الفيزياء', 'Physics'),
-                              'Python': t('بايثون', 'Python'),
-                              'IT Essentials': t('أساسيات IT', 'IT Essentials'),
-                              'Mathematics': t('الرياضيات', 'Mathematics'),
-                              'Cyber Security': t('الأمن السيبراني', 'Cyber Security'),
-                              'English': t('اللغة الإنجليزية', 'English')
-                            };
-                            return (
-                              <button
-                                key={subj}
-                                type="button"
-                                onClick={() => setCourseFilter(subj)}
-                                className={`px-3 py-1.5 rounded-xl text-xs font-bold shrink-0 transition-all cursor-pointer border ${
-                                  courseFilter === subj
-                                    ? 'bg-brand-cyan text-white dark:text-slate-950 border-brand-cyan shadow-md shadow-cyan-950/30'
-                                    : 'bg-white dark:bg-slate-900/80 text-slate-700 dark:text-slate-300 border-slate-200 dark:border-slate-800 hover:border-slate-400 dark:hover:border-slate-700'
-                                }`}
-                              >
-                                {labels[subj] || subj}
-                              </button>
-                            );
-                          })}
-                        </div>
-                      </div>
-
-                      {/* Lectures Grid */}
-                      {filteredLectures.length > 0 ? (
-                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
-                          {filteredLectures.map((lec) => {
-                            const isWatched = watchedIds.includes(lec.id);
-                            const isBookmarked = favIds.includes(lec.id);
-                            return (
-                            <div
-                              key={lec.id}
-                              className="rounded-2xl glass border border-slate-200 dark:border-slate-800 bg-white/80 dark:bg-slate-950/50 p-5 flex flex-col justify-between hover:border-cyan-500/40 transition-all group relative overflow-hidden"
-                            >
-                              <div className="space-y-3">
-                                <div className="flex items-center justify-between gap-2">
-                                  <span className="text-[11px] font-bold text-brand-cyan">
-                                    {lec.subject || lec.courseTitle || 'IT'}
-                                  </span>
-                                  <div className="flex items-center gap-1.5">
-                                    <span className="text-[10px] font-mono text-slate-500 tabular-nums">
-                                      {t('محاضرة', 'Lec')} #{lec.lectureNumber ?? lec.number ?? 1}
-                                    </span>
-                                    <button
-                                      type="button"
-                                      onClick={() => handleToggleFavoriteItem(lec.id)}
-                                      className={`p-1 rounded-lg transition-colors cursor-pointer ${isBookmarked ? 'text-amber-500 bg-amber-500/10' : 'text-slate-400 hover:text-amber-500'}`}
-                                      title={t('حفظ في المفضلة', 'Bookmark')}
-                                    >
-                                      <Bookmark className="h-3.5 w-3.5" fill={isBookmarked ? 'currentColor' : 'none'} />
-                                    </button>
-                                  </div>
-                                </div>
-
-                                <h4 className="text-sm font-black text-slate-900 dark:text-white group-hover:text-brand-cyan transition-colors line-clamp-2">
-                                  {lec.title}
-                                </h4>
-
-                                {lec.description && (
-                                  <p className="text-xs text-slate-500 dark:text-slate-400 line-clamp-2 leading-relaxed">
-                                    {lec.description}
-                                  </p>
-                                )}
-                              </div>
-
-                              <div className="pt-4 border-t border-slate-200 dark:border-slate-900 mt-4 space-y-2">
-                                {lec.youtubeUrl && (
-                                  <button
-                                    type="button"
-                                    onClick={() => setActiveVideoModal({ url: lec.youtubeUrl, title: `${lec.subject || lec.courseTitle || 'IT'} - محاضرة #${lec.lectureNumber ?? lec.number ?? 1}: ${lec.title}` })}
-                                    className="w-full flex items-center justify-center gap-2 rounded-xl bg-red-600/15 hover:bg-red-600/25 text-red-500 dark:text-red-400 border border-red-500/30 py-2.5 text-xs font-bold transition-all cursor-pointer"
-                                  >
-                                    <Video className="h-4 w-4" />
-                                    <span>{t('مشاهدة على YouTube', 'Watch on YouTube')}</span>
-                                  </button>
-                                )}
-
-                                {lec.pdfUrl && (
-                                  <button
-                                    type="button"
-                                    onClick={() => setActivePdfModal({ url: lec.pdfUrl!, title: `${lec.title} (PDF)` })}
-                                    className="w-full flex items-center justify-center gap-2 rounded-xl bg-brand-cyan/15 hover:bg-brand-cyan/25 text-brand-cyan-dark dark:text-brand-cyan border border-cyan-500/30 py-2.5 text-xs font-bold transition-all cursor-pointer"
-                                  >
-                                    <FileText className="h-4 w-4" />
-                                    <span>{t('تحميل / قراءة مذكرة PDF', 'View & Download PDF')}</span>
-                                  </button>
-                                )}
-
-                                <button
-                                  type="button"
-                                  onClick={() => handleToggleWatchedItem(lec.id)}
-                                  className={`w-full flex items-center justify-center gap-1.5 rounded-xl py-2 text-[11px] font-bold transition-all cursor-pointer border ${
-                                    isWatched
-                                      ? 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/30'
-                                      : 'bg-slate-100 dark:bg-slate-900 text-slate-600 dark:text-slate-400 border-slate-200 dark:border-slate-800 hover:border-emerald-500/30'
-                                  }`}
-                                >
-                                  <CheckCircle2 className="h-3.5 w-3.5" />
-                                  <span>{isWatched ? t('تمت المشاهدة / المذاكرة', 'Completed') : t('تحديد كمكتمل', 'Mark as Watched')}</span>
-                                </button>
-                              </div>
-                            </div>
-                          );})}
-                        </div>
-                      ) : (
-                        <div className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white/80 dark:bg-slate-950/40 p-12 text-center space-y-3">
-                          <BookOpen className="h-10 w-10 text-slate-500 mx-auto" />
-                          <h4 className="text-sm font-bold text-slate-900 dark:text-white">{t('لا توجد محاضرات مطابقة للبحث حالياً', 'No matching lectures found')}</h4>
-                          <p className="text-xs text-slate-500">{t('يتم رفع المحاضرات ومذكرات الـ PDF بشكل دوري بإشراف Eng/Mohamed abdal tawab.', 'Lectures are updated regularly by Eng/Mohamed abdal tawab.')}</p>
-                        </div>
-                      )}
+                      <StudentLecturesView
+                        lectures={lectures}
+                        courses={courses}
+                        currentUser={currentUser}
+                        onToggleWatched={handleToggleWatchedItem}
+                        onToggleFavorite={handleToggleFavoriteItem}
+                        onOpenVideo={(url, title) => setActiveVideoModal({ url, title })}
+                        onOpenPdf={(url, title) => setActivePdfModal({ url, title })}
+                      />
                     </motion.div>
                   );
                 })()}
@@ -2436,195 +2236,21 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({ onLogout, on
                       />
                     );
                   }
-
-                  const watchedIds = currentUser?.watchedLessonIds || [];
-                  const favIds = currentUser?.favorites || currentUser?.bookmarkedLectureIds || [];
-
-                  const filteredSections = sections.filter(sec => {
-                    const secSubj = sec.subject || sec.courseTitle || '';
-                    const matchesCourse = courseFilter === 'all' || (secSubj && (secSubj.toLowerCase().includes(courseFilter.toLowerCase()) || courseFilter.toLowerCase().includes(secSubj.toLowerCase())));
-                    const isWatched = watchedIds.includes(sec.id);
-                    const matchesWatch = watchStatusFilter === 'all' || (watchStatusFilter === 'watched' ? isWatched : !isWatched);
-                    const q = contentSearch.trim().toLowerCase();
-                    const matchesSearch = !q || 
-                      sec.title.toLowerCase().includes(q) || 
-                      (secSubj && secSubj.toLowerCase().includes(q)) ||
-                      (sec.description && sec.description.toLowerCase().includes(q));
-                    return matchesCourse && matchesWatch && matchesSearch;
-                  });
-
                   return (
                     <motion.div
                       key="sections"
                       initial={{ opacity: 0, y: 10 }}
                       animate={{ opacity: 1, y: 0 }}
                       exit={{ opacity: 0 }}
-                      className="space-y-6"
                     >
-                      {/* Header */}
-                      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 border-b border-slate-200 dark:border-slate-800 pb-4">
-                        <div>
-                          <h3 className="font-black text-slate-900 dark:text-white text-base sm:text-lg flex items-center gap-2">
-                            <Layers className="h-5 w-5 text-brand-cyan" />
-                            {t('السكاشن والتطبيقات المعملية (قسم IT)', 'Lab Sections & Practicals (IT Dept)')}
-                          </h3>
-                          <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
-                            {t('شاهد شروحات المعمل والسكاشن العملية وحمل ملفات Word وPDF الخاصة بالتجارب والأكواد.', 'Watch lab practical sessions and download section Word/PDF lab manuals.')}
-                          </p>
-                        </div>
-                        <div className="flex items-center gap-2">
-                          {(['all', 'watched', 'unwatched'] as const).map(st => (
-                            <button
-                              key={st}
-                              type="button"
-                              onClick={() => setWatchStatusFilter(st)}
-                              className={`px-3 py-1.5 rounded-lg text-[11px] font-bold cursor-pointer border transition-colors ${
-                                watchStatusFilter === st
-                                  ? 'bg-brand-cyan text-white dark:text-slate-950 border-brand-cyan'
-                                  : 'bg-white dark:bg-slate-900 text-slate-600 dark:text-slate-300 border-slate-200 dark:border-slate-800'
-                              }`}
-                            >
-                              {st === 'all' ? t('الكل', 'All') : st === 'watched' ? t('المكتملة', 'Watched') : t('لم تُشاهد', 'Unwatched')}
-                            </button>
-                          ))}
-                        </div>
-                      </div>
-
-                      {/* Filter Pills & Search */}
-                      <div className="flex flex-col md:flex-row gap-3">
-                        <div className="relative flex-1">
-                          <Search className="absolute right-3.5 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-500 pointer-events-none" />
-                          <input
-                            type="text"
-                            value={contentSearch}
-                            onChange={(e) => setContentSearch(e.target.value)}
-                            placeholder={t('ابحث في عنوان السكشن أو المعمل...', 'Search section title or lab topic...')}
-                            className="w-full rounded-xl bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 pr-10 pl-4 py-2.5 text-xs text-slate-900 dark:text-white placeholder-slate-500 focus:outline-none focus:border-brand-cyan transition-colors"
-                          />
-                        </div>
-                        <div className="flex items-center gap-2 overflow-x-auto pb-1 max-w-full">
-                          {['all', 'Physics', 'Python', 'IT Essentials', 'Mathematics', 'Cyber Security', 'English'].map(subj => {
-                            const labels: Record<string, string> = {
-                              'all': t('جميع المواد', 'All Subjects'),
-                              'Physics': t('الفيزياء', 'Physics'),
-                              'Python': t('بايثون', 'Python'),
-                              'IT Essentials': t('أساسيات IT', 'IT Essentials'),
-                              'Mathematics': t('الرياضيات', 'Mathematics'),
-                              'Cyber Security': t('الأمن السيبراني', 'Cyber Security'),
-                              'English': t('اللغة الإنجليزية', 'English')
-                            };
-                            return (
-                              <button
-                                key={subj}
-                                type="button"
-                                onClick={() => setCourseFilter(subj)}
-                                className={`px-3 py-1.5 rounded-xl text-xs font-bold shrink-0 transition-all cursor-pointer border ${
-                                  courseFilter === subj
-                                    ? 'bg-brand-cyan text-white dark:text-slate-950 border-brand-cyan shadow-md shadow-cyan-950/30'
-                                    : 'bg-white dark:bg-slate-900/80 text-slate-700 dark:text-slate-300 border-slate-200 dark:border-slate-800 hover:border-slate-400'
-                                }`}
-                              >
-                                {labels[subj] || subj}
-                              </button>
-                            );
-                          })}
-                        </div>
-                      </div>
-
-                      {/* Sections Grid */}
-                      {filteredSections.length > 0 ? (
-                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
-                          {filteredSections.map((sec) => {
-                            const isWatched = watchedIds.includes(sec.id);
-                            const isBookmarked = favIds.includes(sec.id);
-                            return (
-                            <div
-                              key={sec.id}
-                              className="rounded-2xl glass border border-slate-200 dark:border-slate-800 bg-white/80 dark:bg-slate-950/50 p-5 flex flex-col justify-between hover:border-cyan-500/40 transition-all group relative overflow-hidden"
-                            >
-                              <div className="space-y-3">
-                                <div className="flex items-center justify-between gap-2">
-                                  <span className="text-[11px] font-bold text-emerald-600 dark:text-emerald-400">
-                                    {sec.subject || sec.courseTitle || 'IT'}
-                                  </span>
-                                  <div className="flex items-center gap-1.5">
-                                    <span className="text-[10px] font-mono text-slate-500 tabular-nums">
-                                      {t('سكشن', 'Sec')} #{sec.sectionNumber ?? sec.number ?? 1}
-                                    </span>
-                                    <button
-                                      type="button"
-                                      onClick={() => handleToggleFavoriteItem(sec.id)}
-                                      className={`p-1 rounded-lg transition-colors cursor-pointer ${isBookmarked ? 'text-amber-500 bg-amber-500/10' : 'text-slate-400 hover:text-amber-500'}`}
-                                      title={t('حفظ في المفضلة', 'Bookmark')}
-                                    >
-                                      <Bookmark className="h-3.5 w-3.5" fill={isBookmarked ? 'currentColor' : 'none'} />
-                                    </button>
-                                  </div>
-                                </div>
-
-                                <h4 className="text-sm font-black text-slate-900 dark:text-white group-hover:text-brand-cyan transition-colors line-clamp-2">
-                                  {sec.title}
-                                </h4>
-
-                                {sec.description && (
-                                  <p className="text-xs text-slate-500 dark:text-slate-400 line-clamp-2 leading-relaxed">
-                                    {sec.description}
-                                  </p>
-                                )}
-                              </div>
-
-                              <div className="pt-4 border-t border-slate-200 dark:border-slate-900 mt-4 space-y-2">
-                                {sec.youtubeUrl && (
-                                  <button
-                                    type="button"
-                                    onClick={() => setActiveVideoModal({ url: sec.youtubeUrl, title: `${sec.subject || sec.courseTitle || 'IT'} - سكشن #${sec.sectionNumber ?? sec.number ?? 1}: ${sec.title}` })}
-                                    className="w-full flex items-center justify-center gap-2 rounded-xl bg-red-600/15 hover:bg-red-600/25 text-red-500 dark:text-red-400 border border-red-500/30 py-2.5 text-xs font-bold transition-all cursor-pointer"
-                                  >
-                                    <Video className="h-4 w-4" />
-                                    <span>{t('مشاهدة شرح السكشن (YouTube)', 'Watch Lab on YouTube')}</span>
-                                  </button>
-                                )}
-
-                                {sec.fileUrl && (
-                                  <button
-                                    type="button"
-                                    onClick={() => {
-                                      if (sec.fileUrl?.toLowerCase().endsWith('.pdf')) {
-                                        setActivePdfModal({ url: sec.fileUrl, title: `${sec.title} (PDF)` });
-                                      } else {
-                                        triggerFileDownload(sec.fileUrl!, `${sec.title}.docx`);
-                                      }
-                                    }}
-                                    className="w-full flex items-center justify-center gap-2 rounded-xl bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30 py-2.5 text-xs font-bold transition-all cursor-pointer"
-                                  >
-                                    <Download className="h-4 w-4" />
-                                    <span>{t('تحميل ملف السكشن (Word / PDF)', 'Download Lab File')}</span>
-                                  </button>
-                                )}
-
-                                <button
-                                  type="button"
-                                  onClick={() => handleToggleWatchedItem(sec.id)}
-                                  className={`w-full flex items-center justify-center gap-1.5 rounded-xl py-2 text-[11px] font-bold transition-all cursor-pointer border ${
-                                    isWatched
-                                      ? 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/30'
-                                      : 'bg-slate-100 dark:bg-slate-900 text-slate-600 dark:text-slate-400 border-slate-200 dark:border-slate-800 hover:border-emerald-500/30'
-                                  }`}
-                                >
-                                  <CheckCircle2 className="h-3.5 w-3.5" />
-                                  <span>{isWatched ? t('تمت المشاهدة / المذاكرة', 'Completed') : t('تحديد كمكتمل', 'Mark as Watched')}</span>
-                                </button>
-                              </div>
-                            </div>
-                          );})}
-                        </div>
-                      ) : (
-                        <div className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white/80 dark:bg-slate-950/40 p-12 text-center space-y-3">
-                          <Layers className="h-10 w-10 text-slate-500 mx-auto" />
-                          <h4 className="text-sm font-bold text-slate-900 dark:text-white">{t('لا توجد سكاشن مطابقة للبحث حالياً', 'No matching sections found')}</h4>
-                          <p className="text-xs text-slate-500">{t('يتم رفع السكاشن المعملية وملفات التجارب بشكل مستمر.', 'Lab sections are updated on an ongoing schedule.')}</p>
-                        </div>
-                      )}
+                      <StudentSectionsView
+                        sections={sections}
+                        courses={courses}
+                        currentUser={currentUser}
+                        onToggleWatched={handleToggleWatchedItem}
+                        onOpenVideo={(url, title) => setActiveVideoModal({ url, title })}
+                        onOpenPdf={(url, title) => setActivePdfModal({ url, title })}
+                      />
                     </motion.div>
                   );
                 })()}
@@ -2643,183 +2269,19 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({ onLogout, on
                       />
                     );
                   }
-
-                  const filteredSheets = sheets.filter(sh => {
-                    const effectiveType = sh.type || sh.sheetType;
-                    const shSubj = sh.subject || sh.courseTitle || '';
-                    const matchesType = sheetsTypeFilter === 'all' || effectiveType === sheetsTypeFilter;
-                    const matchesCourse = courseFilter === 'all' || (shSubj && (shSubj.toLowerCase().includes(courseFilter.toLowerCase()) || courseFilter.toLowerCase().includes(shSubj.toLowerCase())));
-                    const q = contentSearch.trim().toLowerCase();
-                    const matchesSearch = !q || 
-                      sh.title.toLowerCase().includes(q) || 
-                      (shSubj && shSubj.toLowerCase().includes(q));
-                    return matchesType && matchesCourse && matchesSearch;
-                  });
-
                   return (
                     <motion.div
                       key="sheets"
                       initial={{ opacity: 0, y: 10 }}
                       animate={{ opacity: 1, y: 0 }}
                       exit={{ opacity: 0 }}
-                      className="space-y-6"
                     >
-                      {/* Header */}
-                      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 border-b border-slate-200 dark:border-slate-800 pb-4">
-                        <div>
-                          <h3 className="font-black text-slate-900 dark:text-white text-base sm:text-lg flex items-center gap-2">
-                            <FileCheck className="h-5 w-5 text-brand-cyan" />
-                            {t('شيتات المقررات الدراسية (شيتات محاضرات & شيتات سكاشن)', 'Course Sheets (Lectures & Sections)')}
-                          </h3>
-                          <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
-                            {t('حمّل الشيتات التدريبية والتكليفات المرافقة لكل محاضرة وسكشن بصيغة PDF.', 'Download training and homework sheets accompanying every lecture and section.')}
-                          </p>
-                        </div>
-                        <span className="text-xs font-mono font-bold px-3 py-1 rounded-full bg-cyan-500/10 text-brand-cyan border border-cyan-500/20">
-                          {filteredSheets.length} {t('شيت متاح', 'Sheets')}
-                        </span>
-                      </div>
-
-                      {/* Sub-Filters: Type Filter Pills */}
-                      <div className="flex flex-wrap items-center gap-2">
-                        <button
-                          type="button"
-                          onClick={() => setSheetsTypeFilter('all')}
-                          className={`px-4 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer border ${
-                            sheetsTypeFilter === 'all'
-                              ? 'bg-brand-cyan text-white dark:text-slate-950 border-brand-cyan shadow-md'
-                              : 'bg-white dark:bg-slate-900 text-slate-600 dark:text-slate-400 border-slate-200 dark:border-slate-800 hover:border-slate-400 dark:hover:border-slate-700'
-                          }`}
-                        >
-                          {t('جميع الشيتات', 'All Sheets')} ({sheets.length})
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => setSheetsTypeFilter('lecture_sheet')}
-                          className={`px-4 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer border ${
-                            sheetsTypeFilter === 'lecture_sheet'
-                              ? 'bg-brand-cyan text-white dark:text-slate-950 border-brand-cyan shadow-md'
-                              : 'bg-white dark:bg-slate-900 text-slate-600 dark:text-slate-400 border-slate-200 dark:border-slate-800 hover:border-slate-400 dark:hover:border-slate-700'
-                          }`}
-                        >
-                          {t('شيتات المحاضرات', 'Lecture Sheets')} ({sheets.filter(s => (s.type || s.sheetType) === 'lecture_sheet').length})
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => setSheetsTypeFilter('section_sheet')}
-                          className={`px-4 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer border ${
-                            sheetsTypeFilter === 'section_sheet'
-                              ? 'bg-brand-cyan text-white dark:text-slate-950 border-brand-cyan shadow-md'
-                              : 'bg-white dark:bg-slate-900 text-slate-600 dark:text-slate-400 border-slate-200 dark:border-slate-800 hover:border-slate-400 dark:hover:border-slate-700'
-                          }`}
-                        >
-                          {t('شيتات السكاشن', 'Section Sheets')} ({sheets.filter(s => (s.type || s.sheetType) === 'section_sheet').length})
-                        </button>
-                      </div>
-
-                      {/* Subject Filter Pills & Search */}
-                      <div className="flex flex-col md:flex-row gap-3">
-                        <div className="relative flex-1">
-                          <Search className="absolute right-3.5 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-500 pointer-events-none" />
-                          <input
-                            type="text"
-                            value={contentSearch}
-                            onChange={(e) => setContentSearch(e.target.value)}
-                            placeholder={t('ابحث في عنوان الشيت أو المادة...', 'Search sheet title or subject...')}
-                            className="w-full rounded-xl bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 pr-10 pl-4 py-2.5 text-xs text-slate-900 dark:text-white placeholder-slate-500 focus:outline-none focus:border-brand-cyan transition-colors"
-                          />
-                        </div>
-                        <div className="flex items-center gap-2 overflow-x-auto pb-1 max-w-full">
-                          {['all', 'Physics', 'Python', 'IT Essentials', 'Mathematics', 'Cyber Security', 'English'].map(subj => {
-                            const labels: Record<string, string> = {
-                              'all': t('جميع المواد', 'All Subjects'),
-                              'Physics': t('الفيزياء', 'Physics'),
-                              'Python': t('بايثون', 'Python'),
-                              'IT Essentials': t('أساسيات IT', 'IT Essentials'),
-                              'Mathematics': t('الرياضيات', 'Mathematics'),
-                              'Cyber Security': t('الأمن السيبراني', 'Cyber Security'),
-                              'English': t('اللغة الإنجليزية', 'English')
-                            };
-                            return (
-                              <button
-                                key={subj}
-                                type="button"
-                                onClick={() => setCourseFilter(subj)}
-                                className={`px-3 py-1.5 rounded-xl text-xs font-bold shrink-0 transition-all cursor-pointer border ${
-                                  courseFilter === subj
-                                    ? 'bg-brand-cyan text-white dark:text-slate-950 border-brand-cyan shadow-md shadow-cyan-950/30'
-                                    : 'bg-white dark:bg-slate-900/80 text-slate-700 dark:text-slate-300 border-slate-200 dark:border-slate-800 hover:border-slate-400 dark:hover:border-slate-700'
-                                }`}
-                              >
-                                {labels[subj] || subj}
-                              </button>
-                            );
-                          })}
-                        </div>
-                      </div>
-
-                      {/* Sheets Grid */}
-                      {filteredSheets.length > 0 ? (
-                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
-                          {filteredSheets.map((sh) => {
-                            const effectiveType = sh.type || sh.sheetType || 'lecture_sheet';
-                            const shRefNum = sh.lectureNumber ?? sh.sectionNumber ?? sh.referenceNumber;
-                            return (
-                            <div
-                              key={sh.id}
-                              className="rounded-2xl glass border border-slate-200 dark:border-slate-800 bg-white/85 dark:bg-slate-950/50 p-5 flex flex-col justify-between hover:border-cyan-500/40 transition-all group relative overflow-hidden"
-                            >
-                              <div className="space-y-3">
-                                <div className="flex items-center justify-between gap-2">
-                                  <span className={`px-2.5 py-0.5 rounded-lg text-[10px] font-bold border ${
-                                    effectiveType === 'lecture_sheet'
-                                      ? 'bg-blue-500/10 text-blue-600 dark:text-blue-400 border-blue-500/20'
-                                      : 'bg-purple-500/10 text-purple-600 dark:text-purple-400 border-purple-500/20'
-                                  }`}>
-                                    {effectiveType === 'lecture_sheet' ? t('شيت محاضرة', 'Lecture Sheet') : t('شيت سكشن', 'Section Sheet')}
-                                  </span>
-                                  <span className="text-[10px] font-mono text-brand-cyan bg-slate-100 dark:bg-slate-900 px-2 py-0.5 rounded-lg border border-slate-200 dark:border-slate-800">
-                                    {sh.subject || sh.courseTitle || 'IT'}
-                                  </span>
-                                </div>
-
-                                <h4 className="text-sm font-black text-slate-900 dark:text-white group-hover:text-brand-cyan transition-colors">
-                                  {sh.title}
-                                </h4>
-
-                                {shRefNum && (
-                                  <p className="text-xs text-slate-500 dark:text-slate-400 font-mono tabular-nums">
-                                    {effectiveType === 'lecture_sheet' ? `${t('تابع لمحاضرة رقم', 'Ref: Lecture')} #${shRefNum}` : `${t('تابع لسكشن رقم', 'Ref: Section')} #${shRefNum}`}
-                                  </p>
-                                )}
-                              </div>
-
-                              <div className="pt-4 border-t border-slate-200 dark:border-slate-900 mt-4">
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    if (sh.fileUrl?.toLowerCase().endsWith('.pdf')) {
-                                      setActivePdfModal({ url: sh.fileUrl, title: `${sh.title} (PDF)` });
-                                    } else if (sh.fileUrl) {
-                                      triggerFileDownload(sh.fileUrl, `${sh.title}.docx`);
-                                    }
-                                  }}
-                                  className="w-full flex items-center justify-center gap-2 rounded-xl bg-brand-cyan/15 hover:bg-brand-cyan/25 text-brand-cyan border border-cyan-500/30 py-2.5 text-xs font-bold transition-all cursor-pointer"
-                                >
-                                  <Download className="h-4 w-4" />
-                                  <span>{t('تحميل / عرض الشيت (PDF / Word)', 'Download / View Sheet')}</span>
-                                </button>
-                              </div>
-                            </div>
-                          );})}
-                        </div>
-                      ) : (
-                        <div className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white/80 dark:bg-slate-950/40 p-12 text-center space-y-3">
-                          <FileCheck className="h-10 w-10 text-slate-400 dark:text-slate-600 mx-auto" />
-                          <h4 className="text-sm font-bold text-slate-900 dark:text-white">{t('لا توجد شيتات مطابقة للبحث حالياً', 'No matching sheets found')}</h4>
-                          <p className="text-xs text-slate-500">{t('يتم رفع شيتات المحاضرات وشيتات السكاشن دورياً.', 'Lecture and section sheets are uploaded periodically.')}</p>
-                        </div>
-                      )}
+                      <StudentSheetsView
+                        sheets={sheets}
+                        courses={courses}
+                        currentUser={currentUser}
+                        onOpenPdf={(url, title) => setActivePdfModal({ url, title })}
+                      />
                     </motion.div>
                   );
                 })()}
@@ -2886,20 +2348,14 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({ onLogout, on
                               <div className="mt-5 grid grid-cols-2 gap-2">
                                 <button
                                   type="button"
-                                  onClick={() => {
-                                    setCourseFilter(course.titleAr);
-                                    setActiveTab('lectures');
-                                  }}
+                                  onClick={() => setActiveTab('lectures')}
                                   className="rounded-xl py-2 font-bold text-xs bg-cyan-500/10 hover:bg-cyan-500/20 text-brand-cyan border border-cyan-500/30 transition-all cursor-pointer text-center"
                                 >
                                   {t('المحاضرات 📚', 'Lectures')}
                                 </button>
                                 <button
                                   type="button"
-                                  onClick={() => {
-                                    setCourseFilter(course.titleAr);
-                                    setActiveTab('sections');
-                                  }}
+                                  onClick={() => setActiveTab('sections')}
                                   className="rounded-xl py-2 font-bold text-xs bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30 transition-all cursor-pointer text-center"
                                 >
                                   {t('السكاشن 🧪', 'Sections')}
@@ -2943,7 +2399,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({ onLogout, on
                       className="rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-100 dark:bg-slate-900/50 hover:bg-slate-200 dark:hover:bg-slate-800 px-3.5 py-1.5 text-xs font-bold text-slate-700 dark:text-slate-300 flex items-center gap-1.5 cursor-pointer"
                     >
                       <ChevronLeft className="h-4 w-4" />
-                      {t('العودة لقائمة كورساتي', 'Back to courses')}
+                      {t('العودة لقائمة المقررات الدراسية', 'Back to subjects')}
                     </button>
 
                     <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
@@ -3095,13 +2551,13 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({ onLogout, on
                                   </button>
                                 </div>
                               ) : (
-                                <p className="text-xs text-slate-500">{t('لا يوجد ملف PDF مرفق بالحصة، راجع الملحقات الإضافية.', 'No direct PDF text attached to this lesson.')}</p>
+                                <p className="text-xs text-slate-500">{t('لا يوجد ملف PDF مرفق، راجع الملحقات الإضافية.', 'No direct PDF text attached.')}</p>
                               )}
 
                               {/* Lesson Attachments list */}
                               {activeLesson.attachments && activeLesson.attachments.length > 0 && (
                                 <div className="space-y-2 pt-2 border-t border-slate-200 dark:border-slate-900">
-                                  <p className="text-[10px] font-bold text-slate-500 dark:text-slate-400 font-mono uppercase tracking-wider">{t('ملفات الحصة المتاحة للتحميل:', 'Available Downloads:')}</p>
+                                  <p className="text-[10px] font-bold text-slate-500 dark:text-slate-400 font-mono uppercase tracking-wider">{t('ملفات المقرر المتاحة للتحميل:', 'Available Downloads:')}</p>
                                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                                     {activeLesson.attachments.map((file, idx) => (
                                       <button
@@ -3128,8 +2584,8 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({ onLogout, on
                               return (
                                 <div className="rounded-2xl glass bg-white/85 dark:bg-slate-950/40 border border-slate-200 dark:border-slate-800/80 p-6 space-y-4">
                                   <div className="border-s border-brand-cyan/40 ps-4 text-xs">
-                                    <span className="text-[10px] font-mono text-brand-cyan font-bold uppercase tracking-wider">Required Homework</span>
-                                    <h4 className="font-black text-slate-900 dark:text-white text-sm mt-1">{t('📝 قسم الشيتات والتكليفات الأسبوعية لمقرر المادة:', 'Weekly Problem Sheets & Lab Assignments:')}</h4>
+                                    <span className="text-[10px] font-mono text-brand-cyan font-bold uppercase tracking-wider">Academic Tasks</span>
+                                    <h4 className="font-black text-slate-900 dark:text-white text-sm mt-1">{t('📝 قسم الشيتات والتكليفات الأسبوعية للمقرر:', 'Weekly Problem Sheets & Lab Assignments:')}</h4>
                                     
                                     {activeLesson.homework && (
                                       <p className="text-slate-700 dark:text-slate-300 mt-2 leading-relaxed bg-slate-50 dark:bg-slate-900/60 p-3 rounded-xl border border-slate-200 dark:border-slate-800/50 font-bold">{activeLesson.homework}</p>
@@ -3146,7 +2602,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({ onLogout, on
                                             className="inline-flex items-center gap-1.5 text-[11px] text-brand-cyan font-bold hover:underline cursor-pointer"
                                           >
                                             <Download className="h-3.5 w-3.5" />
-                                            <span>{t('تحميل شيت الواجب PDF المرفق 📎', 'Download Homework Sheet PDF')}</span>
+                                            <span>{t('تحميل شيت التكليف PDF المرفق 📎', 'Download Assignment Sheet PDF')}</span>
                                           </button>
                                         )}
                                       </div>
@@ -3160,13 +2616,13 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({ onLogout, on
                                         rows={4}
                                         value={homeworkText}
                                         onChange={e => setHomeworkText(e.target.value)}
-                                        placeholder={t('قم بكتابة الحلول أو كتابة تم حل الواجب بالمذكرة المرفقة...', 'Submit homework solutions here...')}
+                                        placeholder={t('قم بكتابة الحلول أو إرفاق تفاصيل الحل...', 'Submit assignment solutions here...')}
                                         className="w-full rounded-xl bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-3 text-slate-900 dark:text-white focus:outline-none focus:border-brand-cyan"
                                       />
                                     </div>
 
                                     <div>
-                                      <label className="block mb-1.5 font-semibold text-slate-900 dark:text-white">{t('إرفاق صورة أو ملف الـ PDF لحل الواجب (اختياري):', 'Attach Homework PDF/Image (Optional):')}</label>
+                                      <label className="block mb-1.5 font-semibold text-slate-900 dark:text-white">{t('إرفاق صورة أو ملف PDF للحل (اختياري):', 'Attach Solution PDF/Image (Optional):')}</label>
                                       <div className="flex items-center gap-4">
                                         <input
                                           type="file"
@@ -3181,18 +2637,18 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({ onLogout, on
                                       disabled={actionLoading}
                                       className="rounded-xl bg-brand-cyan text-white dark:text-slate-950 hover:bg-brand-cyan-light px-6 py-3 font-bold transition-all disabled:opacity-50 cursor-pointer shadow-lg shadow-cyan-950/20"
                                     >
-                                      {actionLoading ? t('جاري تسليم الواجب...', 'Submitting Homework...') : t('تسليم حل الواجب للمهندس والتقييم', 'Submit Assignment')}
+                                      {actionLoading ? t('جاري تسليم التكليف...', 'Submitting...') : t('تسليم حل التكليف للتقييم', 'Submit Assignment')}
                                     </button>
                                   </form>
                                 </div>
                               );
                             })()}
 
-                            {/* Real-time Lesson Comments Panel */}
+                            {/* Real-time Discussion Panel */}
                             <div className="rounded-2xl glass bg-white/85 dark:bg-slate-950/40 border border-slate-200 dark:border-slate-800/80 p-6 space-y-4">
                               <h4 className="font-bold text-slate-900 dark:text-white text-sm flex items-center gap-2">
                                 <MessageSquare className="h-4.5 w-4.5 text-brand-cyan" />
-                                {t('الأسئلة والتعليقات على الدرس', 'Lesson Q&A Discussion Forum')}
+                                {t('الأسئلة والتعليقات الأكاديمية', 'Subject Q&A Discussion Forum')}
                               </h4>
 
                               {/* Message submit */}
@@ -3202,7 +2658,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({ onLogout, on
                                   required
                                   value={newCommentText}
                                   onChange={e => setNewCommentText(e.target.value)}
-                                  placeholder={t('اطرح سؤالاً على المهندس أو اكتب تعليقك...', 'Ask Eng/Mohamed abdal tawab or drop a query...')}
+                                  placeholder={t('اطرح سؤالاً أكاديمياً أو اكتب تعليقك...', 'Ask Eng/Mohamed abdal tawab or drop a query...')}
                                   className="flex-grow rounded-xl bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 px-4 py-3 text-slate-900 dark:text-white focus:outline-none focus:border-brand-cyan"
                                 />
                                 <button
@@ -3228,7 +2684,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({ onLogout, on
                                           <div className="flex justify-between items-center mb-1">
                                             <span className="font-black text-brand-cyan text-[11px] flex items-center gap-1.5">
                                               <span className="w-1.5 h-1.5 rounded-full bg-brand-cyan"></span>
-                                              {t('رد الأستاذ / محمد عبد التواب', 'Instructor Reply - Eng/Mohamed abdal tawab')}
+                                              {t('رد المشرف الأكاديمي — م. محمد عبد التواب', 'Academic Supervisor Reply — Eng/Mohamed abdal tawab')}
                                             </span>
                                             {comm.replyTimestamp && (
                                               <span className="text-[9px] text-slate-500 font-mono">{new Date(comm.replyTimestamp).toLocaleString('ar-EG')}</span>
@@ -3240,7 +2696,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({ onLogout, on
                                     </div>
                                   ))
                                 ) : (
-                                  <p className="text-xs text-slate-500">{t('لا يوجد أسئلة حالية، كن الأول في طرح سؤال!', 'No comments on this lesson yet. Be the first to ask!')}</p>
+                                  <p className="text-xs text-slate-500">{t('لا توجد أسئلة حالية، كن الأول في طرح سؤال!', 'No comments yet. Be the first to ask!')}</p>
                                 )}
                               </div>
                             </div>
@@ -3248,15 +2704,15 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({ onLogout, on
                           </div>
                         ) : (
                           <div className="py-12 text-center text-slate-500">
-                            {t('لا يوجد حصص دراسية متاحة حالياً.', 'No lessons found inside this curriculum.')}
+                            {t('لا توجد محاضرات أو سكاشن متاحة حالياً.', 'No materials found inside this curriculum.')}
                           </div>
                         )}
                       </div>
 
-                      {/* Lesson Navigation Sidebar */}
+                      {/* Navigation Sidebar */}
                       <div className="lg:col-span-1 space-y-4">
                         
-                        {/* Course Quiz access widget */}
+                        {/* Quiz access widget */}
                         {(() => {
                           const courseQuizzes = quizzes.filter(q => q.published !== false && q.courseId === selectedCourse.id);
                           if (courseQuizzes.length === 0) return null;
@@ -3267,7 +2723,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({ onLogout, on
                                 {t('🏆 قسم الامتحانات وبنك الأسئلة (Exams & Test Archive)', 'University Exams & Test Archive')}
                               </h4>
                               <p className="text-[11px] text-slate-600 dark:text-slate-400">
-                                {t('اختبارات فورية للمذاكرة والتقييم الذاتي والحصول على شهادة التخرج.', 'Take these online exams to test your concepts and unlock graduation certificate.')}
+                                {t('اختبارات فورية للمذاكرة والتقييم الذاتي والحصول على شهادة الإتمام.', 'Take these online exams to test your concepts and unlock completion certificate.')}
                               </p>
                               
                               {courseQuizzes.map(associatedQuiz => {
@@ -3286,7 +2742,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({ onLogout, on
                                       className="w-full rounded-lg bg-brand-cyan text-white dark:text-slate-950 hover:bg-brand-cyan-light py-2 px-3 font-bold text-[11px] transition-all flex items-center justify-center gap-1 cursor-pointer shadow"
                                     >
                                       <CheckCircle2 className="h-3.5 w-3.5" />
-                                      <span>{isSolved ? t('مراجعة النتيجة', 'Review Result') : t('ابدأ الامتحان الآن', 'Start Quiz Now')}</span>
+                                      <span>{isSolved ? t('مراجعة النتيجة', 'Review Result') : t('ابدأ الامتحان الآن', 'Start Exam Now')}</span>
                                     </button>
                                   </div>
                                 );
@@ -3295,9 +2751,9 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({ onLogout, on
                           );
                         })()}
 
-                        {/* Lessons List Navigation card */}
+                        {/* Syllabus List Navigation card */}
                         <div className="rounded-2xl glass bg-white/85 dark:bg-slate-950/40 border border-slate-200 dark:border-slate-800/80 p-4 space-y-3">
-                          <h4 className="font-bold text-slate-900 dark:text-white text-xs px-2 uppercase font-mono tracking-wider">{t('قائمة الحصص والمحاضرات', 'Lessons Syllabus')}</h4>
+                          <h4 className="font-bold text-slate-900 dark:text-white text-xs px-2 uppercase font-mono tracking-wider">{t('قائمة المحاضرات والسكاشن', 'Subject Syllabus')}</h4>
                           
                           <div className="space-y-1 max-h-[450px] overflow-y-auto pr-1">
                             {selectedCourse.lessons && selectedCourse.lessons.map((lesson, idx) => {
@@ -3373,140 +2829,6 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({ onLogout, on
                         language={language}
                         reason={currentUser?.status === 'rejected' ? 'rejected' : currentUser?.status === 'suspended' ? 'suspended' : 'pending_approval'}
                       />
-                    );
-                  }
-
-                  if (activeOnlineExam) {
-                    const examQs = activeOnlineExam.questions || [];
-                    return (
-                      <motion.div
-                        key="online-exam-runner"
-                        initial={{ opacity: 0, y: 10 }}
-                        animate={{ opacity: 1, y: 0 }}
-                        className="rounded-2xl glass bg-white/85 dark:bg-slate-950/40 border border-slate-200 dark:border-slate-800/80 p-6 md:p-8 space-y-6"
-                      >
-                        <div className="border-b border-slate-200 dark:border-slate-900 pb-4 flex flex-wrap justify-between items-center gap-4">
-                          <div>
-                            <span className="text-[10px] font-mono font-bold text-brand-cyan uppercase tracking-wider">{activeOnlineExam.subject}</span>
-                            <h3 className="text-lg font-black text-slate-900 dark:text-white mt-1">{activeOnlineExam.title}</h3>
-                          </div>
-                          <div className="flex items-center gap-3">
-                            {!onlineExamSubmitted && (
-                              <div className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-amber-500/10 border border-amber-500/20 text-amber-600 dark:text-amber-400 font-mono font-bold text-xs tabular-nums">
-                                <Clock className="h-4 w-4 shrink-0" />
-                                <span>{formatQuizTime(onlineExamTimeLeft)}</span>
-                              </div>
-                            )}
-                            <button
-                              type="button"
-                              onClick={() => { setActiveOnlineExam(null); setOnlineExamSubmitted(null); }}
-                              className="rounded-lg bg-slate-100 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-2 text-slate-500 hover:text-slate-900 dark:hover:text-white cursor-pointer"
-                            >
-                              <X className="h-4.5 w-4.5" />
-                            </button>
-                          </div>
-                        </div>
-
-                        {onlineExamSubmitted ? (
-                          <div className="space-y-6 py-4">
-                            <div className="text-center py-6 space-y-3 bg-slate-100 dark:bg-slate-900/40 rounded-2xl border border-slate-200 dark:border-slate-800 p-6">
-                              <h4 className="text-xl font-black text-slate-900 dark:text-white">{t('تم تسليم الامتحان الإلكتروني!', 'Online Exam Submitted!')}</h4>
-                              <p className="text-xs text-slate-500 dark:text-slate-400">
-                                {t(`الإجابات الصحيحة: ${onlineExamSubmitted.correctCount} من ${onlineExamSubmitted.totalQuestions}`, `Correct: ${onlineExamSubmitted.correctCount} / ${onlineExamSubmitted.totalQuestions}`)}
-                              </p>
-                              <h3 className="text-4xl font-black text-brand-cyan font-mono tabular-nums">{onlineExamSubmitted.percentage}%</h3>
-                            </div>
-
-                            {activeOnlineExam.showResultsImmediately !== false ? (
-                              <div className="space-y-4">
-                                {examQs.map((q, qIdx) => {
-                                  const studentAns = onlineExamSubmitted.answers?.[q.id];
-                                  const rightIdx = q.correctAnswerIndex ?? q.correctAnswer ?? 0;
-                                  const isRight = studentAns === rightIdx;
-                                  return (
-                                    <div key={q.id || qIdx} className="rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950 p-4 space-y-3">
-                                      <div className="flex items-start justify-between gap-2">
-                                        <h5 className="text-xs sm:text-sm font-bold text-slate-900 dark:text-white">
-                                          <span className="text-brand-cyan font-mono mr-1.5">{qIdx + 1}.</span>
-                                          {q.questionText || q.question}
-                                        </h5>
-                                        <span className={`px-2 py-0.5 rounded text-[10px] font-bold shrink-0 ${isRight ? 'bg-emerald-500/15 text-emerald-500' : 'bg-rose-500/15 text-rose-500'}`}>
-                                          {isRight ? t('صحيحة', 'Correct') : t('خاطئة', 'Wrong')}
-                                        </span>
-                                      </div>
-                                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
-                                        {q.options.map((opt, oIdx) => {
-                                          const chosen = studentAns === oIdx;
-                                          const rightOpt = oIdx === rightIdx;
-                                          return (
-                                            <div key={oIdx} className={`p-3 rounded-xl border ${
-                                              rightOpt ? 'bg-emerald-500/10 border-emerald-500/40 text-emerald-600 dark:text-emerald-300 font-bold' :
-                                              chosen ? 'bg-rose-500/10 border-rose-500/40 text-rose-500 font-bold' :
-                                              'bg-slate-50 dark:bg-slate-900/40 border-slate-200 dark:border-slate-800 text-slate-500'
-                                            }`}>
-                                              {opt}
-                                            </div>
-                                          );
-                                        })}
-                                      </div>
-                                      {q.explanation && (
-                                        <p className="text-[11px] text-slate-500 dark:text-slate-400 bg-slate-50 dark:bg-slate-900/60 p-2.5 rounded-lg">
-                                          <strong>{t('التوضيح:', 'Explanation:')}</strong> {q.explanation}
-                                        </p>
-                                      )}
-                                    </div>
-                                  );
-                                })}
-                              </div>
-                            ) : (
-                              <p className="text-xs text-center text-slate-500">{t('سيتم إعلان تفاصيل الإجابات بعد مراجعة الإدارة.', 'Detailed answer review will be released by administrator.')}</p>
-                            )}
-                          </div>
-                        ) : (
-                          <div className="space-y-5">
-                            {examQs.map((q, qIdx) => (
-                              <div key={q.id || qIdx} className="rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950 p-5 space-y-3">
-                                <div className="flex items-start justify-between gap-2">
-                                  <h4 className="text-xs sm:text-sm font-black text-slate-900 dark:text-white flex gap-2">
-                                    <span className="text-brand-cyan font-mono">{qIdx + 1}.</span>
-                                    <span>{q.questionText || q.question}</span>
-                                  </h4>
-                                  <span className="text-[10px] font-mono text-slate-400 tabular-nums shrink-0">{q.points || 1} pts</span>
-                                </div>
-                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
-                                  {q.options.map((opt, oIdx) => {
-                                    const selected = onlineExamAnswers[q.id] === oIdx;
-                                    return (
-                                      <button
-                                        key={oIdx}
-                                        type="button"
-                                        onClick={() => setOnlineExamAnswers(prev => ({ ...prev, [q.id]: oIdx }))}
-                                        className={`w-full rounded-xl p-3.5 text-right border transition-all cursor-pointer font-bold ${
-                                          selected
-                                            ? 'bg-brand-cyan/15 border-brand-cyan text-brand-cyan-dark dark:text-brand-cyan-light'
-                                            : 'bg-slate-50 dark:bg-slate-900/40 border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-300'
-                                        }`}
-                                      >
-                                        {opt}
-                                      </button>
-                                    );
-                                  })}
-                                </div>
-                              </div>
-                            ))}
-                            <div className="pt-4 border-t border-slate-200 dark:border-slate-900 flex justify-end">
-                              <button
-                                type="button"
-                                onClick={handleSubmitOnlineExam}
-                                disabled={isSubmittingOnlineExam}
-                                className="rounded-xl bg-brand-cyan text-white dark:text-slate-950 hover:bg-brand-cyan-light px-6 py-3 font-bold text-xs cursor-pointer shadow-lg disabled:opacity-50"
-                              >
-                                {isSubmittingOnlineExam ? t('جاري التصحيح...', 'Grading...') : t('تسليم الامتحان وإظهار النتيجة', 'Submit & Grade Exam')}
-                              </button>
-                            </div>
-                          </div>
-                        )}
-                      </motion.div>
                     );
                   }
 
@@ -3628,7 +2950,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({ onLogout, on
                               </div>
                             ) : (
                               <div className="p-4 rounded-xl bg-slate-100 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800 text-xs text-slate-600 dark:text-slate-400 text-center">
-                                {t('تنبيه: تم إخفاء نموذج الإجابة لهذا الاختبار بناءً على إعدادات المعلم.', 'Notice: Answer keys are hidden for this test as per teacher settings.')}
+                                {t('تنبيه: تم إخفاء نموذج الإجابة لهذا الامتحان بناءً على إعدادات الإدارة الأكاديمية.', 'Notice: Answer keys are hidden for this exam as per administrator settings.')}
                               </div>
                             )}
 
@@ -3702,160 +3024,17 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({ onLogout, on
                       </div>
                     ) : (
                       <div className="space-y-6">
-                        {/* Official IT Exams Section */}
-                        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 border-b border-slate-200 dark:border-slate-800 pb-4">
-                          <div>
-                            <h3 className="font-black text-slate-900 dark:text-white text-base sm:text-lg flex items-center gap-2">
-                              <GraduationCap className="h-5 w-5 text-brand-cyan" />
-                              {t('بنك امتحانات قسم IT (أوراق الأسئلة ونماذج الإجابة)', 'IT Dept Exams & Model Answers')}
-                            </h3>
-                            <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
-                              {t('حمّل نماذج امتحانات الميدترم والفاينل وأوراق الأسئلة الرسمية بصيغة PDF.', 'Download official midterm, final exams and answer keys in PDF.')}
-                            </p>
-                          </div>
-                          <span className="text-xs font-mono font-bold px-3 py-1 rounded-full bg-cyan-500/10 text-brand-cyan border border-cyan-500/20">
-                            {exams.length} {t('امتحان رسمي', 'Exams')}
-                          </span>
-                        </div>
-
-                        {/* Filter Pills & Search */}
-                        <div className="flex flex-col md:flex-row gap-3">
-                          <div className="relative flex-1">
-                            <Search className="absolute right-3.5 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-500 pointer-events-none" />
-                            <input
-                              type="text"
-                              value={contentSearch}
-                              onChange={(e) => setContentSearch(e.target.value)}
-                              placeholder={t('ابحث في عنوان الامتحان أو المادة...', 'Search exam title or subject...')}
-                              className="w-full rounded-xl bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 pr-10 pl-4 py-2.5 text-xs text-slate-900 dark:text-white placeholder-slate-500 focus:outline-none focus:border-brand-cyan transition-colors"
-                            />
-                          </div>
-                          <div className="flex items-center gap-2 overflow-x-auto pb-1 max-w-full">
-                            {['all', 'Physics', 'Python', 'IT Essentials', 'Mathematics', 'Cyber Security', 'English'].map(subj => {
-                              const labels: Record<string, string> = {
-                                'all': t('جميع المواد', 'All Subjects'),
-                                'Physics': t('الفيزياء', 'Physics'),
-                                'Python': t('بايثون', 'Python'),
-                                'IT Essentials': t('أساسيات IT', 'IT Essentials'),
-                                'Mathematics': t('الرياضيات', 'Mathematics'),
-                                'Cyber Security': t('الأمن السيبراني', 'Cyber Security'),
-                                'English': t('اللغة الإنجليزية', 'English')
-                              };
-                              return (
-                                <button
-                                  key={subj}
-                                  type="button"
-                                  onClick={() => setCourseFilter(subj)}
-                                  className={`px-3 py-1.5 rounded-xl text-xs font-bold shrink-0 transition-all cursor-pointer border ${
-                                    courseFilter === subj
-                                      ? 'bg-brand-cyan text-white dark:text-slate-950 border-brand-cyan shadow-md shadow-cyan-950/30'
-                                      : 'bg-white dark:bg-slate-900/80 text-slate-700 dark:text-slate-300 border-slate-200 dark:border-slate-800 hover:border-slate-400 dark:hover:border-slate-700'
-                                  }`}
-                                >
-                                  {labels[subj] || subj}
-                                </button>
-                              );
-                            })}
-                          </div>
-                        </div>
-
-                        {/* Official Exams Grid */}
-                        {(() => {
-                          const filteredOfficialExams = exams.filter(ex => {
-                            const exSubj = ex.subject || ex.courseTitle || '';
-                            const matchesCourse = courseFilter === 'all' || (exSubj && (exSubj.toLowerCase().includes(courseFilter.toLowerCase()) || courseFilter.toLowerCase().includes(exSubj.toLowerCase())));
-                            const q = contentSearch.trim().toLowerCase();
-                            const matchesSearch = !q || 
-                              ex.title.toLowerCase().includes(q) || 
-                              (exSubj && exSubj.toLowerCase().includes(q)) ||
-                              (ex.description && ex.description.toLowerCase().includes(q));
-                            return matchesCourse && matchesSearch;
-                          });
-
-                          return filteredOfficialExams.length > 0 ? (
-                            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
-                              {filteredOfficialExams.map((ex) => {
-                                const qPdf = ex.questionsPdfUrl || ex.questionsFileUrl;
-                                const aPdf = ex.modelAnswerUrl || ex.answersFileUrl;
-                                return (
-                                <div
-                                  key={ex.id}
-                                  className="rounded-2xl glass border border-slate-200 dark:border-slate-800 bg-white/85 dark:bg-slate-950/50 p-5 flex flex-col justify-between hover:border-cyan-500/40 transition-all group relative overflow-hidden"
-                                >
-                                  <div className="space-y-3">
-                                    <div className="flex items-center justify-between gap-2">
-                                      <span className="px-2.5 py-0.5 rounded-lg bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20 text-[10px] font-bold">
-                                        {ex.subject || ex.courseTitle || 'IT'}
-                                      </span>
-                                      {ex.examDate && (
-                                        <span className="text-[10px] font-mono text-slate-500 dark:text-slate-400 bg-slate-100 dark:bg-slate-900 px-2 py-0.5 rounded-lg border border-slate-200 dark:border-slate-800 flex items-center gap-1">
-                                          <Calendar className="h-3 w-3" />
-                                          {ex.examDate}
-                                        </span>
-                                      )}
-                                    </div>
-
-                                    <h4 className="text-sm font-black text-slate-900 dark:text-white group-hover:text-brand-cyan transition-colors line-clamp-2">
-                                      {ex.title}
-                                    </h4>
-
-                                    {ex.description && (
-                                      <p className="text-xs text-slate-600 dark:text-slate-400 line-clamp-2 leading-relaxed">
-                                        {ex.description}
-                                      </p>
-                                    )}
-                                  </div>
-
-                                  <div className="pt-4 border-t border-slate-200 dark:border-slate-900 mt-4 space-y-2">
-                                    {ex.isOnlineExam && ex.questions && ex.questions.length > 0 && (() => {
-                                      const prevSub = examSubmissions.find(s => s.examId === ex.id);
-                                      return (
-                                        <button
-                                          type="button"
-                                          onClick={() => handleStartOnlineExam(ex)}
-                                          className="w-full flex items-center justify-center gap-2 rounded-xl bg-brand-cyan text-white dark:text-slate-950 hover:bg-brand-cyan-light py-2.5 text-xs font-bold transition-all cursor-pointer"
-                                        >
-                                          <CheckSquare className="h-4 w-4" />
-                                          <span>
-                                            {prevSub
-                                              ? t(`مراجعة نتيجتك (${prevSub.percentage}%)`, `View Score (${prevSub.percentage}%)`)
-                                              : t(`بدء الامتحان الإلكتروني (${ex.questions.length} سؤال)`, `Start Online Exam (${ex.questions.length} Qs)`)}
-                                          </span>
-                                        </button>
-                                      );
-                                    })()}
-
-                                    {qPdf && (
-                                      <button
-                                        type="button"
-                                        onClick={() => setActivePdfModal({ url: qPdf, title: `${ex.title} (ورقة الأسئلة PDF)` })}
-                                        className="w-full flex items-center justify-center gap-2 rounded-xl bg-brand-cyan/15 hover:bg-brand-cyan/25 text-brand-cyan border border-cyan-500/30 py-2.5 text-xs font-bold transition-all cursor-pointer"
-                                      >
-                                        <FileText className="h-4 w-4" />
-                                        <span>{t('تحميل ورقة الأسئلة (PDF)', 'Download Questions PDF')}</span>
-                                      </button>
-                                    )}
-
-                                    {aPdf && (
-                                      <button
-                                        type="button"
-                                        onClick={() => setActivePdfModal({ url: aPdf, title: `${ex.title} (نموذج الإجابة الرسمي PDF)` })}
-                                        className="w-full flex items-center justify-center gap-2 rounded-xl bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30 py-2.5 text-xs font-bold transition-all cursor-pointer"
-                                      >
-                                        <CheckCircle2 className="h-4 w-4" />
-                                        <span>{t('نموذج الإجابة الرسمي (PDF)', 'Download Model Answer PDF')}</span>
-                                      </button>
-                                    )}
-                                  </div>
-                                </div>
-                              );})}
-                            </div>
-                          ) : (
-                            <div className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white/80 dark:bg-slate-950/40 p-8 text-center space-y-2">
-                              <p className="text-xs text-slate-500">{t('لا توجد امتحانات رسمية مرفوعة حالياً لهذه المادة.', 'No official exam papers uploaded for this subject yet.')}</p>
-                            </div>
-                          );
-                        })()}
+                        <StudentExamsView
+                          exams={exams}
+                          courses={courses}
+                          currentUser={currentUser}
+                          onOpenPdf={(url, title) => setActivePdfModal({ url, title })}
+                          onExamSubmitted={(sub) => {
+                            setExamSubmissions(prev => [sub, ...prev.filter(x => x.id !== sub.id)]);
+                            setSuccessMsg(t('تم تسليم الامتحان وحفظ نتيجتك بنجاح!', 'Exam submitted and recorded successfully!'));
+                            setTimeout(() => setSuccessMsg(''), 4000);
+                          }}
+                        />
 
                         {/* Online Interactive Quizzes (if available) */}
                         {publishedQuizzes.length > 0 && (
@@ -3920,8 +3099,8 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({ onLogout, on
                     {/* Header & Subtab Switcher */}
                     <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 border-b border-slate-200 dark:border-slate-900 pb-4">
                       <div>
-                        <h3 className="font-bold text-slate-900 dark:text-white text-base">{t('قسم الواجبات والشييتات والتكليفات الدراسية', 'Homework & Assignments Section')}</h3>
-                        <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">{t('استعرض الواجبات المتاحة وحمّل الشيتات وسجل تسليماتك وتصحيح الأساتذة', 'Browse available homework tasks, download sheets, and view your grades')}</p>
+                        <h3 className="font-bold text-slate-900 dark:text-white text-base">{t('قسم التكليفات والمشاريع والشيتات الدراسية', 'Academic Assignments & Tasks Section')}</h3>
+                        <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">{t('استعرض التكليفات المتاحة وحمّل الشيتات وسجل تسليماتك وتقييم المشرف الأكاديمي', 'Browse available academic tasks, download sheets, and view your grades')}</p>
                       </div>
 
                       <div className="flex flex-wrap bg-slate-100 dark:bg-slate-950 p-1 rounded-xl border border-slate-200 dark:border-slate-800 text-xs">
@@ -3933,7 +3112,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({ onLogout, on
                           }`}
                         >
                           <FileText className="h-4 w-4" />
-                          <span>{t('الواجبات والتكليفات المتاحة', 'Available Homework')}</span>
+                          <span>{t('التكليفات المتاحة', 'Available Assignments')}</span>
                           {publishedAssignmentTasks.length > 0 && (
                             <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-mono ${assignmentsSubTab === 'tasks' ? 'bg-slate-950/20 text-white dark:bg-slate-950 dark:text-white' : 'bg-slate-200 dark:bg-slate-800 text-brand-cyan'}`}>
                               {publishedAssignmentTasks.length}
@@ -3969,8 +3148,8 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({ onLogout, on
                             return (
                               <div className="text-center py-16 rounded-2xl border border-slate-200 dark:border-slate-800/80 bg-white/80 dark:bg-slate-950/40 p-8 text-slate-500 space-y-3">
                                 <FileText className="mx-auto h-12 w-12 text-slate-400 dark:text-slate-600" />
-                                <h4 className="font-bold text-slate-900 dark:text-white text-sm">{t('لا يوجد تكليفات واجبات متاحة حالياً', 'No homework assignments currently available')}</h4>
-                                <p className="text-xs text-slate-500 dark:text-slate-400 max-w-md mx-auto">{t('سيقوم الأستاذ بإضافة الشيتات والواجبات المدرسية هنا فور تجهيزها.', 'Your teacher will add homework tasks and sheets here when published.')}</p>
+                                <h4 className="font-bold text-slate-900 dark:text-white text-sm">{t('لا توجد تكليفات دراسية متاحة حالياً', 'No academic assignments currently available')}</h4>
+                                <p className="text-xs text-slate-500 dark:text-slate-400 max-w-md mx-auto">{t('سيقوم المشرف الأكاديمي بإضافة الشيتات والتكليفات الجامعية هنا فور نشرها.', 'The academic supervisor will publish tasks and sheets here.')}</p>
                               </div>
                             );
                           }
@@ -3989,7 +3168,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({ onLogout, on
                                       <div className="flex flex-wrap items-center justify-between gap-2">
                                         <div className="flex items-center gap-1.5 flex-wrap">
                                           <span className="rounded-full bg-brand-cyan/10 text-brand-cyan border border-brand-cyan/20 px-2.5 py-0.5 text-[10px] font-bold">
-                                            {task.visibility === 'course' ? (task.courseName || (course ? course.titleAr : t('كورس مخصص', 'Course'))) : t('🌍 مجاني', 'Free')}
+                                            {task.visibility === 'course' ? (task.courseName || (course ? course.titleAr : t('مقرر دراسي', 'Subject'))) : t('🌍 متاح مجاناً', 'Free')}
                                           </span>
                                           {gradeName && (
                                             <span className="rounded-full bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20 px-2.5 py-0.5 text-[10px] font-bold">
@@ -4002,7 +3181,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({ onLogout, on
                                           <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold font-mono ${
                                             mySub.status === 'graded' ? 'bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30' : 'bg-amber-500/20 text-amber-600 dark:text-amber-400 border border-amber-500/30'
                                           }`}>
-                                            {mySub.status === 'graded' ? `${t('تم التصحيح والتقييم:', 'Graded:')} ${mySub.grade}` : t('تم التسليم (قيد التصحيح) ⏳', 'Submitted (Pending)')}
+                                            {mySub.status === 'graded' ? `${t('تم التقييم ورصد الدرجة:', 'Graded:')} ${mySub.grade}` : t('تم التسليم (قيد المراجعة) ⏳', 'Submitted (Pending)')}
                                           </span>
                                         ) : (
                                           <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-slate-100 dark:bg-slate-900 text-slate-500 dark:text-slate-400 border border-slate-200 dark:border-slate-800 font-mono">
@@ -4028,7 +3207,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({ onLogout, on
                                         {task.deadline && (
                                           <span className="flex items-center gap-1 text-amber-600 dark:text-amber-400">
                                             <Clock className="h-3.5 w-3.5" />
-                                            {t('أخر موعد:', 'Deadline:')} {task.deadline}
+                                            {t('آخر موعد:', 'Deadline:')} {task.deadline}
                                           </span>
                                         )}
                                       </div>
@@ -4040,7 +3219,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({ onLogout, on
                                           className="w-full inline-flex items-center justify-center gap-2 rounded-xl bg-slate-100 dark:bg-slate-900 hover:bg-slate-200 dark:hover:bg-slate-800 border border-slate-200 dark:border-slate-800 px-3.5 py-2.5 text-brand-cyan font-bold transition-all cursor-pointer"
                                         >
                                           <Download className="h-4 w-4" />
-                                          <span>{t('تحميل / فتح شيت الواجب PDF المرفق 📎', 'View / Download Homework Sheet PDF')}</span>
+                                          <span>{t('تحميل / فتح ملف التكليف PDF 📎', 'View / Download Assignment PDF')}</span>
                                         </button>
                                       )}
                                     </div>
@@ -4059,7 +3238,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({ onLogout, on
                                         }`}
                                       >
                                         <Upload className="h-4 w-4" />
-                                        <span>{isSubmitted ? t('تحديث أو إعادة تسليم الواجب', 'Update Submission') : t('تسليم حل الواجب الآن 📝', 'Submit Homework Now')}</span>
+                                        <span>{isSubmitted ? t('تحديث أو إعادة تسليم الحل', 'Update Submission') : t('تسليم حل التكليف الآن 📝', 'Submit Assignment Now')}</span>
                                       </button>
                                     </div>
                                   </div>
@@ -4083,7 +3262,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({ onLogout, on
                                     <span className={`inline-flex px-2 py-0.5 rounded text-[9px] font-bold font-mono ${
                                       assign.status === 'graded' ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20' : 'bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20'
                                     }`}>
-                                      {assign.status === 'graded' ? t('تم التصحيح والتقييم', 'Graded') : t('قيد مراجعة المصححين والأساتذة', 'Pending Correction')}
+                                      {assign.status === 'graded' ? t('تم التقييم ورصد الدرجة', 'Graded') : t('قيد مراجعة المشرف الأكاديمي', 'Pending Evaluation')}
                                     </span>
                                   </div>
 
@@ -4125,7 +3304,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({ onLogout, on
                                       <span className="text-brand-cyan font-black text-sm font-mono">{assign.grade}</span>
                                     </div>
                                     <p className="text-[11px] text-slate-700 dark:text-slate-300 italic">
-                                      <strong>{t('ملاحظة المهندس المساعد:', 'Teacher Feedback:')}</strong> {assign.feedback || t('ممتاز استمر بالمجهود المتميز!', 'Well done, keep up!')}
+                                      <strong>{t('ملاحظة المشرف الأكاديمي:', 'Supervisor Feedback:')}</strong> {assign.feedback || t('ممتاز استمر بالمجهود المتميز!', 'Well done, keep up!')}
                                     </p>
                                   </div>
                                 )}
@@ -4134,7 +3313,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({ onLogout, on
                           </div>
                         ) : (
                           <div className="text-center py-12 text-slate-500 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white/80 dark:bg-slate-950/40 p-8">
-                            {t('لا يوجد واجبات مسلمة حتى الآن. افتح التكليفات المتاحة لتسليم الواجب.', 'No homework submissions found.')}
+                            {t('لا توجد تكليفات مسلمة حتى الآن. افتح التكليفات المتاحة لتسليم الحل.', 'No assignment submissions found.')}
                           </div>
                         )}
                       </div>
@@ -4156,11 +3335,11 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({ onLogout, on
                       <div className="border-b border-slate-200 dark:border-slate-900 pb-4 flex items-center justify-between gap-2">
                         <div className="flex items-center gap-3 min-w-0">
                           <div className="h-10 w-10 rounded-full bg-cyan-500/10 border border-brand-cyan/20 flex items-center justify-center text-xl shrink-0">
-                            👨‍🏫
+                            🎓
                           </div>
                           <div className="min-w-0">
-                            <h4 className="text-xs sm:text-sm font-black text-slate-900 dark:text-white truncate">{t('الاستشارات المباشرة والمساعدين المخصصين', 'Live Counselor Support')}</h4>
-                            <p className="text-[10px] text-slate-500 dark:text-slate-400 mt-0.5 truncate">{t('رد فوري خلال اليوم مع م. محمد عبد التواب ومساعديه للعلوم', 'Direct chat with Eng/Mohamed abdal tawab and his assistants')}</p>
+                            <h4 className="text-xs sm:text-sm font-black text-slate-900 dark:text-white truncate">{t('التواصل المباشر مع إدارة المنصة الجامعية', 'Live Academic Support')}</h4>
+                            <p className="text-[10px] text-slate-500 dark:text-slate-400 mt-0.5 truncate">{t('تواصل مباشر مع المشرف الأكاديمي م. محمد عبد التواب وفريق الإدارة', 'Direct chat with Eng/Mohamed abdal tawab and IT platform administration')}</p>
                           </div>
                         </div>
 
@@ -4250,7 +3429,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({ onLogout, on
                       </div>
 
                       <div>
-                        <label className="block mb-1.5 font-semibold text-slate-900 dark:text-white">{t('رقم الموبايل / واتساب لتأكيد الاشتراك', 'Mobile Phone Number')}</label>
+                        <label className="block mb-1.5 font-semibold text-slate-900 dark:text-white">{t('رقم الموبايل / الواتساب الموثق', 'Mobile Phone Number')}</label>
                         <input
                           type="text"
                           required
@@ -4260,23 +3439,39 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({ onLogout, on
                         />
                       </div>
 
-                      <div>
-                        <label className="block mb-1.5 font-semibold text-slate-900 dark:text-white">{t('الفرقة الدراسية (IT)', 'Academic Year (IT)')}</label>
-                        <select
-                          value={profileForm.grade || 'year1'}
-                          onChange={e => setProfileForm({ ...profileForm, grade: e.target.value })}
-                          className="w-full rounded-xl bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-3 text-slate-900 dark:text-white focus:outline-none focus:border-brand-cyan text-xs sm:text-sm"
-                        >
-                          {ACADEMIC_GRADES.map(g => (
-                            <option key={g.id} value={g.id}>
-                              {t(g.nameAr, g.nameEn)}
-                            </option>
-                          ))}
-                        </select>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                        <div>
+                          <label className="block mb-1.5 font-semibold text-slate-900 dark:text-white">{t('الفرقة الدراسية (IT)', 'Academic Year (IT)')}</label>
+                          <select
+                            value={profileForm.grade || 'year1'}
+                            onChange={e => setProfileForm({ ...profileForm, grade: e.target.value })}
+                            className="w-full rounded-xl bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-3 text-slate-900 dark:text-white focus:outline-none focus:border-brand-cyan text-xs sm:text-sm"
+                          >
+                            {ACADEMIC_GRADES.map(g => (
+                              <option key={g.id} value={g.id}>
+                                {t(g.nameAr, g.nameEn)}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                        <div>
+                          <label className="block mb-1.5 font-semibold text-slate-900 dark:text-white">{t('الفصل الدراسي', 'Academic Semester')}</label>
+                          <select
+                            value={profileForm.semester || 'term1'}
+                            onChange={e => setProfileForm({ ...profileForm, semester: e.target.value })}
+                            className="w-full rounded-xl bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-3 text-slate-900 dark:text-white focus:outline-none focus:border-brand-cyan text-xs sm:text-sm"
+                          >
+                            {ACADEMIC_SEMESTERS.map(s => (
+                              <option key={s.id} value={s.id}>
+                                {t(s.nameAr, s.nameEn)}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
                       </div>
 
                       <div>
-                        <label className="block mb-1.5 font-semibold text-slate-900 dark:text-white">{t('نبذة تعريفية أو صفي الدراسي', 'My Academic Bio / Class')}</label>
+                        <label className="block mb-1.5 font-semibold text-slate-900 dark:text-white">{t('نبذة تعريفية عن مسارك الجامعي', 'My Academic Bio / Track')}</label>
                         <textarea
                           rows={3}
                           value={profileForm.bio}
@@ -4297,7 +3492,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({ onLogout, on
                   </motion.div>
                 )}
 
-                {/* SUBTAB: ACADEMY NOTIFICATIONS SYSTEM */}
+                {/* SUBTAB: UNIVERSITY NOTIFICATIONS SYSTEM */}
                 {activeTab === 'notifications' && (
                   <motion.div
                     key="notifications"
@@ -4314,7 +3509,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({ onLogout, on
                         </div>
                         <div>
                           <h3 className="text-base sm:text-lg font-black text-slate-900 dark:text-white flex items-center gap-2 flex-wrap">
-                            {t('نظام إشعارات الأكاديمية', 'Academy Notifications System')}
+                            {t('نظام إشعارات المنصة الجامعية', 'University Notifications System')}
                             {unreadNotificationsCount > 0 && (
                               <span className="rounded-full bg-amber-500/20 border border-amber-500/40 text-amber-600 dark:text-amber-300 px-2.5 py-0.5 text-xs font-mono font-bold">
                                 {unreadNotificationsCount} {t('جديد', 'New')}
@@ -4754,7 +3949,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({ onLogout, on
                       ) : (
                         <div className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white/80 dark:bg-slate-950/40 p-12 text-center space-y-2">
                           <Calendar className="h-10 w-10 text-slate-500 mx-auto" />
-                          <h4 className="text-sm font-bold text-slate-900 dark:text-white">{t('لا توجد حصص مجدولة لهذا اليوم حالياً', 'No scheduled sessions for this selection')}</h4>
+                          <h4 className="text-sm font-bold text-slate-900 dark:text-white">{t('لا توجد محاضرات أو سكاشن مجدولة لهذا اليوم حالياً', 'No scheduled sessions for this selection')}</h4>
                         </div>
                       )}
                     </motion.div>
@@ -4921,7 +4116,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({ onLogout, on
                         disabled={submittingInquiry}
                         className="rounded-xl bg-brand-cyan text-white dark:text-slate-950 hover:bg-brand-cyan-light px-6 py-3 font-bold transition-all cursor-pointer disabled:opacity-50"
                       >
-                        {submittingInquiry ? t('جاري الإرسال...', 'Sending...') : t('إرسال السؤال للأكاديمية', 'Submit Inquiry')}
+                        {submittingInquiry ? t('جاري الإرسال...', 'Sending...') : t('إرسال الاستفسار لإدارة المنصة', 'Submit Inquiry')}
                       </button>
                     </form>
 
@@ -5010,7 +4205,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({ onLogout, on
               <div className="flex-1 min-w-0">
                 <div className="flex items-center justify-between">
                   <span className="text-[10px] font-bold text-brand-cyan uppercase tracking-wider font-mono">
-                    {t('تنبيه أكاديمي فوري 🔔', 'Live Academy Alert 🔔')}
+                    {t('تنبيه جامعي فوري 🔔', 'Live University Alert 🔔')}
                   </span>
                   <button
                     type="button"
@@ -5104,7 +4299,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({ onLogout, on
                 </div>
               </div>
 
-              <p className="text-[9px] text-slate-500 dark:text-slate-600 font-mono pt-4">{t('مُثبتة وموثقة بقواعد البيانات السحابية للأكاديمية.', 'Digitally verified and logged in the cloud server configurations.')}</p>
+              <p className="text-[9px] text-slate-500 dark:text-slate-600 font-mono pt-4">{t('مُثبتة وموثقة بقواعد البيانات السحابية للمنصة الجامعية.', 'Digitally verified and logged in the cloud server configurations.')}</p>
             </div>
 
             <div className="flex flex-wrap justify-center gap-2">
@@ -5201,11 +4396,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({ onLogout, on
             </div>
 
             <div className="flex-1 rounded-xl overflow-hidden bg-slate-100 dark:bg-slate-950 border border-slate-200 dark:border-slate-800">
-              <iframe
-                src={formatPdfEmbedUrl(activePdfModal.url)}
-                className="w-full h-full border-0"
-                title={activePdfModal.title}
-              />
+              <EmbeddedPdfViewer url={activePdfModal.url} title={activePdfModal.title} />
             </div>
           </div>
         </div>
@@ -5218,7 +4409,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({ onLogout, on
             <div className="flex items-center justify-between border-b border-slate-200 dark:border-slate-800 pb-3">
               <div className="flex items-center gap-2">
                 <Upload className="h-4 w-4 text-brand-cyan" />
-                <h3 className="font-bold text-sm text-slate-900 dark:text-white">{t('تسليم حل الواجب والتكليف الدراسي', 'Submit Assignment Solution')}</h3>
+                <h3 className="font-bold text-sm text-slate-900 dark:text-white">{t('تسليم حل التكليف الدراسي', 'Submit Assignment Solution')}</h3>
               </div>
               <button
                 type="button"
@@ -5247,25 +4438,25 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({ onLogout, on
                   className="inline-flex items-center gap-1.5 text-brand-cyan hover:underline font-bold text-[11px] mt-1 cursor-pointer"
                 >
                   <Download className="h-3.5 w-3.5" />
-                  <span>{t('تنزيل شيت الواجب PDF 📎', 'Download Sheet PDF')}</span>
+                  <span>{t('تنزيل شيت التكليف PDF 📎', 'Download Sheet PDF')}</span>
                 </button>
               )}
             </div>
 
             <form onSubmit={(e) => handleAssignmentSubmit(e, selectedTaskForSubmission)} className="space-y-4">
               <div>
-                <label className="block mb-1.5 font-semibold text-slate-900 dark:text-white">{t('اكتب حل الواجب أو ملاحظاتك هنا:', 'Write your answers or notes here:')}</label>
+                <label className="block mb-1.5 font-semibold text-slate-900 dark:text-white">{t('اكتب حل التكليف أو ملاحظاتك هنا:', 'Write your answers or notes here:')}</label>
                 <textarea
                   rows={4}
                   value={homeworkText}
                   onChange={e => setHomeworkText(e.target.value)}
-                  placeholder={t('قم بكتابة الإجابة، أو توضيح أنه تم حل الواجب في المذكرة/الورقة...', 'Write your solution text or notes...')}
+                  placeholder={t('قم بكتابة الإجابة أو تفاصيل الحل المرفق...', 'Write your solution text or notes...')}
                   className="w-full rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 p-3 text-slate-900 dark:text-white focus:outline-none focus:border-brand-cyan text-xs"
                 />
               </div>
 
               <div>
-                <label className="block mb-1.5 font-semibold text-slate-900 dark:text-white">{t('إرفاق صورة الحل أو ملف الـ PDF لحل الواجب (اختياري):', 'Attach Homework PDF/Image (Optional):')}</label>
+                <label className="block mb-1.5 font-semibold text-slate-900 dark:text-white">{t('إرفاق صورة الحل أو ملف PDF (اختياري):', 'Attach Solution PDF/Image (Optional):')}</label>
                 <input
                   type="file"
                   onChange={e => setHomeworkFile(e.target.files?.[0] || null)}
@@ -5295,7 +4486,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({ onLogout, on
                   disabled={actionLoading}
                   className="flex-1 rounded-xl bg-brand-cyan text-white dark:text-slate-950 hover:bg-brand-cyan-light py-3 text-xs font-bold disabled:opacity-50 cursor-pointer shadow-lg shadow-cyan-950/20"
                 >
-                  {actionLoading ? t('جاري الإرسال والتسليم...', 'Submitting...') : t('إرسال الحل للمستشار والمساعدين', 'Submit Assignment')}
+                  {actionLoading ? t('جاري الإرسال والتسليم...', 'Submitting...') : t('إرسال الحل لإدارة المنصة للتقييم', 'Submit Assignment')}
                 </button>
               </div>
             </form>

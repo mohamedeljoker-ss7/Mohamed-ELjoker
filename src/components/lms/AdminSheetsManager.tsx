@@ -1,23 +1,26 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { AttachmentFile, Course, SheetItem, SheetSubmission } from '../../types';
+import { AttachmentFile, Course, SheetAnswerKeyDoc, SheetItem, SheetSubmission } from '../../types';
 import { dbService } from '../../firebase';
 import { useLanguage } from '../LanguageContext';
 import { FileUploadField } from '../FileUploadField';
 import { MultiFileUploadList } from './MultiFileUploadList';
-import { triggerFileDownload } from '../../utils/videoStorage';
+import { ResolvedImage } from '../ResolvedMedia';
+import { emitAppToast, triggerFileDownload } from '../../utils/videoStorage';
 import {
   ACADEMIC_GRADES,
   ACADEMIC_SEMESTERS,
   ACADEMIC_SUBJECTS,
   doesItemMatchYearAndSemester,
+  doesSubjectMatch,
   getGradeName,
   getSemesterName,
-  isContentPublished
+  isContentPublished,
+  isValidMediaOrWebUrl
 } from '../../utils/gradeMatching';
 import {
   FileText, Plus, Search, Edit3, Trash2, Eye, CheckCircle2, X, Globe, FileEdit,
   ArrowUpDown, Download, ClipboardCheck, Clock, Lock, Unlock, Send, FileSpreadsheet,
-  Image as ImageIcon, MessageSquare
+  MessageSquare, AlertCircle, EyeOff
 } from 'lucide-react';
 
 interface AdminSheetsManagerProps {
@@ -49,8 +52,11 @@ export const AdminSheetsManager: React.FC<AdminSheetsManagerProps> = ({
   const [semesterFilter, setSemesterFilter] = useState('all');
   const [subjectFilter, setSubjectFilter] = useState('all');
   const [typeFilter, setTypeFilter] = useState<'all' | 'lecture_sheet' | 'section_sheet'>('all');
-  const [statusFilter, setStatusFilter] = useState<'all' | 'published' | 'draft' | 'closed'>('all');
+  const [statusFilter, setStatusFilter] = useState<'all' | 'published' | 'draft' | 'unpublished' | 'closed'>('all');
   const [sortBy, setSortBy] = useState<'number' | 'date'>('number');
+
+  // Answer Keys fetched from private admin collection
+  const [answerKeysMap, setAnswerKeysMap] = useState<Record<string, SheetAnswerKeyDoc>>({});
 
   // Submissions state
   const [submissions, setSubmissions] = useState<SheetSubmission[]>([]);
@@ -59,12 +65,25 @@ export const AdminSheetsManager: React.FC<AdminSheetsManagerProps> = ({
   const [gradeScore, setGradeScore] = useState<string>('');
   const [gradeFeedback, setGradeFeedback] = useState<string>('');
   const [savingGrade, setSavingGrade] = useState(false);
+  const [gradeError, setGradeError] = useState<string | null>(null);
 
-  // Modal State
+  // Modal & Error State
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const [formError, setFormError] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
+  const [uploadingFields, setUploadingFields] = useState<Record<string, boolean>>({});
   const [previewItem, setPreviewItem] = useState<SheetItem | null>(null);
+
+  // In-app delete confirmation modal
+  const [deleteTarget, setDeleteTarget] = useState<SheetItem | null>(null);
+  const [deleting, setDeleting] = useState(false);
+
+  const isUploadingAny = Object.values(uploadingFields).some(Boolean);
+  const setFieldUploading = (field: string, busy: boolean) => {
+    setUploadingFields(prev => (prev[field] === busy ? prev : { ...prev, [field]: busy }));
+  };
 
   const [form, setForm] = useState({
     academicYear: 'year1',
@@ -84,10 +103,19 @@ export const AdminSheetsManager: React.FC<AdminSheetsManagerProps> = ({
     modelAnswerUrl: '',
     modelAnswerText: '',
     showAnswersToStudents: false,
-    status: 'published' as 'draft' | 'published' | 'closed',
+    status: 'published' as 'draft' | 'published' | 'unpublished' | 'closed',
     images: [] as AttachmentFile[],
     attachments: [] as AttachmentFile[]
   });
+
+  const refreshAnswerKeys = async () => {
+    try {
+      const map = await dbService.getAllSheetAnswerKeys();
+      setAnswerKeysMap(map);
+    } catch (err) {
+      console.warn('refreshAnswerKeys notice:', err);
+    }
+  };
 
   useEffect(() => {
     const unsub = dbService.listenToSheetSubmissions((subs) => {
@@ -95,6 +123,25 @@ export const AdminSheetsManager: React.FC<AdminSheetsManagerProps> = ({
     });
     return () => unsub();
   }, []);
+
+  useEffect(() => {
+    refreshAnswerKeys();
+  }, [sheets.length]);
+
+  const getMergedSheet = (sheet: SheetItem): SheetItem => {
+    const key = answerKeysMap[sheet.id];
+    if (!key) return sheet;
+    return {
+      ...sheet,
+      modelAnswerUrl: key.modelAnswerUrl || sheet.modelAnswerUrl || '',
+      modelAnswerText: key.modelAnswerText || sheet.modelAnswerText || ''
+    };
+  };
+
+  const mergedPreviewItem = useMemo(
+    () => (previewItem ? getMergedSheet(previewItem) : null),
+    [previewItem, answerKeysMap]
+  );
 
   const subjectOptions = useMemo(() => {
     const map = new Map<string, { id: string; label: string; courseId?: string }>();
@@ -126,6 +173,8 @@ export const AdminSheetsManager: React.FC<AdminSheetsManagerProps> = ({
 
   const openAddModal = () => {
     setEditingId(null);
+    setFormError(null);
+    setUploadingFields({});
     setForm({
       academicYear: yearFilter !== 'all' ? yearFilter : 'year1',
       semester: semesterFilter !== 'all' ? semesterFilter : 'term1',
@@ -151,8 +200,11 @@ export const AdminSheetsManager: React.FC<AdminSheetsManagerProps> = ({
     setIsModalOpen(true);
   };
 
-  const openEditModal = (sheet: SheetItem) => {
+  const openEditModal = (rawSheet: SheetItem) => {
+    const sheet = getMergedSheet(rawSheet);
     setEditingId(sheet.id);
+    setFormError(null);
+    setUploadingFields({});
     const existingImages: AttachmentFile[] = (sheet.imageUrls || []).map((url, idx) => ({
       id: `simg_${idx}_${Date.now()}`,
       name: `Sheet Image ${idx + 1}`,
@@ -160,8 +212,14 @@ export const AdminSheetsManager: React.FC<AdminSheetsManagerProps> = ({
       fileType: 'image'
     }));
     const sType = sheet.sheetType || sheet.type || 'lecture_sheet';
-    const currentStatus: 'draft' | 'published' | 'closed' =
-      sheet.status === 'closed' ? 'closed' : isContentPublished(sheet) ? 'published' : 'draft';
+    const currentStatus: 'draft' | 'published' | 'unpublished' | 'closed' =
+      sheet.status === 'closed'
+        ? 'closed'
+        : sheet.status === 'unpublished'
+        ? 'unpublished'
+        : isContentPublished(sheet)
+        ? 'published'
+        : 'draft';
 
     setForm({
       academicYear: sheet.academicYear || 'year1',
@@ -190,7 +248,37 @@ export const AdminSheetsManager: React.FC<AdminSheetsManagerProps> = ({
 
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!form.title.trim()) return;
+    setFormError(null);
+
+    if (isUploadingAny) {
+      setFormError(t('يرجى الانتظار حتى يكتمل رفع جميع الملفات أولاً.', 'Please wait for file uploads to complete.'));
+      return;
+    }
+    if (!form.title.trim()) {
+      setFormError(t('عنوان الشيت مطلوب.', 'Sheet title is required.'));
+      return;
+    }
+    if (!Number.isFinite(Number(form.referenceNumber)) || Number(form.referenceNumber) < 1) {
+      setFormError(t('يجب أن يكون رقم الشيت 1 فأكثر.', 'Sheet number must be 1 or greater.'));
+      return;
+    }
+    if (Number(form.totalPoints) < 0 || !Number.isFinite(Number(form.totalPoints))) {
+      setFormError(t('يجب إدخال درجة كلية صالحة.', 'Total points must be a valid non-negative number.'));
+      return;
+    }
+    if (form.deadline && Number.isNaN(Date.parse(form.deadline))) {
+      setFormError(t('تنسيق تاريخ آخر موعد للتسليم غير صالح.', 'Invalid deadline date format.'));
+      return;
+    }
+    if (
+      !isValidMediaOrWebUrl(form.pdfUrl) ||
+      !isValidMediaOrWebUrl(form.wordUrl) ||
+      !isValidMediaOrWebUrl(form.modelAnswerUrl)
+    ) {
+      setFormError(t('يوجد رابط ملف أو نموذج إجابة غير صالح.', 'One or more file URLs are invalid.'));
+      return;
+    }
+
     setSaving(true);
     try {
       const { courseId, courseTitle } = resolveCourseMeta(form.subject, form.courseId);
@@ -223,13 +311,14 @@ export const AdminSheetsManager: React.FC<AdminSheetsManagerProps> = ({
         modelAnswerText: form.modelAnswerText.trim(),
         showAnswersToStudents: form.showAnswersToStudents,
         status: form.status,
-        published: form.status !== 'draft',
+        published: form.status === 'published' || form.status === 'closed',
         updatedAt: new Date().toISOString()
       };
 
       if (editingId) {
         await dbService.updateSheet(editingId, payload);
         onLogAction('update', payload.title, `Updated ${form.sheetType} #${refNum} (${form.subject})`);
+        emitAppToast(t('تم تحديث الشيت وحفظه بنجاح.', 'Sheet updated successfully.'), 'success');
       } else {
         await dbService.addSheet(payload);
         onLogAction('create', payload.title, `Created ${form.sheetType} #${refNum} (${form.subject})`);
@@ -247,54 +336,105 @@ export const AdminSheetsManager: React.FC<AdminSheetsManagerProps> = ({
             createdAt: new Date().toISOString()
           }).catch(() => {});
         }
+        emitAppToast(t('تمت إضافة الشيت وحفظه في السحابة بنجاح.', 'Sheet created successfully.'), 'success');
       }
+      await refreshAnswerKeys();
       setIsModalOpen(false);
       onRefresh();
+    } catch (err: any) {
+      setFormError(err?.message || t('تعذر حفظ الشيت في قاعدة البيانات السحابية.', 'Failed to save sheet to cloud.'));
     } finally {
       setSaving(false);
     }
   };
 
-  const handleToggleAnswersVisibility = async (sheet: SheetItem) => {
-    const next = !sheet.showAnswersToStudents;
-    await dbService.updateSheet(sheet.id, {
-      showAnswersToStudents: next,
-      updatedAt: new Date().toISOString()
-    });
-    onLogAction('status_change', sheet.title, `Model answer visibility: ${next ? 'Shown' : 'Hidden'}`);
-    onRefresh();
+  const handleToggleAnswersVisibility = async (rawSheet: SheetItem) => {
+    setActionError(null);
+    const merged = getMergedSheet(rawSheet);
+    const next = !merged.showAnswersToStudents;
+    try {
+      await dbService.updateSheet(merged.id, {
+        showAnswersToStudents: next,
+        modelAnswerUrl: merged.modelAnswerUrl || '',
+        modelAnswerText: merged.modelAnswerText || '',
+        updatedAt: new Date().toISOString()
+      });
+      await refreshAnswerKeys();
+      onLogAction('status_change', merged.title, `Model answer visibility: ${next ? 'Shown' : 'Hidden'}`);
+      emitAppToast(
+        next
+          ? t('تم إتاحة نموذج الإجابة للطلاب.', 'Model answer is now visible to students.')
+          : t('تم إخفاء نموذج الإجابة عن الطلاب.', 'Model answer is now hidden from students.'),
+        'success'
+      );
+      onRefresh();
+    } catch (err: any) {
+      setActionError(err?.message || t('تعذر تحديث إتاحة نموذج الإجابة.', 'Failed to update answer key visibility.'));
+    }
   };
 
   const handleTogglePublish = async (sheet: SheetItem) => {
+    setActionError(null);
     const currentlyPublished = isContentPublished(sheet);
-    const nextStatus = currentlyPublished ? 'draft' : 'published';
-    await dbService.updateSheet(sheet.id, {
-      status: nextStatus,
-      published: nextStatus !== 'draft',
-      updatedAt: new Date().toISOString()
-    });
-    onLogAction('status_change', sheet.title, `Set sheet status to ${nextStatus}`);
-    onRefresh();
+    const nextStatus = currentlyPublished ? 'unpublished' : 'published';
+    try {
+      await dbService.updateSheet(sheet.id, {
+        status: nextStatus,
+        published: nextStatus === 'published',
+        updatedAt: new Date().toISOString()
+      });
+      onLogAction('status_change', sheet.title, `Set sheet status to ${nextStatus}`);
+      emitAppToast(
+        nextStatus === 'published'
+          ? t('تم نشر الشيت للطلاب.', 'Sheet published.')
+          : t('تم إيقاف نشر الشيت وإخفاؤه عن الطلاب.', 'Sheet unpublished.'),
+        'success'
+      );
+      onRefresh();
+    } catch (err: any) {
+      setActionError(err?.message || t('تعذر تحديث حالة النشر.', 'Failed to update publish status.'));
+    }
   };
 
-  const handleDelete = async (sheet: SheetItem) => {
-    if (!confirm(t(`هل تريد حذف الشيت "${sheet.title}"؟`, `Delete sheet "${sheet.title}"?`))) return;
-    await dbService.deleteSheet(sheet.id);
-    onLogAction('delete', sheet.title, 'Deleted academic sheet');
-    onRefresh();
+  const confirmDelete = async () => {
+    if (!deleteTarget) return;
+    setDeleting(true);
+    setActionError(null);
+    try {
+      await dbService.deleteSheet(deleteTarget.id);
+      onLogAction('delete', deleteTarget.title, 'Deleted academic sheet');
+      emitAppToast(t('تم حذف الشيت بنجاح.', 'Sheet deleted successfully.'), 'success');
+      setDeleteTarget(null);
+      await refreshAnswerKeys();
+      onRefresh();
+    } catch (err: any) {
+      setActionError(err?.message || t('تعذر حذف الشيت من قاعدة البيانات السحابية.', 'Failed to delete sheet.'));
+    } finally {
+      setDeleting(false);
+    }
   };
 
   const handleSaveGrade = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!activeSubmission) return;
+    if (!activeSubmission || !gradingSheet) return;
+    setGradeError(null);
+    const maxPts = gradingSheet.totalPoints ?? 10;
+    const parsedScore = gradeScore.trim() === '' ? undefined : Number(gradeScore);
+    if (parsedScore !== undefined && (Number.isNaN(parsedScore) || parsedScore < 0 || parsedScore > maxPts)) {
+      setGradeError(t(`يجب أن تكون الدرجة بين 0 و ${maxPts}.`, `Score must be between 0 and ${maxPts}.`));
+      return;
+    }
+
     setSavingGrade(true);
     try {
-      const parsedScore = gradeScore.trim() === '' ? undefined : Number(gradeScore);
       await dbService.gradeSheetSubmission(activeSubmission.id, parsedScore, gradeFeedback.trim(), adminName);
       onLogAction('update', activeSubmission.sheetTitle, `Graded submission by ${activeSubmission.studentName}`);
+      emitAppToast(t('تم اعتماد تقييم حل الطالب.', 'Submission grade saved.'), 'success');
       setActiveSubmission(null);
       setGradeScore('');
       setGradeFeedback('');
+    } catch (err: any) {
+      setGradeError(err?.message || t('تعذر حفظ التقييم في السحابة.', 'Failed to save grade.'));
     } finally {
       setSavingGrade(false);
     }
@@ -304,12 +444,19 @@ export const AdminSheetsManager: React.FC<AdminSheetsManagerProps> = ({
     return sheets
       .filter(sheet => {
         if (!doesItemMatchYearAndSemester(sheet, yearFilter, semesterFilter, courses)) return false;
-        const subj = (sheet.subject || sheet.courseTitle || '').toLowerCase();
-        if (subjectFilter !== 'all' && !subj.includes(subjectFilter.toLowerCase())) return false;
+        if (!doesSubjectMatch(sheet, subjectFilter, courses)) return false;
         const sType = sheet.sheetType || sheet.type || 'lecture_sheet';
         if (typeFilter !== 'all' && sType !== typeFilter) return false;
-        const currentStatus = sheet.status === 'closed' ? 'closed' : isContentPublished(sheet) ? 'published' : 'draft';
+        const currentStatus =
+          sheet.status === 'closed'
+            ? 'closed'
+            : sheet.status === 'unpublished'
+            ? 'unpublished'
+            : isContentPublished(sheet)
+            ? 'published'
+            : 'draft';
         if (statusFilter !== 'all' && currentStatus !== statusFilter) return false;
+        const subj = (sheet.subject || sheet.courseTitle || '').toLowerCase();
         const q = searchQuery.trim().toLowerCase();
         if (q) {
           const hay = `${sheet.title} ${sheet.description || ''} ${subj}`.toLowerCase();
@@ -365,6 +512,18 @@ export const AdminSheetsManager: React.FC<AdminSheetsManagerProps> = ({
           <span>{t('إضافة شيت جديد', 'Add New Sheet')}</span>
         </button>
       </div>
+
+      {actionError && (
+        <div className="rounded-xl border border-rose-500/40 bg-rose-500/10 p-3 text-xs font-bold text-rose-700 dark:text-rose-300 flex items-center justify-between gap-3">
+          <span className="flex items-center gap-2">
+            <AlertCircle className="h-4 w-4 shrink-0" />
+            <span>{actionError}</span>
+          </span>
+          <button type="button" onClick={() => setActionError(null)} className="cursor-pointer">
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+      )}
 
       {/* Independent KPIs */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
@@ -440,12 +599,13 @@ export const AdminSheetsManager: React.FC<AdminSheetsManagerProps> = ({
         <div className="flex gap-2">
           <select
             value={statusFilter}
-            onChange={(e) => setStatusFilter(e.target.value as 'all' | 'published' | 'draft' | 'closed')}
+            onChange={(e) => setStatusFilter(e.target.value as 'all' | 'published' | 'draft' | 'unpublished' | 'closed')}
             className="flex-1 px-2.5 py-2 min-h-[40px] bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-700 rounded-xl text-xs font-bold text-slate-800 dark:text-slate-200 outline-none"
           >
             <option value="all">{t('كل الحالات', 'All Status')}</option>
             <option value="published">{t('منشور', 'Published')}</option>
             <option value="draft">{t('مسودة', 'Draft')}</option>
+            <option value="unpublished">{t('متوقف', 'Unpublished')}</option>
             <option value="closed">{t('مغلق', 'Closed')}</option>
           </select>
           <button
@@ -472,6 +632,7 @@ export const AdminSheetsManager: React.FC<AdminSheetsManagerProps> = ({
           {filteredSheets.map(sheet => {
             const isPub = isContentPublished(sheet);
             const isClosed = sheet.status === 'closed';
+            const isUnpub = sheet.status === 'unpublished';
             const sType = sheet.sheetType || sheet.type || 'lecture_sheet';
             const sheetSubs = submissions.filter(s => s.sheetId === sheet.id);
             const pendingCount = sheetSubs.filter(s => s.status === 'submitted').length;
@@ -499,8 +660,16 @@ export const AdminSheetsManager: React.FC<AdminSheetsManagerProps> = ({
                         {sheet.title}
                       </h4>
                     </div>
-                    <span className={`text-[11px] font-bold shrink-0 ${isClosed ? 'text-amber-600 dark:text-amber-400' : isPub ? 'text-emerald-600 dark:text-emerald-400' : 'text-slate-500'}`}>
-                      {isClosed ? t('مغلق', 'Closed') : isPub ? t('منشور', 'Published') : t('مسودة', 'Draft')}
+                    <span className={`text-[11px] font-bold shrink-0 ${
+                      isClosed
+                        ? 'text-amber-600 dark:text-amber-400'
+                        : isUnpub
+                        ? 'text-slate-500'
+                        : isPub
+                        ? 'text-emerald-600 dark:text-emerald-400'
+                        : 'text-amber-500'
+                    }`}>
+                      {isClosed ? t('مغلق', 'Closed') : isUnpub ? t('متوقف', 'Unpublished') : isPub ? t('منشور', 'Published') : t('مسودة', 'Draft')}
                     </span>
                   </div>
 
@@ -551,7 +720,7 @@ export const AdminSheetsManager: React.FC<AdminSheetsManagerProps> = ({
                     </button>
                     <button
                       type="button"
-                      onClick={() => setGradingSheet(sheet)}
+                      onClick={() => { setGradeError(null); setGradingSheet(sheet); }}
                       className="px-2.5 py-1.5 min-h-[36px] text-xs font-bold text-brand-cyan bg-brand-cyan/10 hover:bg-brand-cyan/20 rounded-lg flex items-center gap-1 cursor-pointer tabular-nums"
                     >
                       <ClipboardCheck className="h-3.5 w-3.5" />
@@ -574,9 +743,9 @@ export const AdminSheetsManager: React.FC<AdminSheetsManagerProps> = ({
                       type="button"
                       onClick={() => handleTogglePublish(sheet)}
                       className="p-2 min-h-[36px] min-w-[36px] text-slate-600 dark:text-slate-300 hover:text-brand-cyan rounded-lg cursor-pointer"
-                      title={isPub ? t('تحويل لمسودة', 'Move to Draft') : t('نشر للطلاب', 'Publish')}
+                      title={isPub ? t('إيقاف النشر', 'Unpublish') : t('نشر للطلاب', 'Publish')}
                     >
-                      {isPub ? <FileEdit className="h-4 w-4" /> : <Globe className="h-4 w-4" />}
+                      {isPub ? <EyeOff className="h-4 w-4" /> : isUnpub ? <Globe className="h-4 w-4" /> : <FileEdit className="h-4 w-4" />}
                     </button>
                     <button
                       type="button"
@@ -588,7 +757,7 @@ export const AdminSheetsManager: React.FC<AdminSheetsManagerProps> = ({
                     </button>
                     <button
                       type="button"
-                      onClick={() => handleDelete(sheet)}
+                      onClick={() => setDeleteTarget(sheet)}
                       className="p-2 min-h-[36px] min-w-[36px] text-slate-600 dark:text-slate-300 hover:text-rose-500 rounded-lg cursor-pointer"
                       title={t('حذف', 'Delete')}
                     >
@@ -616,6 +785,13 @@ export const AdminSheetsManager: React.FC<AdminSheetsManagerProps> = ({
             </div>
 
             <form onSubmit={handleSave} className="p-6 overflow-y-auto space-y-5">
+              {formError && (
+                <div className="rounded-xl border border-rose-500/40 bg-rose-500/10 p-3 text-xs font-bold text-rose-700 dark:text-rose-300 flex items-start gap-2">
+                  <AlertCircle className="h-4 w-4 shrink-0 mt-0.5" />
+                  <span>{formError}</span>
+                </div>
+              )}
+
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                 <div>
                   <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1.5">{t('الفرقة الدراسية', 'Academic Year')}</label>
@@ -681,11 +857,12 @@ export const AdminSheetsManager: React.FC<AdminSheetsManagerProps> = ({
                   <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1.5">{t('الحالة', 'Status')}</label>
                   <select
                     value={form.status}
-                    onChange={(e) => setForm({ ...form, status: e.target.value as 'draft' | 'published' | 'closed' })}
+                    onChange={(e) => setForm({ ...form, status: e.target.value as 'draft' | 'published' | 'unpublished' | 'closed' })}
                     className="w-full px-3 py-2.5 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-700 rounded-xl text-xs font-bold text-slate-900 dark:text-white outline-none"
                   >
                     <option value="published">{t('منشور للطلاب', 'Published')}</option>
                     <option value="draft">{t('مسودة (مخفي)', 'Draft (Hidden)')}</option>
+                    <option value="unpublished">{t('تم إيقاف النشر (مخفي)', 'Unpublished (Hidden)')}</option>
                     <option value="closed">{t('مغلق (انتهى التسليم)', 'Closed')}</option>
                   </select>
                 </div>
@@ -724,14 +901,16 @@ export const AdminSheetsManager: React.FC<AdminSheetsManagerProps> = ({
                   fileType="pdf"
                   folder="lms_sheets"
                   onPreview={(url) => onPreviewMedia?.(url)}
+                  onUploadingChange={busy => setFieldUploading('pdf', busy)}
                 />
                 <FileUploadField
                   label={t('ملف الشيت (Word .doc / .docx)', 'Sheet Word File (.doc / .docx)')}
                   value={form.wordUrl}
                   onChange={(val) => setForm({ ...form, wordUrl: val })}
                   accept=".doc,.docx,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-                  fileType="other"
+                  fileType="word"
                   folder="lms_sheets"
+                  onUploadingChange={busy => setFieldUploading('word', busy)}
                 />
               </div>
 
@@ -742,12 +921,14 @@ export const AdminSheetsManager: React.FC<AdminSheetsManagerProps> = ({
                   onChange={(files) => setForm({ ...form, images: files })}
                   accept="image/*"
                   folder="lms_sheets_images"
+                  onUploadingChange={busy => setFieldUploading('images', busy)}
                 />
                 <MultiFileUploadList
                   label={t('مرفقات إضافية / أكواد', 'Additional Attachments')}
                   files={form.attachments}
                   onChange={(files) => setForm({ ...form, attachments: files })}
                   folder="lms_sheets_attachments"
+                  onUploadingChange={busy => setFieldUploading('attachments', busy)}
                 />
               </div>
 
@@ -769,9 +950,9 @@ export const AdminSheetsManager: React.FC<AdminSheetsManagerProps> = ({
                     <span className="text-xs font-bold text-slate-500">{t('الدرجة الكلية:', 'Total Points:')}</span>
                     <input
                       type="number"
-                      min={1}
+                      min={0}
                       value={form.totalPoints}
-                      onChange={(e) => setForm({ ...form, totalPoints: Number(e.target.value) || 10 })}
+                      onChange={(e) => setForm({ ...form, totalPoints: Number(e.target.value) })}
                       className="w-20 px-2.5 py-1.5 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg text-xs font-bold text-slate-900 dark:text-white tabular-nums"
                     />
                   </div>
@@ -827,6 +1008,7 @@ export const AdminSheetsManager: React.FC<AdminSheetsManagerProps> = ({
                   fileType="pdf"
                   folder="lms_sheets_answers"
                   onPreview={(url) => onPreviewMedia?.(url)}
+                  onUploadingChange={busy => setFieldUploading('modelAnswer', busy)}
                 />
 
                 <div>
@@ -853,11 +1035,17 @@ export const AdminSheetsManager: React.FC<AdminSheetsManagerProps> = ({
                 </button>
                 <button
                   type="submit"
-                  disabled={saving}
+                  disabled={saving || isUploadingAny}
                   className="px-6 py-2.5 min-h-[44px] bg-brand-cyan hover:bg-cyan-600 text-white dark:text-slate-950 font-black rounded-xl text-xs flex items-center gap-2 cursor-pointer disabled:opacity-50"
                 >
                   <CheckCircle2 className="h-4 w-4" />
-                  <span>{saving ? t('جاري الحفظ...', 'Saving...') : t('حفظ الشيت', 'Save Sheet')}</span>
+                  <span>
+                    {isUploadingAny
+                      ? t('جاري رفع الملفات...', 'Uploading files...')
+                      : saving
+                      ? t('جاري الحفظ...', 'Saving...')
+                      : t('حفظ الشيت', 'Save Sheet')}
+                  </span>
                 </button>
               </div>
             </form>
@@ -865,74 +1053,120 @@ export const AdminSheetsManager: React.FC<AdminSheetsManagerProps> = ({
         </div>
       )}
 
+      {/* Delete Confirmation Modal */}
+      {deleteTarget && (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-slate-950/80 backdrop-blur-sm p-4">
+          <div className="w-full max-w-md rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950 p-6 shadow-2xl space-y-4">
+            <h3 className="text-base font-black text-slate-900 dark:text-white">
+              {t('تأكيد حذف الشيت', 'Confirm Sheet Deletion')}
+            </h3>
+            <p className="text-xs text-slate-600 dark:text-slate-400 leading-relaxed">
+              {t(
+                `هل أنت متأكد من حذف الشيت "${deleteTarget.title}"؟ سيتم حذفه مع نموذج إجابته من قاعدة البيانات السحابية.`,
+                `Are you sure you want to delete sheet "${deleteTarget.title}"?`
+              )}
+            </p>
+            <div className="flex items-center justify-end gap-2 pt-2">
+              <button
+                type="button"
+                disabled={deleting}
+                onClick={() => setDeleteTarget(null)}
+                className="px-4 py-2 rounded-xl border border-slate-300 dark:border-slate-700 text-xs font-bold text-slate-700 dark:text-slate-300 cursor-pointer"
+              >
+                {t('إلغاء', 'Cancel')}
+              </button>
+              <button
+                type="button"
+                disabled={deleting}
+                onClick={confirmDelete}
+                className="px-4 py-2 rounded-xl bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold cursor-pointer disabled:opacity-50"
+              >
+                {deleting ? t('جاري الحذف...', 'Deleting...') : t('تأكيد الحذف', 'Confirm Delete')}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Preview As Student Modal */}
-      {previewItem && (
+      {mergedPreviewItem && (
         <div className="fixed inset-0 z-50 bg-slate-950/75 backdrop-blur-sm flex items-center justify-center p-4">
           <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl w-full max-w-2xl p-6 space-y-4 shadow-2xl max-h-[90vh] overflow-y-auto">
             <div className="flex items-center justify-between border-b border-slate-200 dark:border-slate-800 pb-3">
               <div>
                 <span className="text-[11px] font-bold text-brand-cyan">
                   {t('معاينة الطالب — ', 'Student Preview — ')}
-                  {(previewItem.sheetType || previewItem.type) === 'section_sheet' ? t('شيت سكشن', 'Section Sheet') : t('شيت محاضرة', 'Lecture Sheet')} #{previewItem.referenceNumber}
+                  {(mergedPreviewItem.sheetType || mergedPreviewItem.type) === 'section_sheet' ? t('شيت سكشن', 'Section Sheet') : t('شيت محاضرة', 'Lecture Sheet')} #{mergedPreviewItem.referenceNumber}
                 </span>
-                <h4 className="font-black text-slate-900 dark:text-white text-lg mt-0.5">{previewItem.title}</h4>
+                <h4 className="font-black text-slate-900 dark:text-white text-lg mt-0.5">{mergedPreviewItem.title}</h4>
               </div>
               <button type="button" onClick={() => setPreviewItem(null)} className="p-2 text-slate-400 hover:text-slate-700 dark:hover:text-white cursor-pointer">
                 <X className="h-5 w-5" />
               </button>
             </div>
 
-            {previewItem.description && (
-              <p className="text-sm text-slate-600 dark:text-slate-300 leading-relaxed whitespace-pre-wrap">{previewItem.description}</p>
+            {mergedPreviewItem.description && (
+              <p className="text-sm text-slate-600 dark:text-slate-300 leading-relaxed whitespace-pre-wrap">{mergedPreviewItem.description}</p>
             )}
 
             <div className="flex flex-wrap gap-2">
-              {(previewItem.pdfUrl || previewItem.fileUrl) && (
+              {(mergedPreviewItem.pdfUrl || mergedPreviewItem.fileUrl) && (
                 <button
                   type="button"
-                  onClick={() => triggerFileDownload(previewItem.pdfUrl || previewItem.fileUrl, `${previewItem.title}.pdf`)}
+                  onClick={() => triggerFileDownload((mergedPreviewItem.pdfUrl || mergedPreviewItem.fileUrl)!, `${mergedPreviewItem.title}.pdf`)}
                   className="px-3.5 py-2 min-h-[40px] bg-slate-100 dark:bg-slate-800 rounded-xl text-xs font-bold text-slate-800 dark:text-slate-200 flex items-center gap-1.5 cursor-pointer"
                 >
                   <Download className="h-4 w-4 text-rose-500" />
                   <span>{t('تحميل ملف الشيت PDF', 'Download Sheet PDF')}</span>
                 </button>
               )}
-              {previewItem.wordUrl && (
+              {mergedPreviewItem.wordUrl && (
                 <button
                   type="button"
-                  onClick={() => triggerFileDownload(previewItem.wordUrl!, `${previewItem.title}.docx`)}
+                  onClick={() => triggerFileDownload(mergedPreviewItem.wordUrl!, `${mergedPreviewItem.title}.docx`)}
                   className="px-3.5 py-2 min-h-[40px] bg-slate-100 dark:bg-slate-800 rounded-xl text-xs font-bold text-slate-800 dark:text-slate-200 flex items-center gap-1.5 cursor-pointer"
                 >
                   <Download className="h-4 w-4 text-blue-500" />
                   <span>{t('تحميل ملف Word', 'Download Word')}</span>
                 </button>
               )}
+              {(mergedPreviewItem.attachments || []).map(att => (
+                <button
+                  key={att.id}
+                  type="button"
+                  onClick={() => triggerFileDownload(att.url, att.name)}
+                  className="px-3.5 py-2 min-h-[40px] bg-slate-100 dark:bg-slate-800 rounded-xl text-xs font-bold text-slate-800 dark:text-slate-200 flex items-center gap-1.5 cursor-pointer"
+                >
+                  <Download className="h-4 w-4 text-brand-cyan" />
+                  <span>{att.name}</span>
+                </button>
+              ))}
             </div>
 
-            {previewItem.imageUrls && previewItem.imageUrls.length > 0 && (
+            {mergedPreviewItem.imageUrls && mergedPreviewItem.imageUrls.length > 0 && (
               <div className="grid grid-cols-2 gap-2">
-                {previewItem.imageUrls.map((img, i) => (
-                  <img key={i} src={img} alt="" className="rounded-xl border border-slate-200 dark:border-slate-700 object-cover max-h-48 w-full" />
+                {mergedPreviewItem.imageUrls.map((img, i) => (
+                  <ResolvedImage key={i} src={img} alt={`Sheet image ${i + 1}`} className="rounded-xl border border-slate-200 dark:border-slate-700 object-cover max-h-48 w-full" />
                 ))}
               </div>
             )}
 
             <div className="p-4 rounded-2xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950">
               <div className="text-xs font-black text-slate-800 dark:text-slate-200 mb-2 flex items-center gap-1.5">
-                {previewItem.showAnswersToStudents ? <Unlock className="h-4 w-4 text-emerald-500" /> : <Lock className="h-4 w-4 text-amber-500" />}
+                {mergedPreviewItem.showAnswersToStudents ? <Unlock className="h-4 w-4 text-emerald-500" /> : <Lock className="h-4 w-4 text-amber-500" />}
                 <span>
-                  {previewItem.showAnswersToStudents
+                  {mergedPreviewItem.showAnswersToStudents
                     ? t('نموذج الإجابة (ظاهر للطلاب)', 'Model Answer (Visible to Students)')
                     : t('نموذج الإجابة (مخفي حاليًا عن الطلاب)', 'Model Answer (Currently Hidden from Students)')}
                 </span>
               </div>
-              {previewItem.showAnswersToStudents ? (
+              {mergedPreviewItem.showAnswersToStudents ? (
                 <div className="space-y-2 text-xs text-slate-700 dark:text-slate-300">
-                  {previewItem.modelAnswerText && <p className="whitespace-pre-wrap">{previewItem.modelAnswerText}</p>}
-                  {previewItem.modelAnswerUrl && (
+                  {mergedPreviewItem.modelAnswerText && <p className="whitespace-pre-wrap">{mergedPreviewItem.modelAnswerText}</p>}
+                  {mergedPreviewItem.modelAnswerUrl && (
                     <button
                       type="button"
-                      onClick={() => triggerFileDownload(previewItem.modelAnswerUrl!, `${previewItem.title}_answer.pdf`)}
+                      onClick={() => triggerFileDownload(mergedPreviewItem.modelAnswerUrl!, `${mergedPreviewItem.title}_answer.pdf`)}
                       className="px-3 py-1.5 bg-emerald-600 text-white rounded-lg font-bold inline-flex items-center gap-1.5 cursor-pointer"
                     >
                       <Download className="h-3.5 w-3.5" />
@@ -941,7 +1175,24 @@ export const AdminSheetsManager: React.FC<AdminSheetsManagerProps> = ({
                   )}
                 </div>
               ) : (
-                <p className="text-xs text-slate-500">{t('لن يظهر نموذج الإجابة للطالب إلا عند تفعيل خيار الإظهار من الإدارة.', 'Students cannot see model answers until enabled by administration.')}</p>
+                <div className="space-y-2 text-xs text-slate-500">
+                  <p>{t('لن يظهر نموذج الإجابة للطالب إلا عند تفعيل خيار الإظهار من الإدارة.', 'Students cannot see model answers until enabled by administration.')}</p>
+                  {(mergedPreviewItem.modelAnswerText || mergedPreviewItem.modelAnswerUrl) && (
+                    <div className="p-2.5 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-300">
+                      <span className="font-bold text-brand-cyan block mb-1">{t('معاينة المدير للنموذج المخفي:', 'Admin preview of hidden answer key:')}</span>
+                      {mergedPreviewItem.modelAnswerText && <p className="whitespace-pre-wrap">{mergedPreviewItem.modelAnswerText}</p>}
+                      {mergedPreviewItem.modelAnswerUrl && (
+                        <button
+                          type="button"
+                          onClick={() => triggerFileDownload(mergedPreviewItem.modelAnswerUrl!, `${mergedPreviewItem.title}_answer.pdf`)}
+                          className="mt-1.5 px-2.5 py-1 bg-slate-200 dark:bg-slate-800 rounded-lg font-bold inline-flex items-center gap-1 cursor-pointer"
+                        >
+                          <Download className="h-3 w-3" /> {t('تنزيل نموذج الإجابة', 'Download Key')}
+                        </button>
+                      )}
+                    </div>
+                  )}
+                </div>
               )}
             </div>
           </div>
@@ -959,7 +1210,7 @@ export const AdminSheetsManager: React.FC<AdminSheetsManagerProps> = ({
               </div>
               <button
                 type="button"
-                onClick={() => { setGradingSheet(null); setActiveSubmission(null); }}
+                onClick={() => { setGradingSheet(null); setActiveSubmission(null); setGradeError(null); }}
                 className="p-2 text-slate-400 hover:text-slate-700 dark:hover:text-white cursor-pointer"
               >
                 <X className="h-5 w-5" />
@@ -967,6 +1218,13 @@ export const AdminSheetsManager: React.FC<AdminSheetsManagerProps> = ({
             </div>
 
             <div className="p-6 overflow-y-auto space-y-4">
+              {gradeError && (
+                <div className="rounded-xl border border-rose-500/40 bg-rose-500/10 p-3 text-xs font-bold text-rose-700 dark:text-rose-300 flex items-start gap-2">
+                  <AlertCircle className="h-4 w-4 shrink-0 mt-0.5" />
+                  <span>{gradeError}</span>
+                </div>
+              )}
+
               {sheetSubmissions.length === 0 ? (
                 <div className="text-center py-12 text-slate-500 text-sm font-bold">
                   {t('لم يقم أي طالب بتسليم حلول لهذا الشيت حتى الآن.', 'No student submissions yet for this sheet.')}
@@ -992,6 +1250,7 @@ export const AdminSheetsManager: React.FC<AdminSheetsManagerProps> = ({
                         <button
                           type="button"
                           onClick={() => {
+                            setGradeError(null);
                             setActiveSubmission(sub);
                             setGradeScore(sub.score !== undefined ? String(sub.score) : '');
                             setGradeFeedback(sub.feedback || '');
@@ -1070,7 +1329,7 @@ export const AdminSheetsManager: React.FC<AdminSheetsManagerProps> = ({
                             <button
                               type="submit"
                               disabled={savingGrade}
-                              className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-black rounded-xl text-xs flex items-center gap-1 cursor-pointer shrink-0"
+                              className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-black rounded-xl text-xs flex items-center gap-1 cursor-pointer shrink-0 disabled:opacity-50"
                             >
                               <Send className="h-3.5 w-3.5" />
                               <span>{savingGrade ? t('حفظ...', 'Saving...') : t('اعتماد', 'Save')}</span>

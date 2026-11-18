@@ -2,26 +2,30 @@ import React, { useEffect, useMemo, useState } from 'react';
 import {
   Course,
   ExamItem,
+  ExamPrivateKeyDoc,
   ExamSubmission,
   OnlineExamQuestion,
   QuestionBankItem
 } from '../../types';
-import { dbService } from '../../firebase';
+import { dbService, mergeExamWithPrivateKey } from '../../firebase';
 import { useLanguage } from '../LanguageContext';
 import { FileUploadField } from '../FileUploadField';
+import { emitAppToast, triggerFileDownload } from '../../utils/videoStorage';
 import {
   ACADEMIC_GRADES,
   ACADEMIC_SEMESTERS,
   ACADEMIC_SUBJECTS,
   doesItemMatchYearAndSemester,
+  doesSubjectMatch,
   getGradeName,
   getSemesterName,
-  isContentPublished
+  isContentPublished,
+  isValidMediaOrWebUrl
 } from '../../utils/gradeMatching';
 import {
   Award, Plus, Search, Edit3, Trash2, Eye, CheckCircle2, X, Globe, FileEdit,
-  ArrowUpDown, Clock, Lock, Unlock, ClipboardList, Database, HelpCircle,
-  Users, Send, MessageSquare, FileText
+  ArrowUpDown, Clock, Lock, Unlock, ClipboardList, Database, Users, Send,
+  AlertCircle, EyeOff, Download, Sparkles
 } from 'lucide-react';
 
 interface AdminExamsManagerProps {
@@ -55,8 +59,11 @@ export const AdminExamsManager: React.FC<AdminExamsManagerProps> = ({
   const [semesterFilter, setSemesterFilter] = useState('all');
   const [subjectFilter, setSubjectFilter] = useState('all');
   const [modeFilter, setModeFilter] = useState<'all' | 'online' | 'pdf'>('all');
-  const [statusFilter, setStatusFilter] = useState<'all' | 'published' | 'draft'>('all');
+  const [statusFilter, setStatusFilter] = useState<'all' | 'published' | 'draft' | 'unpublished'>('all');
   const [sortBy, setSortBy] = useState<'date' | 'title'>('date');
+
+  // Private answer keys (loaded securely for Admin only)
+  const [privateKeysMap, setPrivateKeysMap] = useState<Record<string, ExamPrivateKeyDoc>>({});
 
   // Exam Submissions & Manual Review State
   const [submissions, setSubmissions] = useState<ExamSubmission[]>([]);
@@ -65,14 +72,28 @@ export const AdminExamsManager: React.FC<AdminExamsManagerProps> = ({
   const [manualScoresDraft, setManualScoresDraft] = useState<Record<string, number>>({});
   const [reviewFeedback, setReviewFeedback] = useState('');
   const [savingReview, setSavingReview] = useState(false);
+  const [batchGrading, setBatchGrading] = useState(false);
+  const [reviewError, setReviewError] = useState<string | null>(null);
 
-  // Modal & Question Bank Picker State
+  // Modal, Upload & Error State
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const [formError, setFormError] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
+  const [uploadingFields, setUploadingFields] = useState<Record<string, boolean>>({});
   const [previewExam, setPreviewExam] = useState<ExamItem | null>(null);
   const [isBankPickerOpen, setIsBankPickerOpen] = useState(false);
   const [bankSearch, setBankSearch] = useState('');
+
+  // In-App Delete Confirmation
+  const [deleteTarget, setDeleteTarget] = useState<ExamItem | null>(null);
+  const [deleting, setDeleting] = useState(false);
+
+  const isUploadingAny = Object.values(uploadingFields).some(Boolean);
+  const setFieldUploading = (field: string, busy: boolean) => {
+    setUploadingFields(prev => (prev[field] === busy ? prev : { ...prev, [field]: busy }));
+  };
 
   const [form, setForm] = useState({
     academicYear: 'year1',
@@ -93,9 +114,18 @@ export const AdminExamsManager: React.FC<AdminExamsManagerProps> = ({
     shuffleQuestions: false,
     showResultsImmediately: true,
     showAnswersToStudents: false,
-    status: 'published' as 'draft' | 'published',
+    status: 'published' as 'draft' | 'published' | 'unpublished',
     questions: [] as OnlineExamQuestion[]
   });
+
+  const refreshPrivateKeys = async () => {
+    try {
+      const map = await dbService.getAllExamPrivateKeys();
+      setPrivateKeysMap(map);
+    } catch (err) {
+      console.warn('refreshPrivateKeys notice:', err);
+    }
+  };
 
   useEffect(() => {
     const unsub = dbService.listenToExamSubmissions((subs) => {
@@ -103,6 +133,23 @@ export const AdminExamsManager: React.FC<AdminExamsManagerProps> = ({
     });
     return () => unsub();
   }, []);
+
+  useEffect(() => {
+    refreshPrivateKeys();
+  }, [exams.length]);
+
+  const getMergedExam = (exam: ExamItem): ExamItem =>
+    mergeExamWithPrivateKey(exam, privateKeysMap[exam.id]);
+
+  const mergedPreviewExam = useMemo(
+    () => (previewExam ? getMergedExam(previewExam) : null),
+    [previewExam, privateKeysMap]
+  );
+
+  const mergedReviewExam = useMemo(
+    () => (reviewExam ? getMergedExam(reviewExam) : null),
+    [reviewExam, privateKeysMap]
+  );
 
   const subjectOptions = useMemo(() => {
     const map = new Map<string, { id: string; label: string; courseId?: string }>();
@@ -134,6 +181,8 @@ export const AdminExamsManager: React.FC<AdminExamsManagerProps> = ({
 
   const openAddModal = () => {
     setEditingId(null);
+    setFormError(null);
+    setUploadingFields({});
     setForm({
       academicYear: yearFilter !== 'all' ? yearFilter : 'year1',
       semester: semesterFilter !== 'all' ? semesterFilter : 'term1',
@@ -159,8 +208,13 @@ export const AdminExamsManager: React.FC<AdminExamsManagerProps> = ({
     setIsModalOpen(true);
   };
 
-  const openEditModal = (exam: ExamItem) => {
+  const openEditModal = (rawExam: ExamItem) => {
+    const exam = getMergedExam(rawExam);
     setEditingId(exam.id);
+    setFormError(null);
+    setUploadingFields({});
+    const currentStatus: 'draft' | 'published' | 'unpublished' =
+      exam.status === 'unpublished' ? 'unpublished' : isContentPublished(exam) ? 'published' : 'draft';
     setForm({
       academicYear: exam.academicYear || 'year1',
       semester: exam.semester || 'term1',
@@ -180,12 +234,12 @@ export const AdminExamsManager: React.FC<AdminExamsManagerProps> = ({
       shuffleQuestions: Boolean(exam.shuffleQuestions),
       showResultsImmediately: exam.showResultsImmediately !== false,
       showAnswersToStudents: Boolean(exam.showAnswersToStudents),
-      status: isContentPublished(exam) ? 'published' : 'draft',
+      status: currentStatus,
       questions: (exam.questions || []).map(q => ({
         ...q,
         questionText: q.questionText || q.question || '',
         options: q.options && q.options.length > 0 ? q.options : (q.type === 'true_false' ? ['صحيح / True', 'خطأ / False'] : []),
-        correctAnswerIndex: q.correctAnswerIndex ?? q.correctAnswer ?? 0,
+        correctAnswerIndex: typeof q.correctAnswerIndex === 'number' && q.correctAnswerIndex >= 0 ? q.correctAnswerIndex : (q.correctAnswer ?? 0),
         acceptedAnswers: q.acceptedAnswers || [],
         points: q.points || 1
       }))
@@ -242,7 +296,66 @@ export const AdminExamsManager: React.FC<AdminExamsManagerProps> = ({
 
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!form.title.trim()) return;
+    setFormError(null);
+
+    if (isUploadingAny) {
+      setFormError(t('يرجى الانتظار حتى يكتمل رفع ملفات PDF أولاً.', 'Please wait for file uploads to finish.'));
+      return;
+    }
+    if (!form.title.trim()) {
+      setFormError(t('عنوان الامتحان مطلوب.', 'Exam title is required.'));
+      return;
+    }
+    if (!Number.isFinite(Number(form.durationMinutes)) || Number(form.durationMinutes) < 1) {
+      setFormError(t('يجب أن تكون مدة الامتحان دقيقة واحدة على الأقل.', 'Duration must be at least 1 minute.'));
+      return;
+    }
+    if (!Number.isFinite(Number(form.maxAttempts)) || Number(form.maxAttempts) < 1) {
+      setFormError(t('عدد المحاولات المسموح بها يجب أن يكون 1 فأكثر.', 'Max attempts must be 1 or more.'));
+      return;
+    }
+    if (form.openAt && form.closeAt) {
+      const openTs = new Date(form.openAt).getTime();
+      const closeTs = new Date(form.closeAt).getTime();
+      if (Number.isNaN(openTs) || Number.isNaN(closeTs) || openTs >= closeTs) {
+        setFormError(t('تاريخ الإغلاق يجب أن يكون بعد تاريخ فتح الامتحان.', 'Closing time must be strictly after opening time.'));
+        return;
+      }
+    }
+    if (!isValidMediaOrWebUrl(form.questionsPdfUrl) || !isValidMediaOrWebUrl(form.modelAnswerUrl)) {
+      setFormError(t('يوجد رابط ملف PDF غير صالح.', 'One or more PDF URLs are invalid.'));
+      return;
+    }
+    if (form.isOnlineExam) {
+      if (form.questions.length === 0) {
+        setFormError(t('الامتحان الإلكتروني يتطلب إضافة سؤال واحد على الأقل (أو ألغِ تفعيل النمط الإلكتروني للامتحان الورقي).', 'Online exams require at least one question (or uncheck Online Exam for paper PDF).'));
+        return;
+      }
+      for (let i = 0; i < form.questions.length; i++) {
+        const q = form.questions[i];
+        if (!q.questionText.trim()) {
+          setFormError(t(`يرجى كتابة نص السؤال رقم ${i + 1}.`, `Question #${i + 1} prompt cannot be empty.`));
+          return;
+        }
+        if (Number(q.points) <= 0) {
+          setFormError(t(`درجة السؤال رقم ${i + 1} يجب أن تكون أكبر من صفر.`, `Question #${i + 1} points must be greater than 0.`));
+          return;
+        }
+        if (q.type !== 'short_answer') {
+          const validOpts = (q.options || []).filter(o => o.trim().length > 0);
+          if (validOpts.length < 2) {
+            setFormError(t(`السؤال رقم ${i + 1} يجب أن يحتوي على خيارين غير فارغين على الأقل.`, `Question #${i + 1} must have at least 2 non-empty options.`));
+            return;
+          }
+          const idx = Number(q.correctAnswerIndex);
+          if (idx < 0 || idx >= q.options.length || !q.options[idx]?.trim()) {
+            setFormError(t(`يرجى تحديد الإجابة الصحيحة للسؤال رقم ${i + 1}.`, `Please select a valid correct option for Question #${i + 1}.`));
+            return;
+          }
+        }
+      }
+    }
+
     setSaving(true);
     try {
       const { courseId, courseTitle } = resolveCourseMeta(form.subject, form.courseId);
@@ -287,6 +400,7 @@ export const AdminExamsManager: React.FC<AdminExamsManagerProps> = ({
       if (editingId) {
         await dbService.updateExam(editingId, payload);
         onLogAction('update', payload.title, `Updated exam (${form.subject})`);
+        emitAppToast(t('تم تحديث الامتحان وحفظ مفاتيح الإجابة بأمان.', 'Exam updated successfully.'), 'success');
       } else {
         await dbService.addExam(payload);
         onLogAction('create', payload.title, `Created exam (${form.subject})`);
@@ -304,43 +418,125 @@ export const AdminExamsManager: React.FC<AdminExamsManagerProps> = ({
             createdAt: new Date().toISOString()
           }).catch(() => {});
         }
+        emitAppToast(t('تم إنشاء الامتحان وحفظ مفاتيح الإجابة بشكل مؤمن.', 'Exam created and answer keys secured.'), 'success');
       }
+      await refreshPrivateKeys();
       setIsModalOpen(false);
       onRefresh();
+    } catch (err: any) {
+      setFormError(err?.message || t('تعذر حفظ الامتحان في قاعدة البيانات السحابية.', 'Failed to save exam to cloud.'));
     } finally {
       setSaving(false);
     }
   };
 
-  const handleToggleAnswersVisibility = async (exam: ExamItem) => {
-    const next = !exam.showAnswersToStudents;
-    await dbService.updateExam(exam.id, {
-      showAnswersToStudents: next,
-      updatedAt: new Date().toISOString()
-    });
-    onLogAction('status_change', exam.title, `Exam answers visibility: ${next ? 'Shown' : 'Hidden'}`);
-    onRefresh();
+  const handleToggleAnswersVisibility = async (rawExam: ExamItem) => {
+    setActionError(null);
+    const merged = getMergedExam(rawExam);
+    const next = !merged.showAnswersToStudents;
+    try {
+      await dbService.updateExam(merged.id, {
+        showAnswersToStudents: next,
+        modelAnswerUrl: merged.modelAnswerUrl || '',
+        answersFileUrl: merged.answersFileUrl || '',
+        updatedAt: new Date().toISOString()
+      });
+      await refreshPrivateKeys();
+      onLogAction('status_change', merged.title, `Exam answers visibility: ${next ? 'Shown' : 'Hidden'}`);
+      emitAppToast(
+        next
+          ? t('تم إتاحة الإجابات والشرح للطلاب.', 'Exam answer keys released to students.')
+          : t('تم إخفاء الإجابات عن الطلاب.', 'Exam answer keys hidden from students.'),
+        'success'
+      );
+      onRefresh();
+    } catch (err: any) {
+      setActionError(err?.message || t('تعذر تحديث إتاحة الإجابات.', 'Failed to toggle answer visibility.'));
+    }
   };
 
   const handleToggleStatus = async (exam: ExamItem) => {
-    const nextStatus = isContentPublished(exam) ? 'draft' : 'published';
-    await dbService.updateExam(exam.id, {
-      status: nextStatus,
-      published: nextStatus === 'published',
-      updatedAt: new Date().toISOString()
-    });
-    onLogAction('status_change', exam.title, `Set exam status to ${nextStatus}`);
-    onRefresh();
+    setActionError(null);
+    const nextStatus = isContentPublished(exam) ? 'unpublished' : 'published';
+    try {
+      await dbService.updateExam(exam.id, {
+        status: nextStatus,
+        published: nextStatus === 'published',
+        updatedAt: new Date().toISOString()
+      });
+      onLogAction('status_change', exam.title, `Set exam status to ${nextStatus}`);
+      emitAppToast(
+        nextStatus === 'published'
+          ? t('تم نشر الامتحان للطلاب.', 'Exam published to students.')
+          : t('تم إيقاف نشر الامتحان وإخفاؤه عن الطلاب.', 'Exam unpublished and hidden.'),
+        'success'
+      );
+      onRefresh();
+    } catch (err: any) {
+      setActionError(err?.message || t('تعذر تحديث حالة النشر.', 'Failed to update status.'));
+    }
   };
 
-  const handleDelete = async (exam: ExamItem) => {
-    if (!confirm(t(`هل تريد حذف الامتحان "${exam.title}"؟`, `Delete exam "${exam.title}"?`))) return;
-    await dbService.deleteExam(exam.id);
-    onLogAction('delete', exam.title, 'Deleted exam');
-    onRefresh();
+  const confirmDelete = async () => {
+    if (!deleteTarget) return;
+    setDeleting(true);
+    setActionError(null);
+    try {
+      await dbService.deleteExam(deleteTarget.id);
+      onLogAction('delete', deleteTarget.title, 'Deleted exam');
+      emitAppToast(t('تم حذف الامتحان ومفاتيح إجابته بنجاح.', 'Exam deleted successfully.'), 'success');
+      setDeleteTarget(null);
+      await refreshPrivateKeys();
+      onRefresh();
+    } catch (err: any) {
+      setActionError(err?.message || t('تعذر حذف الامتحان من قاعدة البيانات السحابية.', 'Failed to delete exam.'));
+    } finally {
+      setDeleting(false);
+    }
+  };
+
+  const computeGradeForSubmission = (exam: ExamItem, sub: ExamSubmission, manualOverrides: Record<string, number>) => {
+    const qs = exam.questions || [];
+    let totalScore = 0;
+    let totalPts = 0;
+    let correctCount = 0;
+    let hasUngradedOpenShort = false;
+
+    qs.forEach(q => {
+      const pts = Number(q.points) || 1;
+      totalPts += pts;
+      if (q.type === 'short_answer') {
+        if (manualOverrides[q.id] !== undefined) {
+          const ms = Math.max(0, Math.min(pts, Number(manualOverrides[q.id]) || 0));
+          totalScore += ms;
+          if (ms >= pts * 0.5) correctCount += 1;
+        } else {
+          const studentTxt = (sub.shortAnswers?.[q.id] || '').trim().toLowerCase();
+          const accepted = (q.acceptedAnswers || []).map(a => a.trim().toLowerCase()).filter(Boolean);
+          if (accepted.length === 0) {
+            hasUngradedOpenShort = true;
+          } else if (accepted.includes(studentTxt)) {
+            totalScore += pts;
+            correctCount += 1;
+          }
+        }
+      } else {
+        const chosen = sub.answers?.[q.id];
+        const expected = q.correctAnswerIndex >= 0 ? q.correctAnswerIndex : (q.correctAnswer ?? 0);
+        if (chosen === expected) {
+          totalScore += pts;
+          correctCount += 1;
+        }
+      }
+    });
+
+    const finalTotalPts = totalPts || sub.totalPoints || 1;
+    const pct = Math.round((totalScore / finalTotalPts) * 100);
+    return { totalScore, finalTotalPts, pct, correctCount, hasUngradedOpenShort };
   };
 
   const openManualReview = (sub: ExamSubmission) => {
+    setReviewError(null);
     setReviewSub(sub);
     setManualScoresDraft(sub.manualScores || {});
     setReviewFeedback(sub.feedback || '');
@@ -348,42 +544,15 @@ export const AdminExamsManager: React.FC<AdminExamsManagerProps> = ({
 
   const handleSaveManualReview = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!reviewSub || !reviewExam) return;
+    if (!reviewSub || !mergedReviewExam) return;
+    setReviewError(null);
     setSavingReview(true);
     try {
-      const qs = reviewExam.questions || [];
-      let totalScore = 0;
-      let totalPts = 0;
-      let correctCount = 0;
-
-      qs.forEach(q => {
-        const pts = Number(q.points) || 1;
-        totalPts += pts;
-        if (q.type === 'short_answer') {
-          if (manualScoresDraft[q.id] !== undefined) {
-            const ms = Math.max(0, Math.min(pts, Number(manualScoresDraft[q.id]) || 0));
-            totalScore += ms;
-            if (ms >= pts * 0.5) correctCount += 1;
-          } else {
-            const studentTxt = (reviewSub.shortAnswers?.[q.id] || '').trim().toLowerCase();
-            const accepted = (q.acceptedAnswers || []).map(a => a.trim().toLowerCase()).filter(Boolean);
-            if (accepted.length > 0 && accepted.includes(studentTxt)) {
-              totalScore += pts;
-              correctCount += 1;
-            }
-          }
-        } else {
-          const chosen = reviewSub.answers?.[q.id];
-          const expected = q.correctAnswerIndex ?? q.correctAnswer ?? 0;
-          if (chosen === expected) {
-            totalScore += pts;
-            correctCount += 1;
-          }
-        }
-      });
-
-      const finalTotalPts = totalPts || reviewSub.totalPoints || 1;
-      const pct = Math.round((totalScore / finalTotalPts) * 100);
+      const { totalScore, finalTotalPts, pct, correctCount } = computeGradeForSubmission(
+        mergedReviewExam,
+        reviewSub,
+        manualScoresDraft
+      );
 
       await dbService.updateExamSubmission(reviewSub.id, {
         manualScores: manualScoresDraft,
@@ -397,10 +566,54 @@ export const AdminExamsManager: React.FC<AdminExamsManagerProps> = ({
         reviewedBy: adminName,
         reviewedAt: new Date().toISOString()
       });
-      onLogAction('update', reviewExam.title, `Reviewed submission by ${reviewSub.studentName} (${pct}%)`);
+      onLogAction('update', mergedReviewExam.title, `Reviewed submission by ${reviewSub.studentName} (${pct}%)`);
+      emitAppToast(t('تم اعتماد وتصحيح محاولة الطالب بنجاح.', 'Submission review saved.'), 'success');
       setReviewSub(null);
+    } catch (err: any) {
+      setReviewError(err?.message || t('تعذر حفظ نتيجة المراجعة في السحابة.', 'Failed to save review.'));
     } finally {
       setSavingReview(false);
+    }
+  };
+
+  const handleBatchAutoGrade = async () => {
+    if (!mergedReviewExam) return;
+    setReviewError(null);
+    const pendingSubs = submissions.filter(
+      s => s.examId === mergedReviewExam.id && (s.status === 'pending_review' || s.needsManualReview)
+    );
+    if (pendingSubs.length === 0) return;
+
+    setBatchGrading(true);
+    try {
+      let gradedCount = 0;
+      let partialCount = 0;
+      for (const sub of pendingSubs) {
+        const res = computeGradeForSubmission(mergedReviewExam, sub, sub.manualScores || {});
+        await dbService.updateExamSubmission(sub.id, {
+          score: res.totalScore,
+          totalPoints: res.finalTotalPts,
+          percentage: res.pct,
+          correctCount: res.correctCount,
+          needsManualReview: res.hasUngradedOpenShort,
+          status: res.hasUngradedOpenShort ? 'pending_review' : 'graded',
+          reviewedBy: adminName,
+          reviewedAt: new Date().toISOString()
+        });
+        if (res.hasUngradedOpenShort) partialCount += 1;
+        else gradedCount += 1;
+      }
+      onLogAction('update', mergedReviewExam.title, `Batch auto-graded ${gradedCount} submissions`);
+      emitAppToast(
+        partialCount > 0
+          ? t(`تم تصحيح ${gradedCount} محاولة كاملة و${partialCount} محاولة تنتظر تقييم الأسئلة المقالية.`, `Graded ${gradedCount} full attempts; ${partialCount} still await short-answer scoring.`)
+          : t(`تم تصحيح واعتماد ${gradedCount} محاولة تلقائيًا بنجاح.`, `Auto-graded ${gradedCount} attempts successfully.`),
+        'success'
+      );
+    } catch (err: any) {
+      setReviewError(err?.message || t('تعذر إتمام التصحيح التلقائي.', 'Auto-grading failed.'));
+    } finally {
+      setBatchGrading(false);
     }
   };
 
@@ -408,14 +621,13 @@ export const AdminExamsManager: React.FC<AdminExamsManagerProps> = ({
     return exams
       .filter(exam => {
         if (!doesItemMatchYearAndSemester(exam, yearFilter, semesterFilter, courses)) return false;
-        const subj = (exam.subject || exam.courseTitle || '').toLowerCase();
-        if (subjectFilter !== 'all' && !subj.includes(subjectFilter.toLowerCase())) return false;
+        if (!doesSubjectMatch(exam, subjectFilter, courses)) return false;
         const isOnline = exam.isOnlineExam ?? Boolean(exam.questions && exam.questions.length > 0);
         if (modeFilter === 'online' && !isOnline) return false;
         if (modeFilter === 'pdf' && isOnline) return false;
-        const isPub = isContentPublished(exam);
-        if (statusFilter === 'published' && !isPub) return false;
-        if (statusFilter === 'draft' && isPub) return false;
+        const statusKey = exam.status === 'unpublished' ? 'unpublished' : isContentPublished(exam) ? 'published' : 'draft';
+        if (statusFilter !== 'all' && statusKey !== statusFilter) return false;
+        const subj = (exam.subject || exam.courseTitle || '').toLowerCase();
         const q = searchQuery.trim().toLowerCase();
         if (q) {
           const hay = `${exam.title} ${exam.description || ''} ${subj}`.toLowerCase();
@@ -450,9 +662,11 @@ export const AdminExamsManager: React.FC<AdminExamsManagerProps> = ({
   }, [questionBank, bankSearch]);
 
   const examSubmissions = useMemo(() => {
-    if (!reviewExam) return [];
-    return submissions.filter(s => s.examId === reviewExam.id);
-  }, [submissions, reviewExam]);
+    if (!mergedReviewExam) return [];
+    return submissions.filter(s => s.examId === mergedReviewExam.id);
+  }, [submissions, mergedReviewExam]);
+
+  const hasPendingForReviewExam = examSubmissions.some(s => s.status === 'pending_review' || s.needsManualReview);
 
   return (
     <div className="space-y-6">
@@ -477,6 +691,18 @@ export const AdminExamsManager: React.FC<AdminExamsManagerProps> = ({
         </button>
       </div>
 
+      {actionError && (
+        <div className="rounded-xl border border-rose-500/40 bg-rose-500/10 p-3 text-xs font-bold text-rose-700 dark:text-rose-300 flex items-center justify-between gap-3">
+          <span className="flex items-center gap-2">
+            <AlertCircle className="h-4 w-4 shrink-0" />
+            <span>{actionError}</span>
+          </span>
+          <button type="button" onClick={() => setActionError(null)} className="cursor-pointer">
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+      )}
+
       {/* KPIs */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-4">
@@ -488,7 +714,7 @@ export const AdminExamsManager: React.FC<AdminExamsManagerProps> = ({
           <div className="text-2xl font-black text-brand-cyan mt-1 tabular-nums">{kpis.onlineCount} / {kpis.pdfCount}</div>
         </div>
         <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-4">
-          <div className="text-xs font-bold text-slate-500 dark:text-slate-400">{t('بانتظار تصحيح يدوي', 'Pending Manual Review')}</div>
+          <div className="text-xs font-bold text-slate-500 dark:text-slate-400">{t('بانتظار مراجعة وتصحيح', 'Pending Review')}</div>
           <div className="text-2xl font-black text-amber-600 dark:text-amber-400 mt-1 tabular-nums">{kpis.pendingReviewCount}</div>
         </div>
         <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-4">
@@ -551,12 +777,13 @@ export const AdminExamsManager: React.FC<AdminExamsManagerProps> = ({
         <div className="flex gap-2">
           <select
             value={statusFilter}
-            onChange={(e) => setStatusFilter(e.target.value as 'all' | 'published' | 'draft')}
+            onChange={(e) => setStatusFilter(e.target.value as 'all' | 'published' | 'draft' | 'unpublished')}
             className="flex-1 px-2.5 py-2 min-h-[40px] bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-700 rounded-xl text-xs font-bold text-slate-800 dark:text-slate-200 outline-none"
           >
             <option value="all">{t('كل الحالات', 'All')}</option>
             <option value="published">{t('منشور', 'Published')}</option>
             <option value="draft">{t('مسودة', 'Draft')}</option>
+            <option value="unpublished">{t('متوقف', 'Unpublished')}</option>
           </select>
           <button
             type="button"
@@ -581,6 +808,7 @@ export const AdminExamsManager: React.FC<AdminExamsManagerProps> = ({
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           {filteredExams.map(exam => {
             const isPub = isContentPublished(exam);
+            const isUnpub = exam.status === 'unpublished';
             const isOnline = exam.isOnlineExam ?? Boolean(exam.questions && exam.questions.length > 0);
             const examSubs = submissions.filter(s => s.examId === exam.id);
             const pendingCount = examSubs.filter(s => s.status === 'pending_review' || s.needsManualReview).length;
@@ -606,8 +834,14 @@ export const AdminExamsManager: React.FC<AdminExamsManagerProps> = ({
                       </div>
                       <h4 className="font-black text-slate-900 dark:text-white text-base mt-1 truncate">{exam.title}</h4>
                     </div>
-                    <span className={`text-[11px] font-bold shrink-0 ${isPub ? 'text-emerald-600 dark:text-emerald-400' : 'text-amber-600 dark:text-amber-400'}`}>
-                      {isPub ? t('منشور', 'Published') : t('مسودة', 'Draft')}
+                    <span className={`text-[11px] font-bold shrink-0 ${
+                      isPub
+                        ? 'text-emerald-600 dark:text-emerald-400'
+                        : isUnpub
+                        ? 'text-slate-500'
+                        : 'text-amber-600 dark:text-amber-400'
+                    }`}>
+                      {isPub ? t('منشور', 'Published') : isUnpub ? t('متوقف', 'Unpublished') : t('مسودة', 'Draft')}
                     </span>
                   </div>
 
@@ -647,7 +881,7 @@ export const AdminExamsManager: React.FC<AdminExamsManagerProps> = ({
                     </button>
                     <button
                       type="button"
-                      onClick={() => setReviewExam(exam)}
+                      onClick={() => { setReviewError(null); setReviewExam(exam); }}
                       className="px-2.5 py-1.5 min-h-[36px] text-xs font-bold text-brand-cyan bg-brand-cyan/10 hover:bg-brand-cyan/20 rounded-lg flex items-center gap-1 cursor-pointer tabular-nums"
                     >
                       <Users className="h-3.5 w-3.5" />
@@ -670,9 +904,9 @@ export const AdminExamsManager: React.FC<AdminExamsManagerProps> = ({
                       type="button"
                       onClick={() => handleToggleStatus(exam)}
                       className="p-2 min-h-[36px] min-w-[36px] text-slate-600 dark:text-slate-300 hover:text-brand-cyan rounded-lg cursor-pointer"
-                      title={isPub ? t('تحويل لمسودة', 'Move to Draft') : t('نشر', 'Publish')}
+                      title={isPub ? t('إيقاف النشر', 'Unpublish') : t('نشر', 'Publish')}
                     >
-                      {isPub ? <FileEdit className="h-4 w-4" /> : <Globe className="h-4 w-4" />}
+                      {isPub ? <EyeOff className="h-4 w-4" /> : isUnpub ? <Globe className="h-4 w-4" /> : <FileEdit className="h-4 w-4" />}
                     </button>
                     <button
                       type="button"
@@ -684,7 +918,7 @@ export const AdminExamsManager: React.FC<AdminExamsManagerProps> = ({
                     </button>
                     <button
                       type="button"
-                      onClick={() => handleDelete(exam)}
+                      onClick={() => setDeleteTarget(exam)}
                       className="p-2 min-h-[36px] min-w-[36px] text-slate-600 dark:text-slate-300 hover:text-rose-500 rounded-lg cursor-pointer"
                       title={t('حذف', 'Delete')}
                     >
@@ -712,6 +946,13 @@ export const AdminExamsManager: React.FC<AdminExamsManagerProps> = ({
             </div>
 
             <form onSubmit={handleSave} className="p-6 overflow-y-auto space-y-5">
+              {formError && (
+                <div className="rounded-xl border border-rose-500/40 bg-rose-500/10 p-3 text-xs font-bold text-rose-700 dark:text-rose-300 flex items-start gap-2">
+                  <AlertCircle className="h-4 w-4 shrink-0 mt-0.5" />
+                  <span>{formError}</span>
+                </div>
+              )}
+
               {/* Academic Classification */}
               <div className="grid grid-cols-1 sm:grid-cols-4 gap-4">
                 <div>
@@ -754,11 +995,12 @@ export const AdminExamsManager: React.FC<AdminExamsManagerProps> = ({
                   <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1.5">{t('الحالة', 'Status')}</label>
                   <select
                     value={form.status}
-                    onChange={(e) => setForm({ ...form, status: e.target.value as 'draft' | 'published' })}
+                    onChange={(e) => setForm({ ...form, status: e.target.value as 'draft' | 'published' | 'unpublished' })}
                     className="w-full px-3 py-2.5 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-700 rounded-xl text-xs font-bold text-slate-900 dark:text-white outline-none"
                   >
                     <option value="published">{t('منشور للطلاب', 'Published')}</option>
                     <option value="draft">{t('مسودة (مخفي)', 'Draft (Hidden)')}</option>
+                    <option value="unpublished">{t('تم إيقاف النشر (مخفي)', 'Unpublished (Hidden)')}</option>
                   </select>
                 </div>
               </div>
@@ -806,6 +1048,7 @@ export const AdminExamsManager: React.FC<AdminExamsManagerProps> = ({
                   fileType="pdf"
                   folder="lms_exams"
                   onPreview={(url) => onPreviewMedia?.(url)}
+                  onUploadingChange={busy => setFieldUploading('questionsPdf', busy)}
                 />
                 <FileUploadField
                   label={t('ملف الإجابة النموذجية PDF (اختياري)', 'Model Answer PDF (Optional)')}
@@ -815,6 +1058,7 @@ export const AdminExamsManager: React.FC<AdminExamsManagerProps> = ({
                   fileType="pdf"
                   folder="lms_exams_answers"
                   onPreview={(url) => onPreviewMedia?.(url)}
+                  onUploadingChange={busy => setFieldUploading('modelAnswer', busy)}
                 />
               </div>
 
@@ -844,7 +1088,7 @@ export const AdminExamsManager: React.FC<AdminExamsManagerProps> = ({
                       type="number"
                       min={1}
                       value={form.durationMinutes}
-                      onChange={(e) => setForm({ ...form, durationMinutes: Number(e.target.value) || 30 })}
+                      onChange={(e) => setForm({ ...form, durationMinutes: Number(e.target.value) })}
                       className="w-full px-3 py-2 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl text-xs font-bold text-slate-900 dark:text-white tabular-nums"
                     />
                   </div>
@@ -854,7 +1098,7 @@ export const AdminExamsManager: React.FC<AdminExamsManagerProps> = ({
                       type="number"
                       min={1}
                       value={form.maxAttempts}
-                      onChange={(e) => setForm({ ...form, maxAttempts: Number(e.target.value) || 1 })}
+                      onChange={(e) => setForm({ ...form, maxAttempts: Number(e.target.value) })}
                       className="w-full px-3 py-2 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl text-xs font-bold text-slate-900 dark:text-white tabular-nums"
                     />
                   </div>
@@ -1074,14 +1318,55 @@ export const AdminExamsManager: React.FC<AdminExamsManagerProps> = ({
                 </button>
                 <button
                   type="submit"
-                  disabled={saving}
+                  disabled={saving || isUploadingAny}
                   className="px-6 py-2.5 min-h-[44px] bg-brand-cyan hover:bg-cyan-600 text-white dark:text-slate-950 font-black rounded-xl text-xs flex items-center gap-2 cursor-pointer disabled:opacity-50"
                 >
                   <CheckCircle2 className="h-4 w-4" />
-                  <span>{saving ? t('جاري الحفظ...', 'Saving...') : t('حفظ الامتحان', 'Save Exam')}</span>
+                  <span>
+                    {isUploadingAny
+                      ? t('جاري رفع الملفات...', 'Uploading files...')
+                      : saving
+                      ? t('جاري الحفظ...', 'Saving...')
+                      : t('حفظ الامتحان', 'Save Exam')}
+                  </span>
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* Delete Confirmation Modal */}
+      {deleteTarget && (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-slate-950/80 backdrop-blur-sm p-4">
+          <div className="w-full max-w-md rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950 p-6 shadow-2xl space-y-4">
+            <h3 className="text-base font-black text-slate-900 dark:text-white">
+              {t('تأكيد حذف الامتحان', 'Confirm Exam Deletion')}
+            </h3>
+            <p className="text-xs text-slate-600 dark:text-slate-400 leading-relaxed">
+              {t(
+                `هل أنت متأكد من حذف الامتحان "${deleteTarget.title}"؟ سيتم حذفه مع مفاتيح الإجابة والملفات غير المستخدمة.`,
+                `Are you sure you want to delete exam "${deleteTarget.title}"?`
+              )}
+            </p>
+            <div className="flex items-center justify-end gap-2 pt-2">
+              <button
+                type="button"
+                disabled={deleting}
+                onClick={() => setDeleteTarget(null)}
+                className="px-4 py-2 rounded-xl border border-slate-300 dark:border-slate-700 text-xs font-bold text-slate-700 dark:text-slate-300 cursor-pointer"
+              >
+                {t('إلغاء', 'Cancel')}
+              </button>
+              <button
+                type="button"
+                disabled={deleting}
+                onClick={confirmDelete}
+                className="px-4 py-2 rounded-xl bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold cursor-pointer disabled:opacity-50"
+              >
+                {deleting ? t('جاري الحذف...', 'Deleting...') : t('تأكيد الحذف', 'Confirm Delete')}
+              </button>
+            </div>
           </div>
         </div>
       )}
@@ -1130,40 +1415,78 @@ export const AdminExamsManager: React.FC<AdminExamsManagerProps> = ({
         </div>
       )}
 
-      {/* Preview Exam As Student */}
-      {previewExam && (
+      {/* Preview Exam As Student + Admin Key Overview */}
+      {mergedPreviewExam && (
         <div className="fixed inset-0 z-50 bg-slate-950/75 backdrop-blur-sm flex items-center justify-center p-4">
           <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl w-full max-w-2xl p-6 space-y-4 max-h-[88vh] overflow-y-auto">
             <div className="flex items-center justify-between border-b border-slate-200 dark:border-slate-800 pb-3">
               <div>
                 <span className="text-[11px] font-bold text-brand-cyan">{t('معاينة الامتحان كما يظهر للطالب', 'Student Exam Preview')}</span>
-                <h4 className="font-black text-slate-900 dark:text-white text-lg">{previewExam.title}</h4>
+                <h4 className="font-black text-slate-900 dark:text-white text-lg">{mergedPreviewExam.title}</h4>
               </div>
               <button type="button" onClick={() => setPreviewExam(null)} className="p-2 text-slate-400 hover:text-slate-700 dark:hover:text-white cursor-pointer">
                 <X className="h-5 w-5" />
               </button>
             </div>
             <div className="text-xs text-slate-500 flex flex-wrap gap-4 tabular-nums">
-              <span>{t('المدة:', 'Duration:')} {previewExam.durationMinutes ?? 30} {t('دقيقة', 'min')}</span>
-              <span>{t('المحاولات:', 'Max Attempts:')} {previewExam.maxAttempts ?? 1}</span>
-              <span>{t('إظهار الإجابات:', 'Show Keys:')} {previewExam.showAnswersToStudents ? t('نعم', 'Yes') : t('لا', 'No')}</span>
+              <span>{t('المدة:', 'Duration:')} {mergedPreviewExam.durationMinutes ?? 30} {t('دقيقة', 'min')}</span>
+              <span>{t('المحاولات:', 'Max Attempts:')} {mergedPreviewExam.maxAttempts ?? 1}</span>
+              <span>{t('إظهار الإجابات:', 'Show Keys:')} {mergedPreviewExam.showAnswersToStudents ? t('نعم', 'Yes') : t('لا', 'No')}</span>
             </div>
-            {(previewExam.questions || []).map((q, idx) => (
+            {(mergedPreviewExam.questionsPdfUrl || mergedPreviewExam.questionsFileUrl || mergedPreviewExam.modelAnswerUrl || mergedPreviewExam.answersFileUrl) && (
+              <div className="flex flex-wrap gap-2">
+                {(mergedPreviewExam.questionsPdfUrl || mergedPreviewExam.questionsFileUrl) && (
+                  <button
+                    type="button"
+                    onClick={() => triggerFileDownload((mergedPreviewExam.questionsPdfUrl || mergedPreviewExam.questionsFileUrl)!, `${mergedPreviewExam.title}_questions.pdf`)}
+                    className="px-3 py-1.5 rounded-xl bg-slate-100 dark:bg-slate-800 text-xs font-bold text-slate-800 dark:text-slate-200 inline-flex items-center gap-1.5 cursor-pointer"
+                  >
+                    <Download className="h-3.5 w-3.5 text-rose-500" /> {t('ملف الأسئلة PDF', 'Questions PDF')}
+                  </button>
+                )}
+                {(mergedPreviewExam.modelAnswerUrl || mergedPreviewExam.answersFileUrl) && (
+                  <button
+                    type="button"
+                    onClick={() => triggerFileDownload((mergedPreviewExam.modelAnswerUrl || mergedPreviewExam.answersFileUrl)!, `${mergedPreviewExam.title}_answers.pdf`)}
+                    className="px-3 py-1.5 rounded-xl bg-emerald-500/10 text-xs font-bold text-emerald-700 dark:text-emerald-300 inline-flex items-center gap-1.5 cursor-pointer"
+                  >
+                    <Download className="h-3.5 w-3.5" /> {t('ملف الإجابة النموذجية (معاينة الإدارة)', 'Answer Key PDF (Admin)')}
+                  </button>
+                )}
+              </div>
+            )}
+            {(mergedPreviewExam.questions || []).map((q, idx) => (
               <div key={q.id} className="p-4 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-2xl space-y-2">
                 <div className="font-black text-xs text-slate-900 dark:text-white">
                   {idx + 1}. {q.questionText || q.question} <span className="text-brand-cyan">({q.points} pts)</span>
                 </div>
                 {q.type === 'short_answer' ? (
-                  <div className="p-2.5 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg text-[11px] text-slate-400">
+                  <div className="p-2.5 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg text-[11px] text-slate-500">
                     {t('[حقل كتابة الإجابة القصيرة للطالب]', '[Student short-answer input]')}
+                    {(q.acceptedAnswers?.length || 0) > 0 && (
+                      <div className="text-emerald-600 dark:text-emerald-400 font-bold mt-1">
+                        {t('الإجابات المقبولة (للإدارة):', 'Accepted keys (Admin):')} {q.acceptedAnswers?.join(', ')}
+                      </div>
+                    )}
                   </div>
                 ) : (
                   <div className="space-y-1.5">
-                    {q.options.map((opt, i) => (
-                      <div key={i} className="px-3 py-1.5 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg text-xs text-slate-700 dark:text-slate-300">
-                        {opt}
-                      </div>
-                    ))}
+                    {q.options.map((opt, i) => {
+                      const isRight = i === q.correctAnswerIndex;
+                      return (
+                        <div
+                          key={i}
+                          className={`px-3 py-1.5 border rounded-lg text-xs flex items-center justify-between ${
+                            isRight
+                              ? 'bg-emerald-500/10 border-emerald-500/40 text-emerald-700 dark:text-emerald-300 font-bold'
+                              : 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-300'
+                          }`}
+                        >
+                          <span>{opt}</span>
+                          {isRight && <span className="text-[10px]">{t('صحيح ✓', 'Correct ✓')}</span>}
+                        </div>
+                      );
+                    })}
                   </div>
                 )}
               </div>
@@ -1173,24 +1496,44 @@ export const AdminExamsManager: React.FC<AdminExamsManagerProps> = ({
       )}
 
       {/* Submissions & Manual Grading Modal */}
-      {reviewExam && (
+      {mergedReviewExam && (
         <div className="fixed inset-0 z-50 bg-slate-950/75 backdrop-blur-sm flex items-center justify-center p-4">
           <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl w-full max-w-3xl max-h-[90vh] flex flex-col shadow-2xl">
-            <div className="flex items-center justify-between px-6 py-4 border-b border-slate-200 dark:border-slate-800">
+            <div className="flex flex-wrap items-center justify-between gap-3 px-6 py-4 border-b border-slate-200 dark:border-slate-800">
               <div>
                 <span className="text-[11px] font-bold text-brand-cyan">{t('نتائج الطلاب والمراجعة اليدوية', 'Exam Submissions & Manual Grading')}</span>
-                <h3 className="font-black text-slate-900 dark:text-white text-base">{reviewExam.title}</h3>
+                <h3 className="font-black text-slate-900 dark:text-white text-base">{mergedReviewExam.title}</h3>
               </div>
-              <button
-                type="button"
-                onClick={() => { setReviewExam(null); setReviewSub(null); }}
-                className="p-2 text-slate-400 hover:text-slate-700 dark:hover:text-white cursor-pointer"
-              >
-                <X className="h-5 w-5" />
-              </button>
+              <div className="flex items-center gap-2">
+                {hasPendingForReviewExam && (
+                  <button
+                    type="button"
+                    disabled={batchGrading}
+                    onClick={handleBatchAutoGrade}
+                    className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+                  >
+                    <Sparkles className="h-3.5 w-3.5" />
+                    <span>{batchGrading ? t('جاري التصحيح...', 'Grading...') : t('تصحيح المعلق تلقائياً', 'Auto-Grade Pending')}</span>
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={() => { setReviewExam(null); setReviewSub(null); setReviewError(null); }}
+                  className="p-2 text-slate-400 hover:text-slate-700 dark:hover:text-white cursor-pointer"
+                >
+                  <X className="h-5 w-5" />
+                </button>
+              </div>
             </div>
 
             <div className="p-6 overflow-y-auto space-y-4">
+              {reviewError && (
+                <div className="rounded-xl border border-rose-500/40 bg-rose-500/10 p-3 text-xs font-bold text-rose-700 dark:text-rose-300 flex items-start gap-2">
+                  <AlertCircle className="h-4 w-4 shrink-0 mt-0.5" />
+                  <span>{reviewError}</span>
+                </div>
+              )}
+
               {examSubmissions.length === 0 ? (
                 <p className="text-center py-10 text-sm font-bold text-slate-500">
                   {t('لا توجد محاولات طلاب لهذا الامتحان بعد.', 'No attempts submitted yet.')}
@@ -1224,11 +1567,11 @@ export const AdminExamsManager: React.FC<AdminExamsManagerProps> = ({
 
                       {reviewSub?.id === sub.id && (
                         <form onSubmit={handleSaveManualReview} className="pt-3 border-t border-slate-200 dark:border-slate-800 space-y-3">
-                          {(reviewExam.questions || []).map((q, idx) => {
+                          {(mergedReviewExam.questions || []).map((q, idx) => {
                             const isShort = q.type === 'short_answer';
                             const chosenIdx = sub.answers?.[q.id];
                             const shortTxt = sub.shortAnswers?.[q.id] || '';
-                            const expectedIdx = q.correctAnswerIndex ?? q.correctAnswer ?? 0;
+                            const expectedIdx = q.correctAnswerIndex >= 0 ? q.correctAnswerIndex : (q.correctAnswer ?? 0);
 
                             return (
                               <div key={q.id} className="p-3 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl space-y-1.5">
@@ -1258,11 +1601,11 @@ export const AdminExamsManager: React.FC<AdminExamsManagerProps> = ({
                                   </div>
                                 ) : (
                                   <div className="text-[11px] text-slate-600 dark:text-slate-400">
-                                    {t('اختيار الطالب:', 'Selected:')} <strong>{chosenIdx !== undefined ? (q.options[chosenIdx] || chosenIdx) : '-'}</strong>
+                                    {t('اختيار الطالب:', 'Selected:')} <strong>{chosenIdx !== undefined ? (q.options[chosenIdx] ?? chosenIdx) : '-'}</strong>
                                     {' · '}
                                     {chosenIdx === expectedIdx
                                       ? <span className="text-emerald-600 font-bold">{t('صحيح', 'Correct')}</span>
-                                      : <span className="text-rose-500 font-bold">{t('خطأ', 'Incorrect')} ({q.options[expectedIdx]})</span>}
+                                      : <span className="text-rose-500 font-bold">{t('خطأ', 'Incorrect')} ({q.options[expectedIdx] ?? '-'})</span>}
                                   </div>
                                 )}
                               </div>
@@ -1280,7 +1623,7 @@ export const AdminExamsManager: React.FC<AdminExamsManagerProps> = ({
                             <button
                               type="submit"
                               disabled={savingReview}
-                              className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-black rounded-xl text-xs flex items-center gap-1.5 cursor-pointer shrink-0"
+                              className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-black rounded-xl text-xs flex items-center gap-1.5 cursor-pointer shrink-0 disabled:opacity-50"
                             >
                               <Send className="h-3.5 w-3.5" />
                               <span>{savingReview ? t('حفظ...', 'Saving...') : t('اعتماد النتيجة', 'Save Review')}</span>

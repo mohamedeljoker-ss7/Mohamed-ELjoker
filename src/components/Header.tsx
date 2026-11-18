@@ -156,16 +156,17 @@ export const Header: React.FC<HeaderProps> = ({
                 className="flex items-center gap-1.5 rounded-xl bg-slate-900 dark:bg-brand-cyan text-white dark:text-slate-950 hover:opacity-90 px-2.5 sm:px-3 py-1.5 text-xs font-bold transition-all cursor-pointer whitespace-nowrap shrink-0"
               >
                 <Shield className="h-3.5 w-3.5 shrink-0" />
-                <span className="hidden sm:inline">{t('لوحة الإدارة', 'Admin Panel')}</span>
+                <span className="hidden sm:inline">{t('لوحة المدير', 'Manager Panel')}</span>
               </button>
             ) : !isStudentLoggedIn ? (
               <button
                 type="button"
                 onClick={onOpenAdminLogin}
+                title={t('تسجيل دخول المدير', 'Manager Login')}
                 className="hidden md:flex items-center gap-1.5 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-100 dark:bg-slate-900/60 hover:bg-slate-200 dark:hover:bg-slate-800 px-3 py-1.5 text-xs font-bold text-slate-700 dark:text-slate-300 transition-colors cursor-pointer whitespace-nowrap shrink-0"
               >
                 <Shield className="h-3.5 w-3.5 text-brand-cyan shrink-0" />
-                <span>{t('الإدارة', 'Admin')}</span>
+                <span>{t('المدير', 'Manager')}</span>
               </button>
             ) : null}
 
@@ -221,7 +222,7 @@ export const Header: React.FC<HeaderProps> = ({
                   language === 'ar' ? 'text-right' : 'text-left'
                 }`}
               >
-                {t('تسجيل دخول الإدارة', 'Admin Portal Login')}
+                {t('تسجيل دخول المدير', 'Manager Login')}
               </button>
             )}
           </div>

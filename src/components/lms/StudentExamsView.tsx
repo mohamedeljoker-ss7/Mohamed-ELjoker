@@ -1,20 +1,23 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Course, ExamItem, ExamSubmission, OnlineExamQuestion, UserAuth } from '../../types';
-import { dbService } from '../../firebase';
+import { dbService, mergeExamWithPrivateKey } from '../../firebase';
 import { useLanguage } from '../LanguageContext';
-import { triggerFileDownload } from '../../utils/videoStorage';
+import { emitAppToast, triggerFileDownload } from '../../utils/videoStorage';
 import {
   ACADEMIC_GRADES,
   ACADEMIC_SEMESTERS,
   ACADEMIC_SUBJECTS,
   doesItemMatchYearAndSemester,
+  doesSubjectMatch,
   getGradeName,
   getSemesterName,
-  isContentPublished
+  isContentPublished,
+  normalizeGradeCode,
+  normalizeSemesterCode
 } from '../../utils/gradeMatching';
 import {
-  Award, Search, FileText, Download, Eye, ArrowUpDown, X, Clock, Play,
-  CheckCircle2, Lock, Unlock, AlertCircle, Send, MessageSquare
+  Award, Search, Download, Eye, ArrowUpDown, X, Clock, Play,
+  CheckCircle2, Lock, Unlock, AlertCircle, Send, MessageSquare, Loader2
 } from 'lucide-react';
 
 interface StudentExamsViewProps {
@@ -42,8 +45,8 @@ export const StudentExamsView: React.FC<StudentExamsViewProps> = ({
   const { language, t } = useLanguage();
 
   const [searchQuery, setSearchQuery] = useState('');
-  const [yearFilter, setYearFilter] = useState<string>(currentUser?.grade || 'all');
-  const [semesterFilter, setSemesterFilter] = useState<string>(currentUser?.semester || 'all');
+  const [yearFilter, setYearFilter] = useState<string>(() => normalizeGradeCode(currentUser?.grade) || 'all');
+  const [semesterFilter, setSemesterFilter] = useState<string>(() => normalizeSemesterCode(currentUser?.semester) || 'all');
   const [subjectFilter, setSubjectFilter] = useState<string>('all');
   const [modeFilter, setModeFilter] = useState<'all' | 'online' | 'pdf'>('all');
   const [sortBy, setSortBy] = useState<'date' | 'title'>('date');
@@ -57,9 +60,13 @@ export const StudentExamsView: React.FC<StudentExamsViewProps> = ({
   const [shortAnswers, setShortAnswers] = useState<Record<string, string>>({});
   const [remainingSeconds, setRemainingSeconds] = useState<number>(0);
   const [submitting, setSubmitting] = useState(false);
+  const [submitError, setSubmitError] = useState('');
+  const [showExitConfirm, setShowExitConfirm] = useState(false);
+  const timerArmedRef = useRef(false);
 
   // Result / Review Modal State
   const [reviewSubmission, setReviewSubmission] = useState<{ exam: ExamItem; sub: ExamSubmission } | null>(null);
+  const [loadingReviewKey, setLoadingReviewKey] = useState(false);
 
   useEffect(() => {
     if (!currentUser?.id) return;
@@ -102,9 +109,9 @@ export const StudentExamsView: React.FC<StudentExamsViewProps> = ({
     }
   }, [activeExam?.id, answers, shortAnswers, remainingSeconds, orderedQuestions]);
 
-  // Auto-submit when countdown hits zero
+  // Auto-submit ONLY when countdown was armed and reaches zero
   useEffect(() => {
-    if (activeExam && remainingSeconds === 0 && !submitting) {
+    if (activeExam && timerArmedRef.current && remainingSeconds === 0 && !submitting) {
       handleSubmitExam(true);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -130,14 +137,13 @@ export const StudentExamsView: React.FC<StudentExamsViewProps> = ({
     return publishedExams
       .filter(exam => {
         if (!doesItemMatchYearAndSemester(exam, yearFilter, semesterFilter, courses)) return false;
-        const subj = (exam.subject || exam.courseTitle || '').toLowerCase();
-        if (subjectFilter !== 'all' && !subj.includes(subjectFilter.toLowerCase())) return false;
+        if (!doesSubjectMatch(exam, subjectFilter, courses)) return false;
         const isOnline = exam.isOnlineExam ?? Boolean(exam.questions && exam.questions.length > 0);
         if (modeFilter === 'online' && !isOnline) return false;
         if (modeFilter === 'pdf' && isOnline) return false;
         const q = searchQuery.trim().toLowerCase();
         if (q) {
-          const hay = `${exam.title} ${exam.description || ''} ${subj}`.toLowerCase();
+          const hay = `${exam.title} ${exam.description || ''} ${exam.subject || ''} ${exam.courseTitle || ''}`.toLowerCase();
           if (!hay.includes(q)) return false;
         }
         return true;
@@ -182,30 +188,94 @@ export const StudentExamsView: React.FC<StudentExamsViewProps> = ({
       ordered = [...qs].sort(() => Math.random() - 0.5);
     }
 
+    const initialRemaining =
+      restored?.remainingSeconds && restored.remainingSeconds > 0
+        ? restored.remainingSeconds
+        : Math.max(60, (exam.durationMinutes || 30) * 60);
+
+    setSubmitError('');
+    setShowExitConfirm(false);
     setOrderedQuestions(ordered);
     setAnswers(restored?.answers || {});
     setShortAnswers(restored?.shortAnswers || {});
-    setRemainingSeconds(
-      restored?.remainingSeconds && restored.remainingSeconds > 0
-        ? restored.remainingSeconds
-        : (exam.durationMinutes || 30) * 60
-    );
+    setRemainingSeconds(initialRemaining);
+    timerArmedRef.current = initialRemaining > 0;
     setActiveExam(exam);
+  };
+
+  const handleDownloadModelAnswerPdf = async (exam: ExamItem) => {
+    const inlineHref = exam.modelAnswerUrl || exam.answersFileUrl;
+    if (inlineHref) {
+      triggerFileDownload(inlineHref, `${exam.title}_model_answer.pdf`);
+      return;
+    }
+    if (exam.showAnswersToStudents !== true) return;
+    try {
+      const keyDoc = await dbService.getExamPrivateKey(exam.id);
+      const href = keyDoc?.modelAnswerUrl || keyDoc?.answersFileUrl;
+      if (!href) {
+        emitAppToast(t('لم يتم إرفاق ملف نموذج إجابة لهذا الامتحان.', 'No model answer PDF is attached to this exam.'), 'info');
+        return;
+      }
+      triggerFileDownload(href, `${exam.title}_model_answer.pdf`);
+    } catch (err: any) {
+      emitAppToast(err?.message || t('تعذر تحميل نموذج الإجابة في الوقت الحالي.', 'Unable to load model answer PDF right now.'), 'error');
+    }
+  };
+
+  const handleOpenReviewDetails = async (exam: ExamItem, sub: ExamSubmission) => {
+    setReviewSubmission({ exam, sub });
+    if (exam.showAnswersToStudents !== true) return;
+    const hasInlineKeys = (exam.questions || []).some(q => typeof q.correctAnswerIndex === 'number' && q.correctAnswerIndex >= 0);
+    if (hasInlineKeys && (exam.modelAnswerUrl || exam.answersFileUrl)) return;
+
+    setLoadingReviewKey(true);
+    try {
+      const keyDoc = await dbService.getExamPrivateKey(exam.id);
+      if (keyDoc) {
+        const merged = mergeExamWithPrivateKey(exam, keyDoc);
+        setReviewSubmission(prev => (prev && prev.exam.id === exam.id ? { ...prev, exam: merged } : prev));
+      }
+    } catch (err: any) {
+      emitAppToast(err?.message || t('تعذر تحميل تفاصيل نموذج الإجابة.', 'Unable to load answer key details.'), 'error');
+    } finally {
+      setLoadingReviewKey(false);
+    }
   };
 
   const handleSubmitExam = async (autoSubmitted = false) => {
     if (!activeExam || !currentUser || submitting) return;
+    setSubmitError('');
     setSubmitting(true);
     try {
-      const qs = activeExam.questions || [];
+      let examForGrading: ExamItem = activeExam;
+      const canFetchKeys = activeExam.showResultsImmediately !== false || activeExam.showAnswersToStudents === true;
+      const hasInlineKeys = (activeExam.questions || []).some(
+        q => typeof q.correctAnswerIndex === 'number' && q.correctAnswerIndex >= 0
+      );
+
+      if (canFetchKeys) {
+        await dbService.createExamSubmissionReceipt(activeExam.id, currentUser.id);
+        const keyDoc = await dbService.getExamPrivateKey(activeExam.id);
+        if (keyDoc) {
+          examForGrading = mergeExamWithPrivateKey(activeExam, keyDoc);
+        } else if (!hasInlineKeys) {
+          throw new Error(t('تعذر استرجاع مفاتيح التصحيح للامتحان من السحابة.', 'Unable to retrieve exam grading keys from cloud.'));
+        }
+      }
+
+      const qs = examForGrading.questions || [];
       let score = 0;
       let totalPoints = 0;
       let correctCount = 0;
-      let needsManualReview = false;
+      let needsManualReview = !canFetchKeys;
 
       qs.forEach(q => {
         const pts = Number(q.points) || 1;
         totalPoints += pts;
+        if (!canFetchKeys) {
+          return;
+        }
         if (q.type === 'short_answer') {
           const accepted = (q.acceptedAnswers || []).map(a => a.trim().toLowerCase()).filter(Boolean);
           const ansTxt = (shortAnswers[q.id] || '').trim().toLowerCase();
@@ -217,8 +287,8 @@ export const StudentExamsView: React.FC<StudentExamsViewProps> = ({
           }
         } else {
           const chosen = answers[q.id];
-          const expected = q.correctAnswerIndex ?? q.correctAnswer ?? 0;
-          if (chosen === expected) {
+          const expected = q.correctAnswerIndex ?? q.correctAnswer ?? -1;
+          if (expected >= 0 && chosen === expected) {
             score += pts;
             correctCount += 1;
           }
@@ -253,16 +323,22 @@ export const StudentExamsView: React.FC<StudentExamsViewProps> = ({
         feedback: autoSubmitted ? t('تم الإرسال تلقائيًا عند انتهاء الوقت', 'Auto-submitted on timer expiration') : undefined
       });
 
+      timerArmedRef.current = false;
       try {
         localStorage.removeItem(draftKey(activeExam.id));
       } catch {
         // ignore
       }
 
-      const submittedExam = activeExam;
       setActiveExam(null);
-      setReviewSubmission({ exam: submittedExam, sub: created });
+      setShowExitConfirm(false);
+      setReviewSubmission({ exam: examForGrading, sub: created });
+      emitAppToast(t('تم تسليم إجابات الامتحان بنجاح.', 'Exam submitted successfully.'), 'success');
       onExamSubmitted?.(created);
+    } catch (err: any) {
+      const msg = err?.message || t('تعذر إرسال إجابات الامتحان. تم الاحتفاظ بمسودتك، أعد المحاولة.', 'Failed to submit exam. Your draft is safe; please retry.');
+      setSubmitError(msg);
+      emitAppToast(msg, 'error');
     } finally {
       setSubmitting(false);
     }
@@ -373,7 +449,7 @@ export const StudentExamsView: React.FC<StudentExamsViewProps> = ({
             const maxAttempts = exam.maxAttempts ?? 1;
             const canAttempt = isOnline && hasQuestions && windowState === 'available' && examSubs.length < maxAttempts;
             const pdfHref = exam.questionsPdfUrl || exam.questionsFileUrl;
-            const answerPdfHref = exam.modelAnswerUrl || exam.answersFileUrl;
+            const inlineAnswerPdfHref = exam.modelAnswerUrl || exam.answersFileUrl;
 
             return (
               <div
@@ -432,7 +508,7 @@ export const StudentExamsView: React.FC<StudentExamsViewProps> = ({
                         <span className="font-bold text-slate-700 dark:text-slate-300">{t('آخر محاولة:', 'Latest Attempt:')} </span>
                         {latestSub.status === 'pending_review' || latestSub.needsManualReview ? (
                           <span className="text-amber-600 dark:text-amber-400 font-bold">
-                            {t('بانتظار مراجعة الإجابات المقالية', 'Pending instructor review')}
+                            {t('بانتظار المراجعة أو إعلان النتيجة', 'Pending review / grade release')}
                           </span>
                         ) : exam.showResultsImmediately !== false ? (
                           <span className="text-emerald-600 dark:text-emerald-400 font-black tabular-nums">
@@ -444,7 +520,7 @@ export const StudentExamsView: React.FC<StudentExamsViewProps> = ({
                       </div>
                       <button
                         type="button"
-                        onClick={() => setReviewSubmission({ exam, sub: latestSub })}
+                        onClick={() => handleOpenReviewDetails(exam, latestSub)}
                         className="text-brand-cyan font-black hover:underline cursor-pointer shrink-0"
                       >
                         {t('عرض التفاصيل', 'Details')}
@@ -487,12 +563,12 @@ export const StudentExamsView: React.FC<StudentExamsViewProps> = ({
                     </>
                   )}
 
-                  {/* Strictly gated Model Answer PDF */}
-                  {exam.showAnswersToStudents === true && answerPdfHref && (
+                  {/* Strictly gated Model Answer PDF (fetched securely from exam_private_keys if stripped) */}
+                  {exam.showAnswersToStudents === true && (!isOnline || Boolean(inlineAnswerPdfHref)) && (
                     <button
                       type="button"
-                      onClick={() => triggerFileDownload(answerPdfHref, `${exam.title}_model_answer.pdf`)}
-                      className="px-3 py-2 min-h-[38px] bg-emerald-600 text-white font-bold rounded-xl text-xs flex items-center gap-1.5 cursor-pointer"
+                      onClick={() => handleDownloadModelAnswerPdf(exam)}
+                      className="px-3 py-2 min-h-[38px] bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-xl text-xs flex items-center gap-1.5 cursor-pointer"
                     >
                       <Unlock className="h-3.5 w-3.5" />
                       <span>{t('نموذج الإجابة PDF', 'Model Answer PDF')}</span>
@@ -508,13 +584,13 @@ export const StudentExamsView: React.FC<StudentExamsViewProps> = ({
       {/* Active Timed Exam Runner Modal (Zero Answer Leakage) */}
       {activeExam && (
         <div className="fixed inset-0 z-[60] bg-slate-950/90 backdrop-blur-sm flex items-center justify-center p-3 sm:p-6">
-          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl w-full max-w-3xl max-h-[94vh] flex flex-col shadow-2xl">
+          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl w-full max-w-3xl max-h-[94vh] flex flex-col shadow-2xl relative">
             <div className="flex items-center justify-between px-6 py-4 border-b border-slate-200 dark:border-slate-800">
-              <div>
-                <div className="text-[11px] font-bold text-brand-cyan">{activeExam.subject || activeExam.courseTitle}</div>
-                <h3 className="font-black text-slate-900 dark:text-white text-base">{activeExam.title}</h3>
+              <div className="min-w-0">
+                <div className="text-[11px] font-bold text-brand-cyan truncate">{activeExam.subject || activeExam.courseTitle}</div>
+                <h3 className="font-black text-slate-900 dark:text-white text-base truncate">{activeExam.title}</h3>
               </div>
-              <div className="flex items-center gap-3">
+              <div className="flex items-center gap-3 shrink-0">
                 <div className={`px-3 py-1.5 rounded-xl font-black text-sm tabular-nums flex items-center gap-1.5 ${
                   remainingSeconds <= 120 ? 'bg-rose-500/15 text-rose-500' : 'bg-brand-cyan/15 text-brand-cyan'
                 }`}>
@@ -523,17 +599,20 @@ export const StudentExamsView: React.FC<StudentExamsViewProps> = ({
                 </div>
                 <button
                   type="button"
-                  onClick={() => {
-                    if (confirm(t('سيتم حفظ إجاباتك الحالية مؤقتًا، هل تريد الخروج؟', 'Your progress is saved locally as a draft. Exit exam window?'))) {
-                      setActiveExam(null);
-                    }
-                  }}
+                  onClick={() => setShowExitConfirm(true)}
                   className="p-2 text-slate-400 hover:text-slate-700 dark:hover:text-white cursor-pointer"
                 >
                   <X className="h-5 w-5" />
                 </button>
               </div>
             </div>
+
+            {submitError && (
+              <div className="mx-6 mt-4 p-3 rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-600 dark:text-rose-400 text-xs font-bold flex items-start gap-2">
+                <AlertCircle className="h-4 w-4 shrink-0 mt-0.5" />
+                <span>{submitError}</span>
+              </div>
+            )}
 
             <div className="p-6 overflow-y-auto space-y-5">
               {orderedQuestions.map((q, idx) => (
@@ -600,6 +679,40 @@ export const StudentExamsView: React.FC<StudentExamsViewProps> = ({
                 <span>{submitting ? t('جاري تسليم الإجابات...', 'Submitting...') : t('تسليم الامتحان وإنهاء المحاولة', 'Submit Exam')}</span>
               </button>
             </div>
+
+            {/* In-app Exit Confirmation Dialog */}
+            {showExitConfirm && (
+              <div className="fixed inset-0 z-[70] bg-slate-950/75 backdrop-blur-sm flex items-center justify-center p-4">
+                <div className="w-full max-w-sm rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-5 space-y-4 shadow-2xl">
+                  <h4 className="font-black text-slate-900 dark:text-white text-sm">
+                    {t('الخروج من نافذة الامتحان؟', 'Exit Exam Window?')}
+                  </h4>
+                  <p className="text-xs text-slate-600 dark:text-slate-400 leading-relaxed">
+                    {t('سيتم حفظ إجاباتك الحالية مؤقتًا في المسودة على هذا الجهاز لتتمكن من إكمال المحاولة.', 'Your current answers are saved locally as a draft so you can resume.')}
+                  </p>
+                  <div className="flex items-center justify-end gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setShowExitConfirm(false)}
+                      className="px-4 py-2 rounded-xl bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 text-xs font-bold cursor-pointer"
+                    >
+                      {t('متابعة الامتحان', 'Continue Exam')}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        timerArmedRef.current = false;
+                        setShowExitConfirm(false);
+                        setActiveExam(null);
+                      }}
+                      className="px-4 py-2 rounded-xl bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold cursor-pointer"
+                    >
+                      {t('خروج وحفظ المسودة', 'Exit & Save Draft')}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
         </div>
       )}
@@ -624,7 +737,11 @@ export const StudentExamsView: React.FC<StudentExamsViewProps> = ({
                   <AlertCircle className="h-5 w-5 shrink-0" />
                   <div>
                     <div className="font-black">{t('تم استلام إجاباتك بنجاح — قيد المراجعة', 'Submission Received — Pending Review')}</div>
-                    <p className="mt-1">{t('يحتوي الامتحان على أسئلة مقالية قصيرة وسيتم اعتماد الدرجة النهائية بعد مراجعة الإدارة.', 'This exam includes open short-answer questions awaiting manual review.')}</p>
+                    <p className="mt-1">
+                      {reviewSubmission.exam.showResultsImmediately === false
+                        ? t('قررت الإدارة مراجعة واعتماد الدرجات بعد انتهاء فترة الامتحان.', 'Instructor will review and release final grades after the exam window closes.')
+                        : t('يحتوي الامتحان على أسئلة مقالية قصيرة وسيتم اعتماد الدرجة النهائية بعد مراجعة الإدارة.', 'This exam includes open short-answer questions awaiting manual review.')}
+                    </p>
                   </div>
                 </div>
               ) : reviewSubmission.exam.showResultsImmediately !== false ? (
@@ -652,45 +769,67 @@ export const StudentExamsView: React.FC<StudentExamsViewProps> = ({
 
               {reviewSubmission.exam.showAnswersToStudents === true ? (
                 <div className="space-y-3">
-                  <h5 className="font-black text-xs text-emerald-600 dark:text-emerald-400 flex items-center gap-1.5">
-                    <Unlock className="h-4 w-4" />
-                    <span>{t('مراجعة الأسئلة والإجابات النموذجية', 'Question Review & Answer Key')}</span>
-                  </h5>
-                  {(reviewSubmission.exam.questions || []).map((q, idx) => {
-                    const expectedIdx = q.correctAnswerIndex ?? q.correctAnswer ?? 0;
-                    const chosenIdx = reviewSubmission.sub.answers?.[q.id];
-                    const shortAns = reviewSubmission.sub.shortAnswers?.[q.id];
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <h5 className="font-black text-xs text-emerald-600 dark:text-emerald-400 flex items-center gap-1.5">
+                      <Unlock className="h-4 w-4" />
+                      <span>{t('مراجعة الأسئلة والإجابات النموذجية', 'Question Review & Answer Key')}</span>
+                    </h5>
+                    {(reviewSubmission.exam.modelAnswerUrl || reviewSubmission.exam.answersFileUrl) && (
+                      <button
+                        type="button"
+                        onClick={() => triggerFileDownload((reviewSubmission.exam.modelAnswerUrl || reviewSubmission.exam.answersFileUrl)!, `${reviewSubmission.exam.title}_model_answer.pdf`)}
+                        className="px-3 py-1.5 rounded-xl bg-emerald-600 text-white text-[11px] font-bold flex items-center gap-1 cursor-pointer"
+                      >
+                        <Download className="h-3.5 w-3.5" />
+                        <span>{t('تحميل نموذج الإجابة PDF', 'Download Answer PDF')}</span>
+                      </button>
+                    )}
+                  </div>
 
-                    return (
-                      <div key={q.id} className="p-4 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-2xl space-y-2 text-xs">
-                        <div className="font-black text-slate-900 dark:text-white">{idx + 1}. {q.questionText || q.question}</div>
-                        {q.type === 'short_answer' ? (
-                          <div className="space-y-1">
-                            <div className="text-slate-600 dark:text-slate-300">{t('إجابتك:', 'Your Answer:')} <strong>{shortAns || '-'}</strong></div>
-                            {q.acceptedAnswers && q.acceptedAnswers.length > 0 && (
-                              <div className="text-emerald-600 dark:text-emerald-400 font-bold">
-                                {t('الإجابات المقبولة:', 'Accepted Keys:')} {q.acceptedAnswers.join(' / ')}
+                  {loadingReviewKey ? (
+                    <div className="py-8 flex items-center justify-center gap-2 text-xs font-bold text-slate-500">
+                      <Loader2 className="h-4 w-4 animate-spin text-brand-cyan" />
+                      <span>{t('جاري تحميل مفاتيح الإجابة...', 'Loading answer keys...')}</span>
+                    </div>
+                  ) : (
+                    (reviewSubmission.exam.questions || []).map((q, idx) => {
+                      const expectedIdx = q.correctAnswerIndex ?? q.correctAnswer ?? -1;
+                      const chosenIdx = reviewSubmission.sub.answers?.[q.id];
+                      const shortAns = reviewSubmission.sub.shortAnswers?.[q.id];
+
+                      return (
+                        <div key={q.id} className="p-4 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-2xl space-y-2 text-xs">
+                          <div className="font-black text-slate-900 dark:text-white">{idx + 1}. {q.questionText || q.question}</div>
+                          {q.type === 'short_answer' ? (
+                            <div className="space-y-1">
+                              <div className="text-slate-600 dark:text-slate-300">{t('إجابتك:', 'Your Answer:')} <strong>{shortAns || '-'}</strong></div>
+                              {q.acceptedAnswers && q.acceptedAnswers.length > 0 && (
+                                <div className="text-emerald-600 dark:text-emerald-400 font-bold">
+                                  {t('الإجابات المقبولة:', 'Accepted Keys:')} {q.acceptedAnswers.join(' / ')}
+                                </div>
+                              )}
+                            </div>
+                          ) : (
+                            <div className="space-y-1">
+                              <div className="text-slate-600 dark:text-slate-300">
+                                {t('إجابتك:', 'Your Selection:')} <strong>{chosenIdx !== undefined ? q.options[chosenIdx] : t('بدون إجابة', 'Unanswered')}</strong>
                               </div>
-                            )}
-                          </div>
-                        ) : (
-                          <div className="space-y-1">
-                            <div className="text-slate-600 dark:text-slate-300">
-                              {t('إجابتك:', 'Your Selection:')} <strong>{chosenIdx !== undefined ? q.options[chosenIdx] : t('بدون إجابة', 'Unanswered')}</strong>
+                              {expectedIdx >= 0 && (
+                                <div className="text-emerald-600 dark:text-emerald-400 font-bold">
+                                  {t('الإجابة الصحيحة:', 'Correct Answer:')} {q.options[expectedIdx]}
+                                </div>
+                              )}
                             </div>
-                            <div className="text-emerald-600 dark:text-emerald-400 font-bold">
-                              {t('الإجابة الصحيحة:', 'Correct Answer:')} {q.options[expectedIdx]}
-                            </div>
-                          </div>
-                        )}
-                        {q.explanation && (
-                          <p className="text-[11px] text-slate-500 dark:text-slate-400 pt-1 border-t border-slate-200 dark:border-slate-800">
-                            {q.explanation}
-                          </p>
-                        )}
-                      </div>
-                    );
-                  })}
+                          )}
+                          {q.explanation && (
+                            <p className="text-[11px] text-slate-500 dark:text-slate-400 pt-1 border-t border-slate-200 dark:border-slate-800">
+                              {q.explanation}
+                            </p>
+                          )}
+                        </div>
+                      );
+                    })
+                  )}
                 </div>
               ) : (
                 <div className="p-4 rounded-2xl border border-dashed border-slate-300 dark:border-slate-700 text-xs text-slate-500 flex items-center gap-2">

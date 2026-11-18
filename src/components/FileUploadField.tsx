@@ -1,5 +1,8 @@
-import React, { useState, useRef } from 'react';
-import { uploadFileToFirebaseStorage, readFileAsDataUrl, formatBytes, UploadProgressInfo, UploadControlHolder } from '../utils/firebaseUploadService';
+import React, { useState, useRef, useEffect } from 'react';
+import { uploadFileToFirebaseStorage, formatBytes, UploadProgressInfo, UploadControlHolder } from '../utils/firebaseUploadService';
+import { isValidMediaOrWebUrl } from '../utils/gradeMatching';
+import { triggerFileDownload } from '../utils/videoStorage';
+import { ResolvedImage } from './ResolvedMedia';
 import { useLanguage } from './LanguageContext';
 
 interface FileUploadFieldProps {
@@ -10,6 +13,10 @@ interface FileUploadFieldProps {
   folder?: string;
   courseId?: string;
   placeholder?: string;
+  fileType?: 'pdf' | 'image' | 'word' | 'ppt' | 'code' | 'other';
+  onPreview?: (url: string) => void;
+  onUploadingChange?: (busy: boolean) => void;
+  onErrorChange?: (err: string | null) => void;
 }
 
 export const FileUploadField: React.FC<FileUploadFieldProps> = ({
@@ -19,7 +26,11 @@ export const FileUploadField: React.FC<FileUploadFieldProps> = ({
   accept = 'image/*',
   folder = 'uploads',
   courseId,
-  placeholder
+  placeholder,
+  fileType,
+  onPreview,
+  onUploadingChange,
+  onErrorChange
 }) => {
   const { t } = useLanguage();
   const [isUploading, setIsUploading] = useState<boolean>(false);
@@ -29,11 +40,21 @@ export const FileUploadField: React.FC<FileUploadFieldProps> = ({
   const fileInputRef = useRef<HTMLInputElement>(null);
   const cancelControlHolder = useRef<UploadControlHolder>({});
 
-  const isImage = accept.includes('image') || (value && /\.(jpg|jpeg|png|webp|gif|svg)(\?.*)?$/i.test(value));
-  const isPdf = accept.includes('pdf') || (value && /\.pdf(\?.*)?$/i.test(value));
-  const isWord = accept.includes('word') || accept.includes('doc') || (value && /\.(docx?|doc)(\?.*)?$/i.test(value));
-  const isPpt = accept.includes('ppt') || (value && /\.(pptx?|ppt)(\?.*)?$/i.test(value));
-  const isCode = (value && /\.(py|ipynb|json|sql|cpp|c|h|js|ts|tsx|html|css|txt|zip|rar)(\?.*)?$/i.test(value));
+  useEffect(() => {
+    onUploadingChange?.(isUploading);
+  }, [isUploading]);
+
+  useEffect(() => {
+    onErrorChange?.(errorMsg);
+  }, [errorMsg]);
+
+  const urlLooksInvalid = Boolean(value && value.trim() && !isValidMediaOrWebUrl(value));
+
+  const isImage = fileType === 'image' || accept.includes('image') || (value && /\.(jpg|jpeg|png|webp|gif|svg)(\?.*)?$/i.test(value));
+  const isPdf = fileType === 'pdf' || accept.includes('pdf') || (value && /\.pdf(\?.*)?$/i.test(value));
+  const isWord = fileType === 'word' || accept.includes('word') || accept.includes('doc') || (value && /\.(docx?|doc)(\?.*)?$/i.test(value));
+  const isPpt = fileType === 'ppt' || accept.includes('ppt') || (value && /\.(pptx?|ppt)(\?.*)?$/i.test(value));
+  const isCode = fileType === 'code' || (value && /\.(py|ipynb|json|sql|cpp|c|h|js|ts|tsx|html|css|txt|zip|rar)(\?.*)?$/i.test(value));
 
   const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -65,7 +86,7 @@ export const FileUploadField: React.FC<FileUploadFieldProps> = ({
         state: 'success'
       });
 
-      await new Promise((r) => setTimeout(r, 200));
+      await new Promise((r) => setTimeout(r, 150));
 
       setIsUploading(false);
       setProgressInfo(null);
@@ -125,12 +146,25 @@ export const FileUploadField: React.FC<FileUploadFieldProps> = ({
         <input
           type="text"
           value={value}
-          onChange={(e) => onChange(e.target.value)}
+          onChange={(e) => {
+            setErrorMsg(null);
+            onChange(e.target.value);
+          }}
           placeholder={placeholder || (isPdf ? 'https://.../file.pdf' : 'https://.../file')}
-          className="w-full rounded-xl bg-white dark:bg-slate-950 border border-slate-300 dark:border-slate-800 p-2.5 pr-9 text-slate-900 dark:text-white text-xs font-mono focus:outline-none focus:border-brand-cyan text-left dir-ltr"
+          className={`w-full rounded-xl bg-white dark:bg-slate-950 border p-2.5 pr-9 text-slate-900 dark:text-white text-xs font-mono focus:outline-none text-left dir-ltr ${
+            urlLooksInvalid
+              ? 'border-rose-500 focus:border-rose-500'
+              : 'border-slate-300 dark:border-slate-800 focus:border-brand-cyan'
+          }`}
         />
         <span className="absolute right-3 top-2.5 text-slate-400 text-xs">🔗</span>
       </div>
+
+      {urlLooksInvalid && (
+        <p className="text-[11px] font-bold text-rose-600 dark:text-rose-400">
+          ⚠️ {t('صيغة الرابط غير صحيحة (يجب أن يبدأ بـ https:// أو http:// أو يتم رفعه من الجهاز).', 'Invalid URL format (must start with https:// or be uploaded from device).')}
+        </p>
+      )}
 
       {/* Real Upload Progress UI */}
       {isUploading && progressInfo && (
@@ -166,17 +200,14 @@ export const FileUploadField: React.FC<FileUploadFieldProps> = ({
       )}
 
       {/* Live Preview Bar */}
-      {value && value.trim().length > 0 && !isUploading && (
-        <div className="bg-white dark:bg-slate-950 rounded-xl p-2.5 border border-slate-200 dark:border-slate-800 flex items-center justify-between gap-2">
+      {value && value.trim().length > 0 && !isUploading && !urlLooksInvalid && (
+        <div className="bg-white dark:bg-slate-950 rounded-xl p-2.5 border border-slate-200 dark:border-slate-800 flex flex-wrap items-center justify-between gap-2">
           <div className="flex items-center gap-3 overflow-hidden min-w-0 flex-1">
             {isImage ? (
-              <img
+              <ResolvedImage
                 src={value}
                 alt="Preview"
                 className="w-10 h-10 rounded-lg object-cover border border-slate-200 dark:border-slate-700 shrink-0"
-                onError={(e) => {
-                  (e.target as HTMLImageElement).style.display = 'none';
-                }}
               />
             ) : isPdf ? (
               <div className="w-10 h-10 rounded-lg bg-red-500/10 border border-red-500/30 text-red-600 dark:text-red-400 flex items-center justify-center font-bold text-xs shrink-0">
@@ -200,17 +231,37 @@ export const FileUploadField: React.FC<FileUploadFieldProps> = ({
               </div>
             )}
             <div className="truncate text-xs font-mono text-slate-700 dark:text-slate-300 dir-ltr text-left">
-              {value}
+              {value.startsWith('firestore://')
+                ? `${t('ملف محفوظ سحابياً', 'Cloud File')} (${value.slice(0, 26)}...)`
+                : value}
             </div>
           </div>
 
-          <button
-            type="button"
-            onClick={() => onChange('')}
-            className="text-xs text-rose-600 dark:text-rose-400 hover:underline shrink-0 cursor-pointer font-bold"
-          >
-            {t('حذف', 'Remove')}
-          </button>
+          <div className="flex items-center gap-3 shrink-0">
+            {onPreview && (
+              <button
+                type="button"
+                onClick={() => onPreview(value)}
+                className="text-xs text-brand-cyan hover:underline cursor-pointer font-bold"
+              >
+                {t('معاينة', 'Preview')}
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={() => triggerFileDownload(value, label || 'resource')}
+              className="text-xs text-slate-600 dark:text-slate-300 hover:text-brand-cyan cursor-pointer font-bold"
+            >
+              {t('تنزيل', 'Download')}
+            </button>
+            <button
+              type="button"
+              onClick={() => onChange('')}
+              className="text-xs text-rose-600 dark:text-rose-400 hover:underline shrink-0 cursor-pointer font-bold"
+            >
+              {t('حذف', 'Remove')}
+            </button>
+          </div>
         </div>
       )}
 

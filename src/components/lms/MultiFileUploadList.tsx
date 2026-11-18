@@ -1,12 +1,14 @@
-import React, { useRef, useState } from 'react';
+import React, { useRef, useState, useEffect } from 'react';
 import { AttachmentFile } from '../../types';
 import {
   uploadFileToFirebaseStorage,
   UploadProgressInfo,
   UploadControlHolder
 } from '../../utils/firebaseUploadService';
+import { triggerFileDownload } from '../../utils/videoStorage';
+import { ResolvedImage } from '../ResolvedMedia';
 import { useLanguage } from '../LanguageContext';
-import { Upload, Trash2, FileText, Image as ImageIcon, Code2, Archive, FileSpreadsheet, Loader2, X, ExternalLink } from 'lucide-react';
+import { Upload, Trash2, FileText, Image as ImageIcon, Code2, Archive, FileSpreadsheet, Loader2, X, Download } from 'lucide-react';
 
 interface MultiFileUploadListProps {
   label: string;
@@ -17,6 +19,8 @@ interface MultiFileUploadListProps {
   courseId?: string;
   helperText?: string;
   allowCodeAndArchives?: boolean;
+  onUploadingChange?: (busy: boolean) => void;
+  onErrorChange?: (err: string | null) => void;
 }
 
 export function detectAttachmentType(fileName: string): AttachmentFile['fileType'] {
@@ -40,7 +44,9 @@ export const MultiFileUploadList: React.FC<MultiFileUploadListProps> = ({
   accept = 'image/*,.pdf,.ppt,.pptx,.doc,.docx,.zip,.rar,.py,.js,.c,.cpp,.html,.css,.sql,.txt,.json',
   folder = 'lms_attachments',
   courseId,
-  helperText
+  helperText,
+  onUploadingChange,
+  onErrorChange
 }) => {
   const { t } = useLanguage();
   const inputRef = useRef<HTMLInputElement>(null);
@@ -49,6 +55,14 @@ export const MultiFileUploadList: React.FC<MultiFileUploadListProps> = ({
   const [progress, setProgress] = useState<UploadProgressInfo | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
+  useEffect(() => {
+    onUploadingChange?.(Boolean(uploadingName));
+  }, [uploadingName]);
+
+  useEffect(() => {
+    onErrorChange?.(errorMsg);
+  }, [errorMsg]);
+
   const handleSelectFiles = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const selected = Array.from(e.target.files || []) as File[];
     if (selected.length === 0) return;
@@ -56,6 +70,13 @@ export const MultiFileUploadList: React.FC<MultiFileUploadListProps> = ({
 
     const added: AttachmentFile[] = [];
     for (const file of selected) {
+      const isDuplicate =
+        files.some((f) => f.name === file.name && (f.size === undefined || f.size === file.size)) ||
+        added.some((f) => f.name === file.name && f.size === file.size);
+      if (isDuplicate) {
+        continue;
+      }
+
       setUploadingName(file.name);
       const holder: UploadControlHolder = {};
       cancelHolder.current = holder;
@@ -172,7 +193,7 @@ export const MultiFileUploadList: React.FC<MultiFileUploadListProps> = ({
             >
               <div className="flex items-center gap-2.5 min-w-0 flex-1">
                 {f.fileType === 'image' ? (
-                  <img src={f.url} alt={f.name} className="h-9 w-9 rounded-lg object-cover border border-slate-200 dark:border-slate-700 shrink-0" />
+                  <ResolvedImage src={f.url} alt={f.name} className="h-9 w-9 rounded-lg object-cover border border-slate-200 dark:border-slate-700 shrink-0" />
                 ) : (
                   <div className="h-9 w-9 rounded-lg bg-slate-100 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 flex items-center justify-center shrink-0">
                     {renderTypeIcon(f.fileType)}
@@ -184,15 +205,14 @@ export const MultiFileUploadList: React.FC<MultiFileUploadListProps> = ({
                 </div>
               </div>
               <div className="flex items-center gap-2 shrink-0">
-                <a
-                  href={f.url}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="p-2 text-slate-500 hover:text-brand-cyan transition-colors"
-                  title={t('فتح الملف', 'Open file')}
+                <button
+                  type="button"
+                  onClick={() => triggerFileDownload(f.url, f.name)}
+                  className="p-2 text-slate-500 hover:text-brand-cyan transition-colors cursor-pointer"
+                  title={t('تنزيل / فتح الملف', 'Download / Open file')}
                 >
-                  <ExternalLink className="h-3.5 w-3.5" />
-                </a>
+                  <Download className="h-3.5 w-3.5" />
+                </button>
                 <button
                   type="button"
                   onClick={() => onChange(files.filter(item => item.id !== f.id))}

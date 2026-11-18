@@ -52,9 +52,69 @@ export function getSemesterName(semCode?: string, lang: 'ar' | 'en' = 'ar'): str
 
 export function isContentPublished(item: { status?: string; published?: boolean } | null | undefined): boolean {
   if (!item) return false;
-  if (item.status === 'draft') return false;
+  if (item.status === 'draft' || item.status === 'unpublished') return false;
   if (item.published === false) return false;
   return true;
+}
+
+export function normalizeSubjectKey(value?: string | null): string {
+  if (!value) return '';
+  return value.toLowerCase().replace(/[–—\-_]/g, ' ').replace(/\s+/g, ' ').trim();
+}
+
+export function doesSubjectMatch(
+  item: { subject?: string; courseTitle?: string; courseId?: string },
+  subjectFilter: string,
+  courses?: Course[]
+): boolean {
+  if (!subjectFilter || subjectFilter === 'all') return true;
+  const target = normalizeSubjectKey(subjectFilter);
+  const subjMeta = ACADEMIC_SUBJECTS.find(
+    (s) => normalizeSubjectKey(s.id) === target || normalizeSubjectKey(s.nameAr) === target || normalizeSubjectKey(s.nameEn) === target
+  );
+  const candidateTargets = subjMeta
+    ? [normalizeSubjectKey(subjMeta.id), normalizeSubjectKey(subjMeta.nameAr), normalizeSubjectKey(subjMeta.nameEn)]
+    : [target];
+
+  const itemSubj = normalizeSubjectKey(item.subject);
+  if (itemSubj) {
+    return candidateTargets.some((c) => itemSubj === c || itemSubj.includes(c));
+  }
+
+  if (item.courseId && courses) {
+    const matchedCourse = courses.find((c) => c.id === item.courseId);
+    const courseSubj = normalizeSubjectKey(matchedCourse?.subject || matchedCourse?.subjectEn || matchedCourse?.subjectAr);
+    if (courseSubj) {
+      return candidateTargets.some((c) => courseSubj === c || courseSubj.includes(c));
+    }
+  }
+
+  const fallbackCourseTitle = normalizeSubjectKey(item.courseTitle);
+  return candidateTargets.some((c) => fallbackCourseTitle.includes(c));
+}
+
+export function isValidMediaOrWebUrl(input?: string | null): boolean {
+  if (!input || !input.trim()) return true; // optional empty field
+  const clean = input.trim();
+  if (/^\s*(javascript|vbscript):/i.test(clean)) return false;
+  if (clean.startsWith('firestore://') || clean.startsWith('indexeddb://') || clean.startsWith('blob:')) {
+    return clean.length > 12;
+  }
+  if (clean.startsWith('data:image/')) {
+    return clean.length <= 512 * 1024;
+  }
+  if (/^[a-zA-Z0-9_-]{11}$/.test(clean)) {
+    return true; // direct YouTube video ID
+  }
+  if (/<iframe\b[^>]*src=["']https?:\/\/[^"']+["']/i.test(clean)) {
+    return true;
+  }
+  try {
+    const parsed = new URL(clean);
+    return parsed.protocol === 'https:' || parsed.protocol === 'http:';
+  } catch {
+    return false;
+  }
 }
 
 export function doesItemMatchYearAndSemester(

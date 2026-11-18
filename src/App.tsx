@@ -11,7 +11,7 @@ import { StudentDashboard } from './components/StudentDashboard';
 import { SubscriptionRequiredView } from './components/SubscriptionRequiredView';
 import { CustomVideoPlayer } from './components/CustomVideoPlayer';
 import { verifyCourseAccess, formatVideoEmbedUrl } from './utils/authAccess';
-import { triggerFileDownload } from './utils/videoStorage';
+import { triggerFileDownload, emitAppToast } from './utils/videoStorage';
 import { doesCourseMatchStudent, doesCourseMatchStudentGrade, ACADEMIC_GRADES, ACADEMIC_SEMESTERS, ACADEMIC_SUBJECTS, getGradeName, getCourseDisplayTitle, normalizeGradeCode, getGradeFromCourseOrCategory } from './utils/gradeMatching';
 import { 
   Star, Phone, Send, Info, Award, Calendar, BookOpen, Clock, FileText, CheckCircle2, 
@@ -56,6 +56,8 @@ function AcademyApp() {
   const [adminEmail, setAdminEmail] = useState<string>('');
   const [adminPassword, setAdminPassword] = useState<string>('');
   const [loginError, setLoginError] = useState<string>('');
+  const [adminResetSuccess, setAdminResetSuccess] = useState<string>('');
+  const [adminLoginLoading, setAdminLoginLoading] = useState<boolean>(false);
 
   // Student Auth States
   const [isStudentLoggedIn, setIsStudentLoggedIn] = useState<boolean>(false);
@@ -79,6 +81,23 @@ function AcademyApp() {
 
   // FAQ Accordion Active state
   const [activeFaq, setActiveFaq] = useState<number | null>(null);
+  const [appToast, setAppToast] = useState<{ message: string; type: 'error' | 'info' | 'success' } | null>(null);
+
+  useEffect(() => {
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const handler = (ev: Event) => {
+      const detail = (ev as CustomEvent<{ message?: string; type?: 'error' | 'info' | 'success' }>).detail;
+      if (!detail?.message) return;
+      setAppToast({ message: detail.message, type: detail.type || 'info' });
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(() => setAppToast(null), 5000);
+    };
+    window.addEventListener('app-toast', handler);
+    return () => {
+      window.removeEventListener('app-toast', handler);
+      if (timer) clearTimeout(timer);
+    };
+  }, []);
 
   // Fetch initial public catalog data
   const fetchData = async () => {
@@ -248,7 +267,7 @@ function AcademyApp() {
             if (window.location.pathname.includes('student') || currentView === 'student-panel') {
               handleNavigate('home');
             }
-            alert('تم إنهاء جميع جلسات الدخول وتسجيل الخروج من المنصة بواسطة إدارة المنصة الجامعية.');
+            emitAppToast('تم إنهاء جميع جلسات الدخول وتسجيل الخروج من المنصة بواسطة إدارة المنصة الجامعية.', 'info');
           }
         }
       }
@@ -391,19 +410,25 @@ function AcademyApp() {
     return text.replace(/[<>]/g, '').trim();
   };
 
-  // Admin login process
+  // Manager login process using real Email & Password
   const handleAdminLoginSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoginError('');
-    
-    const cleanEmail = adminEmail.trim().toLowerCase();
-    const cleanPassword = adminPassword.trim();
+    setAdminResetSuccess('');
 
-    if (cleanEmail !== 'mhmdbdaltwabalsdawy7@gmail.com' || cleanPassword !== 'MoJoker77') {
-      setLoginError(language === 'ar' ? 'بيانات تسجيل دخول الإدارة غير صحيحة. يرجى التأكد من البريد الإلكتروني وكلمة المرور.' : 'Invalid administrator credentials. Please check email and password.');
+    const cleanEmail = adminEmail.trim().toLowerCase();
+    const cleanPassword = adminPassword;
+
+    if (!cleanEmail || !validateEmail(cleanEmail)) {
+      setLoginError(language === 'ar' ? 'يرجى إدخال البريد الإلكتروني للمدير بشكل صحيح.' : 'Please enter a valid manager email address.');
+      return;
+    }
+    if (!cleanPassword || cleanPassword.length < 6) {
+      setLoginError(language === 'ar' ? 'كلمة المرور يجب أن لا تقل عن 6 أحرف.' : 'Password must be at least 6 characters.');
       return;
     }
 
+    setAdminLoginLoading(true);
     try {
       const res = await authService.loginAdmin(cleanEmail, cleanPassword);
       if (res.success && res.admin) {
@@ -414,13 +439,45 @@ function AcademyApp() {
         setAdminEmail('');
         setAdminPassword('');
         setLoginError('');
+        setAdminResetSuccess('');
         setStudentAuthError('');
+        if (dbService.isRealFirebase()) {
+          dbService.runOneTimeDemoAndCoursesPurge().then((purgeRes) => {
+            if (purgeRes.ran) {
+              setCourses([]);
+            }
+          }).catch(() => {});
+        }
         handleNavigate('home');
       } else {
-        setLoginError(res.error || (language === 'ar' ? 'فشل تسجيل الدخول. يرجى التأكد من كلمة المرور والبريد.' : 'Authentication Failed'));
+        setLoginError(res.error || (language === 'ar' ? 'فشل تسجيل الدخول. يرجى التأكد من البريد الإلكتروني وكلمة المرور.' : 'Authentication Failed'));
       }
     } catch {
       setLoginError(language === 'ar' ? 'حدث خطأ غير متوقع أثناء تسجيل الدخول.' : 'Error logging in');
+    } finally {
+      setAdminLoginLoading(false);
+    }
+  };
+
+  const handleAdminPasswordReset = async () => {
+    setLoginError('');
+    setAdminResetSuccess('');
+    const targetEmail = (adminEmail.trim() || 'mhmdbdaltwabalsdawy7@gmail.com').toLowerCase();
+    setAdminEmail(targetEmail);
+    setAdminLoginLoading(true);
+    try {
+      const res = await authService.sendAdminPasswordReset(targetEmail);
+      if (res.success) {
+        setAdminResetSuccess(
+          language === 'ar'
+            ? `تم إرسال رابط تعيين / إعادة تعيين كلمة المرور إلى ${targetEmail}. افتح بريدك الإلكتروني واختر كلمة المرور الخاصة بك ثم سجل الدخول بها هنا.`
+            : `Password setup/reset link sent to ${targetEmail}. Open your email to set your password, then sign in here.`
+        );
+      } else {
+        setLoginError(res.error || t('تعذر إرسال رابط تعيين كلمة المرور.', 'Could not send password reset link.'));
+      }
+    } finally {
+      setAdminLoginLoading(false);
     }
   };
 
@@ -584,15 +641,15 @@ function AcademyApp() {
     const phone = enrollForm.phone.trim();
 
     if (!name || name.length < 3) {
-      alert(language === 'ar' ? 'الاسم يجب أن لا يقل عن 3 أحرف.' : 'Name must be at least 3 characters.');
+      emitAppToast(language === 'ar' ? 'الاسم يجب أن لا يقل عن 3 أحرف.' : 'Name must be at least 3 characters.', 'error');
       return;
     }
     if (!email || !validateEmail(email)) {
-      alert(language === 'ar' ? 'يرجى إدخال بريد إلكتروني صحيح.' : 'Please enter a valid email address.');
+      emitAppToast(language === 'ar' ? 'يرجى إدخال بريد إلكتروني صحيح.' : 'Please enter a valid email address.', 'error');
       return;
     }
     if (!phone || phone.length < 8 || !/^\+?[0-9\s-]+$/.test(phone)) {
-      alert(language === 'ar' ? 'يرجى إدخال رقم هاتف صحيح.' : 'Please enter a valid phone number.');
+      emitAppToast(language === 'ar' ? 'يرجى إدخال رقم هاتف صحيح.' : 'Please enter a valid phone number.', 'error');
       return;
     }
 
@@ -621,7 +678,7 @@ function AcademyApp() {
       }, 3500);
     } catch (err: any) {
       console.error("Activation request submission failed:", err);
-      alert(language === 'ar' ? "حدث خطأ أثناء إرسال طلب التفعيل المجاني" : "Activation request failed");
+      emitAppToast(language === 'ar' ? "حدث خطأ أثناء إرسال طلب التفعيل المجاني" : "Activation request failed", 'error');
     } finally {
       setSubmittingEnroll(false);
     }
@@ -638,23 +695,23 @@ function AcademyApp() {
     const message = sanitizeInput(contactForm.message);
 
     if (!name || name.length < 3) {
-      alert(language === 'ar' ? 'الاسم يجب أن لا يقل عن 3 أحرف.' : 'Name must be at least 3 characters.');
+      emitAppToast(language === 'ar' ? 'الاسم يجب أن لا يقل عن 3 أحرف.' : 'Name must be at least 3 characters.', 'error');
       return;
     }
     if (!email || !validateEmail(email)) {
-      alert(language === 'ar' ? 'يرجى إدخال بريد إلكتروني صحيح.' : 'Please enter a valid email address.');
+      emitAppToast(language === 'ar' ? 'يرجى إدخال بريد إلكتروني صحيح.' : 'Please enter a valid email address.', 'error');
       return;
     }
     if (!phone || phone.length < 8 || !/^\+?[0-9\s-]+$/.test(phone)) {
-      alert(language === 'ar' ? 'يرجى إدخال رقم هاتف صحيح.' : 'Please enter a valid phone number.');
+      emitAppToast(language === 'ar' ? 'يرجى إدخال رقم هاتف صحيح.' : 'Please enter a valid phone number.', 'error');
       return;
     }
     if (!subject || subject.length < 3) {
-      alert(language === 'ar' ? 'الموضوع يجب أن لا يقل عن 3 أحرف.' : 'Subject must be at least 3 characters.');
+      emitAppToast(language === 'ar' ? 'الموضوع يجب أن لا يقل عن 3 أحرف.' : 'Subject must be at least 3 characters.', 'error');
       return;
     }
     if (!message || message.length < 10) {
-      alert(language === 'ar' ? 'الرسالة يجب أن لا تقل عن 10 أحرف.' : 'Message must be at least 10 characters.');
+      emitAppToast(language === 'ar' ? 'الرسالة يجب أن لا تقل عن 10 أحرف.' : 'Message must be at least 10 characters.', 'error');
       return;
     }
 
@@ -671,7 +728,7 @@ function AcademyApp() {
       setContactForm({ name: '', email: '', phone: '', subject: '', message: '' });
       setTimeout(() => setContactSuccess(false), 5000);
     } catch {
-      alert("Failed to send message");
+      emitAppToast(language === 'ar' ? 'تعذر إرسال الرسالة. يرجى المحاولة مجدداً.' : 'Failed to send message', 'error');
     } finally {
       setSubmittingContact(false);
     }
@@ -1798,24 +1855,29 @@ function AcademyApp() {
                       <span className="inline-flex h-12 w-12 items-center justify-center rounded-xl bg-brand-cyan/10 border border-brand-cyan/20 text-2xl mx-auto mb-3">
                         🔐
                       </span>
-                      <h3 className="text-xl font-black text-slate-900 dark:text-white">{t('تسجيل الدخول للمسؤولين', 'Administrator Login')}</h3>
+                      <h3 className="text-xl font-black text-slate-900 dark:text-white">{t('تسجيل دخول المدير', 'Manager Login')}</h3>
                       <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">{t('بوابة إدارة محتوى منصة MOHAMED ELJOKER التعليمية', 'Secure gateway for MOHAMED ELJOKER Platform')}</p>
                     </div>
 
                     <form onSubmit={handleAdminLoginSubmit} className="space-y-4 text-xs sm:text-sm text-slate-700 dark:text-slate-300">
                       {loginError && (
-                        <div className="rounded-lg bg-red-500/10 border border-red-500/20 p-3 text-red-600 dark:text-red-400 font-bold flex items-center gap-1.5 text-xs">
-                          <ShieldAlert className="h-4.5 w-4.5" />
+                        <div className="rounded-lg bg-red-500/10 border border-red-500/20 p-3 text-red-600 dark:text-red-400 font-bold flex items-start gap-1.5 text-xs">
+                          <ShieldAlert className="h-4.5 w-4.5 shrink-0 mt-0.5" />
                           <span>{loginError}</span>
+                        </div>
+                      )}
+                      {adminResetSuccess && (
+                        <div className="rounded-lg bg-emerald-500/10 border border-emerald-500/25 p-3 text-emerald-700 dark:text-emerald-300 font-bold text-xs leading-relaxed">
+                          {adminResetSuccess}
                         </div>
                       )}
 
                       <div>
-                        <label className="block mb-1.5 font-semibold text-slate-800 dark:text-white">{t('البريد الإلكتروني للمدير', 'Admin Email')}</label>
+                        <label className="block mb-1.5 font-semibold text-slate-800 dark:text-white">{t('البريد الإلكتروني للمدير', 'Manager Email')}</label>
                         <input
                           type="email"
                           required
-                          placeholder="admin@example.com"
+                          placeholder="mhmdbdaltwabalsdawy7@gmail.com"
                           value={adminEmail}
                           onChange={e => setAdminEmail(e.target.value)}
                           className="w-full rounded-xl bg-slate-50 dark:bg-slate-900 border border-slate-300 dark:border-slate-800 p-3 text-slate-900 dark:text-white focus:outline-none focus:border-brand-cyan font-mono"
@@ -1823,7 +1885,19 @@ function AcademyApp() {
                       </div>
 
                       <div>
-                        <label className="block mb-1.5 font-semibold text-slate-800 dark:text-white">{t('كلمة المرور الآمنة', 'Password')}</label>
+                        <div className="flex items-center justify-between mb-1.5">
+                          <label className="font-semibold text-slate-800 dark:text-white">{t('كلمة المرور الآمنة', 'Password')}</label>
+                          {dbService.isRealFirebase() && (
+                            <button
+                              type="button"
+                              disabled={adminLoginLoading}
+                              onClick={handleAdminPasswordReset}
+                              className="text-[11px] font-bold text-brand-cyan hover:underline cursor-pointer disabled:opacity-50"
+                            >
+                              {t('تعيين / نسيت كلمة المرور؟', 'Set / Forgot Password?')}
+                            </button>
+                          )}
+                        </div>
                         <input
                           type="password"
                           required
@@ -1836,10 +1910,21 @@ function AcademyApp() {
 
                       <button
                         type="submit"
-                        className="w-full rounded-xl bg-brand-cyan text-white dark:text-slate-950 hover:bg-brand-cyan-light py-3.5 font-bold transition-all cursor-pointer shadow-md text-xs sm:text-sm"
+                        disabled={adminLoginLoading}
+                        className="w-full rounded-xl bg-brand-cyan text-white dark:text-slate-950 hover:bg-brand-cyan-light py-3.5 font-bold transition-all cursor-pointer shadow-md text-xs sm:text-sm disabled:opacity-60"
                       >
-                        {t('الولوج الآمن لقاعدة البيانات', 'Access Board Controls')}
+                        {adminLoginLoading ? t('جاري تسجيل الدخول...', 'Signing in...') : t('تسجيل الدخول كمدير', 'Login as Manager')}
                       </button>
+
+                      {dbService.isRealFirebase() && (
+                        <button
+                          type="button"
+                          onClick={() => handleGoogleAuth('admin')}
+                          className="w-full rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-800 dark:text-white py-2.5 font-bold transition-all cursor-pointer text-xs"
+                        >
+                          🔐 {t('الدخول بحساب Google (المدير)', 'Sign in with Google (Manager)')}
+                        </button>
+                      )}
                     </form>
                   </div>
                 </motion.div>
@@ -1996,6 +2081,7 @@ function AcademyApp() {
                   setAuthTab('teacher');
                   setStudentAuthError('');
                   setLoginError('');
+                  setAdminResetSuccess('');
                 }}
                 className={`flex-1 py-2 text-center rounded-lg transition-all cursor-pointer ${
                   authTab === 'teacher'
@@ -2003,11 +2089,11 @@ function AcademyApp() {
                     : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
                 }`}
               >
-                🛡️ {t('دخول الإدارة', 'Admin Login')}
+                🛡️ {t('المدير', 'Manager')}
               </button>
             </div>
 
-            {/* TAB 1: ADMINISTRATOR LOGIN */}
+            {/* TAB 1: MANAGER LOGIN */}
             {authTab === 'teacher' && (
               <>
                 <div className="text-center mb-5">
@@ -2015,27 +2101,33 @@ function AcademyApp() {
                     🔐
                   </span>
                   <h3 className="text-lg font-black text-slate-900 dark:text-white">
-                    {t('تسجيل دخول الإدارة والمشرف الأكاديمي', 'Administrator Login')}
+                    {t('تسجيل دخول المدير', 'Manager Login')}
                   </h3>
                   <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-1">
-                    {t('بوابة إدارة المقررات والطلاب لم. محمد عبد التواب', 'University LMS & Student Administration')}
+                    {t('بوابة إدارة المقررات والطلاب لم. محمد عبد التواب', 'University LMS & Student Management')}
                   </p>
                 </div>
 
                 <form onSubmit={handleAdminLoginSubmit} className="space-y-4 text-xs text-slate-700 dark:text-slate-300">
                   {loginError && (
-                    <div className="rounded-lg bg-red-500/10 border border-red-500/20 p-3 text-red-600 dark:text-red-400 font-bold flex items-center gap-1.5 text-[11px]">
-                      <ShieldAlert className="h-4 w-4 shrink-0" />
+                    <div className="rounded-lg bg-red-500/10 border border-red-500/20 p-3 text-red-600 dark:text-red-400 font-bold flex items-start gap-1.5 text-[11px] leading-relaxed">
+                      <ShieldAlert className="h-4 w-4 shrink-0 mt-0.5" />
                       <span>{loginError}</span>
                     </div>
                   )}
 
+                  {adminResetSuccess && (
+                    <div className="rounded-lg bg-emerald-500/10 border border-emerald-500/25 p-3 text-emerald-700 dark:text-emerald-300 font-bold text-[11px] leading-relaxed">
+                      {adminResetSuccess}
+                    </div>
+                  )}
+
                   <div>
-                    <label className="block mb-1.5 font-semibold text-slate-800 dark:text-white">{t('البريد الإلكتروني للإدارة', 'Administrator Email')}</label>
+                    <label className="block mb-1.5 font-semibold text-slate-800 dark:text-white">{t('البريد الإلكتروني للمدير', 'Manager Email')}</label>
                     <input
                       type="email"
                       required
-                      placeholder="admin@university.edu"
+                      placeholder="mhmdbdaltwabalsdawy7@gmail.com"
                       value={adminEmail}
                       onChange={e => setAdminEmail(e.target.value)}
                       className="w-full rounded-xl bg-slate-50 dark:bg-slate-900 border border-slate-300 dark:border-slate-800 p-3 text-slate-900 dark:text-white focus:outline-none focus:border-brand-cyan font-mono"
@@ -2043,7 +2135,19 @@ function AcademyApp() {
                   </div>
 
                   <div>
-                    <label className="block mb-1.5 font-semibold text-slate-800 dark:text-white">{t('كلمة المرور', 'Password')}</label>
+                    <div className="flex items-center justify-between mb-1.5">
+                      <label className="font-semibold text-slate-800 dark:text-white">{t('كلمة المرور', 'Password')}</label>
+                      {dbService.isRealFirebase() && (
+                        <button
+                          type="button"
+                          disabled={adminLoginLoading}
+                          onClick={handleAdminPasswordReset}
+                          className="text-[11px] font-bold text-brand-cyan hover:underline cursor-pointer disabled:opacity-50"
+                        >
+                          {t('تعيين / نسيت كلمة المرور؟', 'Set / Forgot Password?')}
+                        </button>
+                      )}
+                    </div>
                     <input
                       type="password"
                       required
@@ -2056,9 +2160,10 @@ function AcademyApp() {
 
                   <button
                     type="submit"
-                    className="w-full rounded-xl bg-brand-cyan text-white dark:text-slate-950 hover:bg-brand-cyan-light py-3 font-bold transition-all cursor-pointer shadow-md text-xs"
+                    disabled={adminLoginLoading}
+                    className="w-full rounded-xl bg-brand-cyan text-white dark:text-slate-950 hover:bg-brand-cyan-light py-3 font-bold transition-all cursor-pointer shadow-md text-xs disabled:opacity-60"
                   >
-                    {t('تسجيل الدخول كمدير للنظام', 'Login as Administrator')}
+                    {adminLoginLoading ? t('جاري تسجيل الدخول...', 'Signing in...') : t('تسجيل الدخول كمدير', 'Login as Manager')}
                   </button>
 
                   {dbService.isRealFirebase() && (
@@ -2067,12 +2172,12 @@ function AcademyApp() {
                       onClick={() => handleGoogleAuth('admin')}
                       className="w-full rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-800 dark:text-white py-2.5 font-bold transition-all cursor-pointer text-xs"
                     >
-                      🔐 {t('الدخول بحساب Google (للإدارة)', 'Sign in with Google (Admin)')}
+                      🔐 {t('الدخول بحساب Google (المدير)', 'Sign in with Google (Manager)')}
                     </button>
                   )}
 
                   <div className="text-center pt-2 text-[10px] text-slate-500 border-t border-slate-200 dark:border-slate-900/60">
-                    <p>{t('يتم التحقق من رتبة الحساب (role == "admin") في قاعدة البيانات فور تسجيل الدخول.', 'Role (role == "admin") is strictly verified in Firestore upon login.')}</p>
+                    <p>{t('يتم التحقق من بريد المدير وصلاحياته في قاعدة البيانات فور تسجيل الدخول.', 'Manager email and permissions are strictly verified upon login.')}</p>
                   </div>
                 </form>
               </>
@@ -2392,6 +2497,28 @@ function AcademyApp() {
               />
             </div>
           </div>
+        </div>
+      )}
+
+      {/* Global Safe Toast Banner (Replaces native alert inside iFrame) */}
+      {appToast && (
+        <div
+          className={`fixed bottom-4 left-4 right-4 sm:left-auto sm:right-6 sm:max-w-md z-[200] rounded-2xl border p-4 shadow-2xl flex items-center justify-between gap-3 backdrop-blur-md ${
+            appToast.type === 'error'
+              ? 'bg-rose-50/95 dark:bg-rose-950/95 border-rose-500/40 text-rose-800 dark:text-rose-200'
+              : appToast.type === 'success'
+              ? 'bg-emerald-50/95 dark:bg-emerald-950/95 border-emerald-500/40 text-emerald-800 dark:text-emerald-200'
+              : 'bg-white/95 dark:bg-slate-900/95 border-brand-cyan/40 text-slate-900 dark:text-white'
+          }`}
+        >
+          <span className="text-xs font-bold leading-relaxed">{appToast.message}</span>
+          <button
+            type="button"
+            onClick={() => setAppToast(null)}
+            className="p-1 rounded-lg hover:bg-black/5 dark:hover:bg-white/10 shrink-0 cursor-pointer"
+          >
+            <X className="h-4 w-4" />
+          </button>
         </div>
       )}
 

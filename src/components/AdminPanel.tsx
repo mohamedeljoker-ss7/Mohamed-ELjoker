@@ -283,7 +283,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
 
   const handlePreviewAdminMedia = (url: string) => {
     if (!url) return;
-    if (/\.(mp4|webm|mov|m3u8)(\?|$)|youtube\.com|youtu\.be|vimeo\.com/i.test(url)) {
+    if (/^(firestore|indexeddb|blob):/i.test(url) || /\.(mp4|webm|mov|m3u8)(\?|$)|youtube\.com|youtu\.be|vimeo\.com|drive\.google\.com/i.test(url)) {
       setAdminVideoPreviewUrl(url);
     } else {
       triggerFileDownload(url, 'academic-resource');

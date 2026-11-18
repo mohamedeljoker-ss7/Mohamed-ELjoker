@@ -5,18 +5,23 @@ import { useLanguage } from '../LanguageContext';
 import { FileUploadField } from '../FileUploadField';
 import { VideoHostingUploader } from '../VideoHostingUploader';
 import { MultiFileUploadList } from './MultiFileUploadList';
+import { ResolvedImage } from '../ResolvedMedia';
+import { emitAppToast, triggerFileDownload } from '../../utils/videoStorage';
 import {
   ACADEMIC_GRADES,
   ACADEMIC_SEMESTERS,
   ACADEMIC_SUBJECTS,
   doesItemMatchYearAndSemester,
+  doesSubjectMatch,
   getGradeName,
   getSemesterName,
-  isContentPublished
+  isContentPublished,
+  isValidMediaOrWebUrl
 } from '../../utils/gradeMatching';
 import {
   BookOpen, Plus, Search, Video, FileText, FileSpreadsheet, Image as ImageIcon,
-  Edit3, Trash2, Eye, CheckCircle2, X, Globe, FileEdit, ArrowUpDown, Download
+  Edit3, Trash2, Eye, CheckCircle2, X, Globe, FileEdit, ArrowUpDown, Download,
+  AlertCircle, EyeOff
 } from 'lucide-react';
 
 interface AdminLecturesManagerProps {
@@ -45,14 +50,26 @@ export const AdminLecturesManager: React.FC<AdminLecturesManagerProps> = ({
   const [yearFilter, setYearFilter] = useState('all');
   const [semesterFilter, setSemesterFilter] = useState('all');
   const [subjectFilter, setSubjectFilter] = useState('all');
-  const [statusFilter, setStatusFilter] = useState<'all' | 'published' | 'draft'>('all');
+  const [statusFilter, setStatusFilter] = useState<'all' | 'published' | 'draft' | 'unpublished'>('all');
   const [sortBy, setSortBy] = useState<'number' | 'date'>('number');
 
-  // Form Modal State
+  // Form Modal & Error State
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const [formError, setFormError] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
+  const [uploadingFields, setUploadingFields] = useState<Record<string, boolean>>({});
   const [previewItem, setPreviewItem] = useState<LectureItem | null>(null);
+
+  // In-App Delete Confirmation State
+  const [deleteTarget, setDeleteTarget] = useState<LectureItem | null>(null);
+  const [deleting, setDeleting] = useState(false);
+
+  const isUploadingAny = Object.values(uploadingFields).some(Boolean);
+  const setFieldUploading = (field: string, busy: boolean) => {
+    setUploadingFields(prev => (prev[field] === busy ? prev : { ...prev, [field]: busy }));
+  };
 
   const [form, setForm] = useState({
     academicYear: 'year1',
@@ -66,7 +83,7 @@ export const AdminLecturesManager: React.FC<AdminLecturesManagerProps> = ({
     pdfUrl: '',
     pptxUrl: '',
     lectureDate: new Date().toISOString().split('T')[0],
-    status: 'published' as 'published' | 'draft',
+    status: 'published' as 'published' | 'draft' | 'unpublished',
     images: [] as AttachmentFile[],
     attachments: [] as AttachmentFile[]
   });
@@ -101,6 +118,8 @@ export const AdminLecturesManager: React.FC<AdminLecturesManagerProps> = ({
 
   const openAddModal = () => {
     setEditingId(null);
+    setFormError(null);
+    setUploadingFields({});
     setForm({
       academicYear: yearFilter !== 'all' ? yearFilter : 'year1',
       semester: semesterFilter !== 'all' ? semesterFilter : 'term1',
@@ -122,12 +141,16 @@ export const AdminLecturesManager: React.FC<AdminLecturesManagerProps> = ({
 
   const openEditModal = (lec: LectureItem) => {
     setEditingId(lec.id);
+    setFormError(null);
+    setUploadingFields({});
     const existingImages: AttachmentFile[] = (lec.imageUrls || []).map((url, idx) => ({
       id: `img_${idx}_${Date.now()}`,
       name: `Slide Image ${idx + 1}`,
       url,
       fileType: 'image'
     }));
+    const currentStatus: 'published' | 'draft' | 'unpublished' =
+      lec.status === 'unpublished' ? 'unpublished' : isContentPublished(lec) ? 'published' : 'draft';
     setForm({
       academicYear: lec.academicYear || 'year1',
       semester: lec.semester || 'term1',
@@ -140,7 +163,7 @@ export const AdminLecturesManager: React.FC<AdminLecturesManagerProps> = ({
       pdfUrl: lec.pdfUrl || '',
       pptxUrl: lec.pptxUrl || '',
       lectureDate: lec.lectureDate || (lec.createdAt ? lec.createdAt.split('T')[0] : new Date().toISOString().split('T')[0]),
-      status: isContentPublished(lec) ? 'published' : 'draft',
+      status: currentStatus,
       images: existingImages,
       attachments: lec.attachments || []
     });
@@ -149,7 +172,29 @@ export const AdminLecturesManager: React.FC<AdminLecturesManagerProps> = ({
 
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!form.title.trim()) return;
+    setFormError(null);
+
+    if (isUploadingAny) {
+      setFormError(t('يرجى الانتظار حتى يكتمل رفع جميع الملفات أولاً.', 'Please wait for active file uploads to complete.'));
+      return;
+    }
+    if (!form.title.trim()) {
+      setFormError(t('عنوان المحاضرة مطلوب.', 'Lecture title is required.'));
+      return;
+    }
+    if (!Number.isFinite(Number(form.lectureNumber)) || Number(form.lectureNumber) < 1) {
+      setFormError(t('يجب أن يكون رقم المحاضرة رقمًا صحيحًا (1 فأكثر).', 'Lecture number must be 1 or greater.'));
+      return;
+    }
+    if (
+      !isValidMediaOrWebUrl(form.youtubeUrl) ||
+      !isValidMediaOrWebUrl(form.pdfUrl) ||
+      !isValidMediaOrWebUrl(form.pptxUrl)
+    ) {
+      setFormError(t('يوجد رابط ملف أو فيديو غير صالح. يرجى تصحيحه قبل الحفظ.', 'One or more media URLs are invalid. Please fix before saving.'));
+      return;
+    }
+
     setSaving(true);
     try {
       const { courseId, courseTitle } = resolveCourseMeta(form.subject, form.courseId);
@@ -178,6 +223,7 @@ export const AdminLecturesManager: React.FC<AdminLecturesManagerProps> = ({
       if (editingId) {
         await dbService.updateLecture(editingId, payload);
         onLogAction('update', payload.title, `Updated lecture #${payload.lectureNumber} (${form.subject})`);
+        emitAppToast(t('تم تحديث المحاضرة وحفظها بنجاح.', 'Lecture updated successfully.'), 'success');
       } else {
         await dbService.addLecture(payload);
         onLogAction('create', payload.title, `Created lecture #${payload.lectureNumber} (${form.subject})`);
@@ -195,41 +241,65 @@ export const AdminLecturesManager: React.FC<AdminLecturesManagerProps> = ({
             createdAt: new Date().toISOString()
           }).catch(() => {});
         }
+        emitAppToast(t('تمت إضافة المحاضرة وحفظها سحابياً بنجاح.', 'Lecture saved to cloud successfully.'), 'success');
       }
       setIsModalOpen(false);
       onRefresh();
+    } catch (err: any) {
+      setFormError(err?.message || t('تعذر حفظ المحاضرة. تحقق من الاتصال وصلاحيات المدير.', 'Failed to save lecture. Check connection and admin permissions.'));
     } finally {
       setSaving(false);
     }
   };
 
   const handleToggleStatus = async (lec: LectureItem) => {
-    const nextStatus = isContentPublished(lec) ? 'draft' : 'published';
-    await dbService.updateLecture(lec.id, {
-      status: nextStatus,
-      published: nextStatus === 'published',
-      updatedAt: new Date().toISOString()
-    });
-    onLogAction('status_change', lec.title, `Set lecture status to ${nextStatus}`);
-    onRefresh();
+    setActionError(null);
+    const currentlyPub = isContentPublished(lec);
+    const nextStatus = currentlyPub ? 'unpublished' : 'published';
+    try {
+      await dbService.updateLecture(lec.id, {
+        status: nextStatus,
+        published: nextStatus === 'published',
+        updatedAt: new Date().toISOString()
+      });
+      onLogAction('status_change', lec.title, `Set lecture status to ${nextStatus}`);
+      emitAppToast(
+        nextStatus === 'published'
+          ? t('تم نشر المحاضرة للطلاب.', 'Lecture published to students.')
+          : t('تم إيقاف نشر المحاضرة وإخفاؤها عن الطلاب.', 'Lecture unpublished and hidden from students.'),
+        'success'
+      );
+      onRefresh();
+    } catch (err: any) {
+      setActionError(err?.message || t('تعذر تغيير حالة النشر.', 'Failed to update publish status.'));
+    }
   };
 
-  const handleDelete = async (lec: LectureItem) => {
-    if (!confirm(t(`هل تريد حذف المحاضرة "${lec.title}"؟`, `Delete lecture "${lec.title}"?`))) return;
-    await dbService.deleteLecture(lec.id);
-    onLogAction('delete', lec.title, 'Deleted lecture');
-    onRefresh();
+  const confirmDelete = async () => {
+    if (!deleteTarget) return;
+    setDeleting(true);
+    setActionError(null);
+    try {
+      await dbService.deleteLecture(deleteTarget.id);
+      onLogAction('delete', deleteTarget.title, 'Deleted lecture');
+      emitAppToast(t('تم حذف المحاضرة وملفاتها غير المستخدمة بنجاح.', 'Lecture deleted successfully.'), 'success');
+      setDeleteTarget(null);
+      onRefresh();
+    } catch (err: any) {
+      setActionError(err?.message || t('تعذر حذف المحاضرة من السحابة.', 'Failed to delete lecture from cloud.'));
+    } finally {
+      setDeleting(false);
+    }
   };
 
   const filteredLectures = useMemo(() => {
     return lectures
       .filter(lec => {
         if (!doesItemMatchYearAndSemester(lec, yearFilter, semesterFilter, courses)) return false;
-        const pub = isContentPublished(lec);
-        if (statusFilter === 'published' && !pub) return false;
-        if (statusFilter === 'draft' && pub) return false;
+        const statusKey = lec.status === 'unpublished' ? 'unpublished' : isContentPublished(lec) ? 'published' : 'draft';
+        if (statusFilter !== 'all' && statusKey !== statusFilter) return false;
+        if (!doesSubjectMatch(lec, subjectFilter, courses)) return false;
         const subj = (lec.subject || lec.courseTitle || '').toLowerCase();
-        if (subjectFilter !== 'all' && !subj.includes(subjectFilter.toLowerCase())) return false;
         const q = searchQuery.trim().toLowerCase();
         if (q) {
           const hay = `${lec.title} ${lec.description || ''} ${subj}`.toLowerCase();
@@ -278,12 +348,24 @@ export const AdminLecturesManager: React.FC<AdminLecturesManagerProps> = ({
         </button>
       </div>
 
+      {actionError && (
+        <div className="rounded-xl border border-rose-500/40 bg-rose-500/10 p-3 text-xs font-bold text-rose-700 dark:text-rose-300 flex items-center justify-between gap-3">
+          <span className="flex items-center gap-2">
+            <AlertCircle className="h-4 w-4 shrink-0" />
+            <span>{actionError}</span>
+          </span>
+          <button type="button" onClick={() => setActionError(null)} className="cursor-pointer">
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+      )}
+
       {/* KPI Strip */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
         {[
           { label: t('إجمالي المحاضرات', 'Total Lectures'), value: stats.total },
           { label: t('منشورة للطلاب', 'Published'), value: stats.publishedCount },
-          { label: t('مسودات غير منشورة', 'Drafts'), value: stats.draftCount },
+          { label: t('مسودات / مخفية', 'Drafts / Hidden'), value: stats.draftCount },
           { label: t('مرتبطة بملفات/فيديو', 'With Media & Files'), value: stats.withMedia }
         ].map((kpi, idx) => (
           <div key={idx} className="rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950/50 p-4">
@@ -342,8 +424,8 @@ export const AdminLecturesManager: React.FC<AdminLecturesManagerProps> = ({
         </div>
 
         <div className="flex flex-wrap items-center justify-between gap-3 pt-1">
-          <div className="flex items-center gap-1.5 bg-white dark:bg-slate-950 p-1 rounded-xl border border-slate-200 dark:border-slate-800">
-            {(['all', 'published', 'draft'] as const).map(st => (
+          <div className="flex flex-wrap items-center gap-1.5 bg-white dark:bg-slate-950 p-1 rounded-xl border border-slate-200 dark:border-slate-800">
+            {(['all', 'published', 'draft', 'unpublished'] as const).map(st => (
               <button
                 key={st}
                 type="button"
@@ -354,7 +436,13 @@ export const AdminLecturesManager: React.FC<AdminLecturesManagerProps> = ({
                     : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
                 }`}
               >
-                {st === 'all' ? t('الكل', 'All') : st === 'published' ? t('المنشورة', 'Published') : t('المسودات', 'Drafts')}
+                {st === 'all'
+                  ? t('الكل', 'All')
+                  : st === 'published'
+                  ? t('المنشورة', 'Published')
+                  : st === 'draft'
+                  ? t('المسودات', 'Drafts')
+                  : t('متوقفة', 'Unpublished')}
               </button>
             ))}
           </div>
@@ -393,6 +481,7 @@ export const AdminLecturesManager: React.FC<AdminLecturesManagerProps> = ({
             ) : (
               filteredLectures.map(lec => {
                 const pub = isContentPublished(lec);
+                const isUnpub = lec.status === 'unpublished';
                 const num = lec.lectureNumber ?? lec.number ?? 1;
                 const subj = lec.subject || lec.courseTitle || 'IT';
                 return (
@@ -437,11 +526,16 @@ export const AdminLecturesManager: React.FC<AdminLecturesManagerProps> = ({
                         type="button"
                         onClick={() => handleToggleStatus(lec)}
                         className={`inline-flex items-center gap-1 text-[11px] font-bold cursor-pointer ${
-                          pub ? 'text-emerald-600 dark:text-emerald-400' : 'text-amber-600 dark:text-amber-400'
+                          pub
+                            ? 'text-emerald-600 dark:text-emerald-400'
+                            : isUnpub
+                            ? 'text-slate-500 dark:text-slate-400'
+                            : 'text-amber-600 dark:text-amber-400'
                         }`}
+                        title={pub ? t('انقر لإيقاف النشر', 'Click to Unpublish') : t('انقر للنشر', 'Click to Publish')}
                       >
-                        {pub ? <Globe className="h-3.5 w-3.5" /> : <FileEdit className="h-3.5 w-3.5" />}
-                        <span>{pub ? t('منشورة', 'Published') : t('مسودة', 'Draft')}</span>
+                        {pub ? <Globe className="h-3.5 w-3.5" /> : isUnpub ? <EyeOff className="h-3.5 w-3.5" /> : <FileEdit className="h-3.5 w-3.5" />}
+                        <span>{pub ? t('منشورة', 'Published') : isUnpub ? t('متوقفة', 'Unpublished') : t('مسودة', 'Draft')}</span>
                       </button>
                     </td>
                     <td className="p-3.5">
@@ -464,7 +558,7 @@ export const AdminLecturesManager: React.FC<AdminLecturesManagerProps> = ({
                         </button>
                         <button
                           type="button"
-                          onClick={() => handleDelete(lec)}
+                          onClick={() => setDeleteTarget(lec)}
                           className="p-2 rounded-lg text-rose-600 dark:text-rose-400 hover:bg-rose-500/10 cursor-pointer"
                           title={t('حذف', 'Delete')}
                         >
@@ -497,6 +591,13 @@ export const AdminLecturesManager: React.FC<AdminLecturesManagerProps> = ({
                 <X className="h-4 w-4" />
               </button>
             </div>
+
+            {formError && (
+              <div className="rounded-xl border border-rose-500/40 bg-rose-500/10 p-3 text-xs font-bold text-rose-700 dark:text-rose-300 flex items-start gap-2">
+                <AlertCircle className="h-4 w-4 shrink-0 mt-0.5" />
+                <span>{formError}</span>
+              </div>
+            )}
 
             <form onSubmit={handleSave} className="space-y-4 text-xs">
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
@@ -591,6 +692,7 @@ export const AdminLecturesManager: React.FC<AdminLecturesManagerProps> = ({
                 onChange={url => setForm({ ...form, youtubeUrl: url })}
                 courseId={resolveCourseMeta(form.subject, form.courseId).courseId}
                 onPreviewUrl={onPreviewMedia}
+                onUploadingChange={busy => setFieldUploading('video', busy)}
               />
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -599,15 +701,20 @@ export const AdminLecturesManager: React.FC<AdminLecturesManagerProps> = ({
                   value={form.pdfUrl}
                   onChange={url => setForm({ ...form, pdfUrl: url })}
                   accept=".pdf,application/pdf"
+                  fileType="pdf"
                   folder="lectures_pdf"
+                  onPreview={onPreviewMedia ? (url => onPreviewMedia(url)) : undefined}
+                  onUploadingChange={busy => setFieldUploading('pdf', busy)}
                 />
                 <FileUploadField
                   label={t('ملف العرض التقديمي PowerPoint (.ppt / .pptx)', 'PowerPoint Slides (.ppt / .pptx)')}
                   value={form.pptxUrl}
                   onChange={url => setForm({ ...form, pptxUrl: url })}
                   accept=".ppt,.pptx,application/vnd.ms-powerpoint,application/vnd.openxmlformats-officedocument.presentationml.presentation"
+                  fileType="ppt"
                   folder="lectures_pptx"
                   placeholder="https://.../slides.pptx"
+                  onUploadingChange={busy => setFieldUploading('pptx', busy)}
                 />
               </div>
 
@@ -617,6 +724,7 @@ export const AdminLecturesManager: React.FC<AdminLecturesManagerProps> = ({
                 onChange={files => setForm({ ...form, images: files })}
                 accept="image/*"
                 folder="lectures_images"
+                onUploadingChange={busy => setFieldUploading('images', busy)}
               />
 
               <MultiFileUploadList
@@ -625,6 +733,7 @@ export const AdminLecturesManager: React.FC<AdminLecturesManagerProps> = ({
                 onChange={files => setForm({ ...form, attachments: files })}
                 accept=".pdf,.doc,.docx,.ppt,.pptx,.txt,.zip,.rar"
                 folder="lectures_attachments"
+                onUploadingChange={busy => setFieldUploading('attachments', busy)}
               />
 
               <div className="flex flex-wrap items-center justify-between gap-3 pt-3 border-t border-slate-200 dark:border-slate-800">
@@ -632,11 +741,12 @@ export const AdminLecturesManager: React.FC<AdminLecturesManagerProps> = ({
                   <span className="font-bold text-slate-700 dark:text-slate-300">{t('حالة النشر:', 'Publish Status:')}</span>
                   <select
                     value={form.status}
-                    onChange={e => setForm({ ...form, status: e.target.value as 'published' | 'draft' })}
+                    onChange={e => setForm({ ...form, status: e.target.value as 'published' | 'draft' | 'unpublished' })}
                     className="rounded-xl bg-slate-50 dark:bg-slate-900 border border-slate-300 dark:border-slate-800 px-3 py-2 text-xs font-bold text-slate-900 dark:text-white"
                   >
                     <option value="published">{t('منشورة للطلاب (Published)', 'Published')}</option>
                     <option value="draft">{t('مسودة مخفية (Draft)', 'Draft (Hidden)')}</option>
+                    <option value="unpublished">{t('تم إيقاف النشر (Unpublished)', 'Unpublished (Hidden)')}</option>
                   </select>
                 </div>
 
@@ -650,15 +760,56 @@ export const AdminLecturesManager: React.FC<AdminLecturesManagerProps> = ({
                   </button>
                   <button
                     type="submit"
-                    disabled={saving}
+                    disabled={saving || isUploadingAny}
                     className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-brand-cyan text-white dark:text-slate-950 font-bold cursor-pointer disabled:opacity-50"
                   >
                     <CheckCircle2 className="h-4 w-4" />
-                    <span>{saving ? t('جاري الحفظ...', 'Saving...') : t('حفظ المحاضرة', 'Save Lecture')}</span>
+                    <span>
+                      {isUploadingAny
+                        ? t('جاري رفع الملفات...', 'Uploading files...')
+                        : saving
+                        ? t('جاري الحفظ...', 'Saving...')
+                        : t('حفظ المحاضرة', 'Save Lecture')}
+                    </span>
                   </button>
                 </div>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* Delete Confirmation Modal */}
+      {deleteTarget && (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-slate-950/80 backdrop-blur-sm p-4">
+          <div className="w-full max-w-md rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950 p-6 shadow-2xl space-y-4">
+            <h3 className="text-base font-black text-slate-900 dark:text-white">
+              {t('تأكيد حذف المحاضرة', 'Confirm Lecture Deletion')}
+            </h3>
+            <p className="text-xs text-slate-600 dark:text-slate-400 leading-relaxed">
+              {t(
+                `هل أنت متأكد من حذف المحاضرة "${deleteTarget.title}"؟ سيتم حذفها نهائياً من قاعدة البيانات السحابية.`,
+                `Are you sure you want to delete "${deleteTarget.title}"? This action cannot be undone.`
+              )}
+            </p>
+            <div className="flex items-center justify-end gap-2 pt-2">
+              <button
+                type="button"
+                disabled={deleting}
+                onClick={() => setDeleteTarget(null)}
+                className="px-4 py-2 rounded-xl border border-slate-300 dark:border-slate-700 text-xs font-bold text-slate-700 dark:text-slate-300 cursor-pointer"
+              >
+                {t('إلغاء', 'Cancel')}
+              </button>
+              <button
+                type="button"
+                disabled={deleting}
+                onClick={confirmDelete}
+                className="px-4 py-2 rounded-xl bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold cursor-pointer disabled:opacity-50"
+              >
+                {deleting ? t('جاري الحذف...', 'Deleting...') : t('تأكيد الحذف', 'Confirm Delete')}
+              </button>
+            </div>
           </div>
         </div>
       )}
@@ -694,25 +845,67 @@ export const AdminLecturesManager: React.FC<AdminLecturesManagerProps> = ({
             )}
             <div className="flex flex-wrap gap-2">
               {previewItem.pdfUrl && (
-                <a href={previewItem.pdfUrl} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-brand-cyan text-white dark:text-slate-950 text-xs font-bold">
-                  <Download className="h-3.5 w-3.5" /> PDF
-                </a>
+                <>
+                  {onPreviewMedia && (
+                    <button
+                      type="button"
+                      onClick={() => onPreviewMedia(previewItem.pdfUrl!)}
+                      className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-slate-100 dark:bg-slate-800 text-slate-800 dark:text-slate-200 text-xs font-bold cursor-pointer"
+                    >
+                      <Eye className="h-3.5 w-3.5 text-brand-cyan" /> {t('عرض PDF', 'View PDF')}
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => triggerFileDownload(previewItem.pdfUrl!, `${previewItem.title}.pdf`)}
+                    className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-brand-cyan text-white dark:text-slate-950 text-xs font-bold cursor-pointer"
+                  >
+                    <Download className="h-3.5 w-3.5" /> {t('تحميل PDF', 'Download PDF')}
+                  </button>
+                </>
               )}
               {previewItem.pptxUrl && (
-                <a href={previewItem.pptxUrl} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-orange-600 text-white text-xs font-bold">
+                <button
+                  type="button"
+                  onClick={() => triggerFileDownload(previewItem.pptxUrl!, `${previewItem.title}.pptx`)}
+                  className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-orange-600 text-white text-xs font-bold cursor-pointer"
+                >
                   <FileSpreadsheet className="h-3.5 w-3.5" /> PowerPoint
-                </a>
+                </button>
               )}
               {(previewItem.youtubeUrl || previewItem.videoUrl) && (
-                <a href={previewItem.youtubeUrl || previewItem.videoUrl} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-rose-600 text-white text-xs font-bold">
-                  <Video className="h-3.5 w-3.5" /> {t('فيديو الشرح', 'Watch Video')}
-                </a>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const vUrl = previewItem.youtubeUrl || previewItem.videoUrl!;
+                    if (onPreviewMedia) onPreviewMedia(vUrl);
+                    else triggerFileDownload(vUrl, `${previewItem.title}.mp4`);
+                  }}
+                  className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-rose-600 text-white text-xs font-bold cursor-pointer"
+                >
+                  <Video className="h-3.5 w-3.5" /> {t('تشغيل الفيديو', 'Watch Video')}
+                </button>
               )}
+              {(previewItem.attachments || []).map(att => (
+                <button
+                  key={att.id}
+                  type="button"
+                  onClick={() => triggerFileDownload(att.url, att.name)}
+                  className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-slate-100 dark:bg-slate-800 text-slate-800 dark:text-slate-200 text-xs font-bold cursor-pointer"
+                >
+                  <Download className="h-3.5 w-3.5" /> {att.name}
+                </button>
+              ))}
             </div>
             {(previewItem.imageUrls?.length || 0) > 0 && (
               <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 pt-2">
                 {previewItem.imageUrls?.map((img, i) => (
-                  <img key={i} src={img} alt={`Slide ${i + 1}`} className="w-full h-28 object-cover rounded-xl border border-slate-200 dark:border-slate-800" />
+                  <ResolvedImage
+                    key={i}
+                    src={img}
+                    alt={`Slide ${i + 1}`}
+                    className="w-full h-28 object-cover rounded-xl border border-slate-200 dark:border-slate-800"
+                  />
                 ))}
               </div>
             )}

@@ -1,10 +1,11 @@
 import { initializeApp, getApps, getApp } from 'firebase/app';
 import { initializeFirestore, getFirestore, collection, doc, getDocs, getDoc, getDocFromServer, setDoc, updateDoc, deleteDoc, addDoc, query, where, orderBy, onSnapshot, deleteField, increment } from 'firebase/firestore';
-import { getAuth, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut, onAuthStateChanged, GoogleAuthProvider, signInWithPopup, User } from 'firebase/auth';
+import { getAuth, signInWithEmailAndPassword, createUserWithEmailAndPassword, sendPasswordResetEmail, signOut, onAuthStateChanged, GoogleAuthProvider, signInWithPopup, User } from 'firebase/auth';
 import firebaseAppletConfig from '../firebase-applet-config.json';
-import { Course, Category, Student, NewsItem, Article, UserReview, Message, Admin, WebsiteSettings, Teacher, Coupon, Order, Quiz, QuizSubmission, UserAuth, Assignment, AssignmentSubmission, Certificate, ChatMessage, ChatThread, LessonComment, Notification, LessonAccess, CourseAccess, CourseRequest, LectureItem, SectionItem, ExamItem, SheetItem, SheetSubmission, QuestionBankItem, OnlineExamQuestion, ExamSubmission, ScheduleItem, StudentInquiry, ActivityLogItem } from './types';
+import { Course, Category, Student, NewsItem, Article, UserReview, Message, Admin, WebsiteSettings, Teacher, Coupon, Order, Quiz, QuizSubmission, UserAuth, Assignment, AssignmentSubmission, Certificate, ChatMessage, ChatThread, LessonComment, Notification, LessonAccess, CourseAccess, CourseRequest, LectureItem, SectionItem, ExamItem, SheetItem, SheetSubmission, QuestionBankItem, OnlineExamQuestion, ExamSubmission, ScheduleItem, StudentInquiry, ActivityLogItem, SheetAnswerKeyDoc, ExamPrivateKeyDoc, ExamPrivateKeyEntry } from './types';
 import { normalizeCourseLessons } from './utils/authAccess';
-import { saveVideoToIndexedDB } from './utils/videoStorage';
+import { saveVideoToIndexedDB, deleteVideoFromIndexedDB } from './utils/videoStorage';
+import { deleteFileFromFirestoreChunks } from './utils/firestoreMediaStorage';
 import { uploadFileToFirebaseStorage } from './utils/firebaseUploadService';
 import {
   HERO_IT_UNIVERSITY_IMG,
@@ -251,6 +252,195 @@ const canReadApprovedContentFromFirestore = (): boolean => {
   } catch {}
   return false;
 };
+
+function formatCloudErrorMessage(err: any, fallbackMsg: string): string {
+  const raw = err?.message || String(err || '');
+  if (raw.includes('permission') || raw.includes('Missing or insufficient permissions') || err?.code === 'permission-denied') {
+    return 'خطأ في الصلاحيات السحابية (Missing or insufficient permissions). تأكد من تفعيل المزامنة السحابية وتسجيل الدخول بالحساب الصحيح.';
+  }
+  if (raw.includes('offline') || err?.code === 'unavailable') {
+    return 'تعذر الاتصال بخادم قاعدة البيانات. تأكد من الاتصال بالإنترنت ثم أعد المحاولة.';
+  }
+  return raw || fallbackMsg;
+}
+
+async function requireCloudWriteAuth(requireAdminRole: boolean): Promise<void> {
+  if (!isFirebaseConfigured) return;
+  await waitForFirebaseAuth();
+  if (!firebaseAuth?.currentUser) {
+    throw new Error('يجب تفعيل المزامنة السحابية وتسجيل الدخول أولاً لحفظ التعديلات في قاعدة البيانات.');
+  }
+  if (requireAdminRole && !isFirebaseSignedInAdmin()) {
+    throw new Error('يلزم تسجيل الدخول بحساب المدير العام (Admin) في المزامنة السحابية لتنفيذ هذه العملية.');
+  }
+}
+
+export function extractMediaUrlsFromItem(record: any): string[] {
+  if (!record || typeof record !== 'object') return [];
+  const urls: string[] = [];
+  const push = (val?: unknown) => {
+    if (typeof val === 'string') {
+      const clean = val.trim();
+      if (clean && (clean.startsWith('firestore://') || clean.startsWith('indexeddb://') || clean.includes('firebasestorage'))) {
+        urls.push(clean);
+      }
+    }
+  };
+  push(record.pdfUrl);
+  push(record.pptxUrl);
+  push(record.fileUrl);
+  push(record.archiveUrl);
+  push(record.videoUrl);
+  push(record.youtubeUrl);
+  push(record.questionsFileUrl);
+  push(record.questionsPdfUrl);
+  push(record.answersFileUrl);
+  push(record.modelAnswerUrl);
+  push(record.thumbnailUrl);
+  push(record.bannerUrl);
+  if (Array.isArray(record.imageUrls)) {
+    record.imageUrls.forEach(push);
+  }
+  if (Array.isArray(record.attachments)) {
+    record.attachments.forEach((att: any) => push(att?.url));
+  }
+  if (Array.isArray(record.codeFiles)) {
+    record.codeFiles.forEach((cf: any) => push(cf?.url));
+  }
+  return Array.from(new Set(urls));
+}
+
+async function cleanupUnreferencedMedia(candidateUrls: string[], excludeDocId?: string): Promise<void> {
+  const targets = Array.from(new Set(candidateUrls.filter(Boolean)));
+  if (targets.length === 0) return;
+
+  const referenced = new Set<string>();
+  const collectFromList = (items: any[]) => {
+    for (const item of items) {
+      if (!item || (excludeDocId && item.id === excludeDocId)) continue;
+      extractMediaUrlsFromItem(item).forEach((u) => referenced.add(u));
+    }
+  };
+
+  // Scan localStorage caches first
+  ['courses', 'lectures', 'sections', 'sheets', 'exams', 'sheet_answer_keys', 'exam_private_keys', 'sheet_submissions', 'assignments'].forEach((k) => {
+    try {
+      const raw = localStorage.getItem(`academy_${k}`);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed)) collectFromList(parsed);
+      }
+    } catch {}
+  });
+
+  // Also scan authoritative Firestore collections if admin is signed in
+  if (isFirebaseConfigured && isFirebaseSignedInAdmin()) {
+    const collectionsToScan = ['courses', 'lectures', 'sections', 'sheets', 'exams', 'sheet_answer_keys', 'exam_private_keys', 'sheet_submissions'];
+    for (const colName of collectionsToScan) {
+      try {
+        const snap = await getDocs(collection(firestoreDb, colName));
+        snap.forEach((d) => {
+          if (excludeDocId && d.id === excludeDocId) return;
+          extractMediaUrlsFromItem(d.data()).forEach((u) => referenced.add(u));
+        });
+      } catch {}
+    }
+  }
+
+  for (const url of targets) {
+    if (referenced.has(url)) continue;
+    try {
+      if (url.startsWith('firestore://')) {
+        await deleteFileFromFirestoreChunks(url);
+      } else if (url.startsWith('indexeddb://')) {
+        await deleteVideoFromIndexedDB(url);
+      } else if (app && (url.includes('firebasestorage.googleapis.com') || url.includes('firebasestorage.app'))) {
+        const { getStorage, ref: storageRef, deleteObject } = await import('firebase/storage');
+        const st = getStorage(app);
+        await deleteObject(storageRef(st, url));
+      }
+    } catch (cleanupErr) {
+      console.warn('[MediaCleanup] Non-fatal cleanup notice for', url, cleanupErr);
+    }
+  }
+}
+
+export function stripSheetPublicFields(sheet: Partial<SheetItem>): Record<string, any> {
+  const copy: Record<string, any> = { ...sheet };
+  delete copy.modelAnswerUrl;
+  delete copy.modelAnswerText;
+  return copy;
+}
+
+export function extractSheetAnswerKeyDoc(sheetId: string, sheet: Partial<SheetItem>): SheetAnswerKeyDoc {
+  return {
+    sheetId,
+    modelAnswerUrl: sheet.modelAnswerUrl || '',
+    modelAnswerText: sheet.modelAnswerText || '',
+    showAnswersToStudents: Boolean(sheet.showAnswersToStudents),
+    updatedAt: new Date().toISOString()
+  };
+}
+
+export function stripExamPublicFields(exam: Partial<ExamItem>): Record<string, any> {
+  const copy: Record<string, any> = { ...exam };
+  delete copy.modelAnswerUrl;
+  delete copy.answersFileUrl;
+  if (Array.isArray(copy.questions)) {
+    copy.questions = copy.questions.map((q: OnlineExamQuestion) => ({
+      id: q.id,
+      questionText: q.questionText,
+      question: q.question,
+      type: q.type,
+      options: Array.isArray(q.options) ? q.options : [],
+      points: typeof q.points === 'number' ? q.points : 1,
+      correctAnswerIndex: -1
+    }));
+  }
+  return copy;
+}
+
+export function extractExamPrivateKeyDoc(examId: string, exam: Partial<ExamItem>): ExamPrivateKeyDoc {
+  const questionKeys: Record<string, ExamPrivateKeyEntry> = {};
+  if (Array.isArray(exam.questions)) {
+    exam.questions.forEach((q) => {
+      if (!q?.id) return;
+      questionKeys[q.id] = {
+        correctAnswerIndex: typeof q.correctAnswerIndex === 'number' ? q.correctAnswerIndex : (typeof q.correctAnswer === 'number' ? q.correctAnswer : 0),
+        acceptedAnswers: Array.isArray(q.acceptedAnswers) ? q.acceptedAnswers : [],
+        explanation: q.explanation || ''
+      };
+    });
+  }
+  return {
+    examId,
+    modelAnswerUrl: exam.modelAnswerUrl || '',
+    answersFileUrl: exam.answersFileUrl || '',
+    questionKeys,
+    showAnswersToStudents: Boolean(exam.showAnswersToStudents),
+    showResultsImmediately: exam.showResultsImmediately !== false,
+    updatedAt: new Date().toISOString()
+  };
+}
+
+export function mergeExamWithPrivateKey(exam: ExamItem, keyDoc?: ExamPrivateKeyDoc | null): ExamItem {
+  if (!keyDoc) return exam;
+  return {
+    ...exam,
+    modelAnswerUrl: keyDoc.modelAnswerUrl || exam.modelAnswerUrl || '',
+    answersFileUrl: keyDoc.answersFileUrl || exam.answersFileUrl || '',
+    questions: (exam.questions || []).map((q) => {
+      const k = keyDoc.questionKeys?.[q.id];
+      if (!k) return q;
+      return {
+        ...q,
+        correctAnswerIndex: k.correctAnswerIndex,
+        acceptedAnswers: k.acceptedAnswers || q.acceptedAnswers || [],
+        explanation: k.explanation || q.explanation || ''
+      };
+    })
+  };
+}
 
 export enum OperationType {
   CREATE = 'create',
@@ -1199,11 +1389,14 @@ export const dbService = {
       await waitForFirebaseAuth();
       if (canReadApprovedContentFromFirestore()) {
         try {
-          const snap = await getDocs(collection(firestoreDb, 'lectures'));
+          const isAdminSession = isFirebaseSignedInAdmin();
+          const colRef = collection(firestoreDb, 'lectures');
+          const qRef = isAdminSession ? colRef : query(colRef, where('published', '==', true));
+          const snap = await getDocs(qRef);
           const list: LectureItem[] = [];
           snap.forEach(d => list.push({ id: d.id, ...d.data() } as LectureItem));
           list.sort((a, b) => a.number - b.number);
-          setStorageItem('lectures', list);
+          if (isAdminSession) setStorageItem('lectures', list);
           return courseId ? list.filter(l => l.courseId === courseId) : list;
         } catch (err) {
           console.warn("Firestore getLectures notice:", err);
@@ -1216,14 +1409,19 @@ export const dbService = {
 
   listenToLectures: (onUpdate: (lectures: LectureItem[]) => void, courseId?: string) => {
     const initial = getStorageItem<LectureItem[]>('lectures', defaultLectures);
-    onUpdate(courseId ? initial.filter(l => l.courseId === courseId) : initial);
+    if (!isFirebaseConfigured || isFirebaseSignedInAdmin()) {
+      onUpdate(courseId ? initial.filter(l => l.courseId === courseId) : initial);
+    }
 
     if (isFirebaseConfigured && canReadApprovedContentFromFirestore()) {
-      const unsub = onSnapshot(collection(firestoreDb, 'lectures'), (snap) => {
+      const isAdminSession = isFirebaseSignedInAdmin();
+      const colRef = collection(firestoreDb, 'lectures');
+      const qRef = isAdminSession ? colRef : query(colRef, where('published', '==', true));
+      const unsub = onSnapshot(qRef, (snap) => {
         const list: LectureItem[] = [];
         snap.forEach(d => list.push({ id: d.id, ...d.data() } as LectureItem));
         list.sort((a, b) => a.number - b.number);
-        setStorageItem('lectures', list);
+        if (isAdminSession) setStorageItem('lectures', list);
         onUpdate(courseId ? list.filter(l => l.courseId === courseId) : list);
       }, (err) => {
         console.warn("Lectures listener notice:", err);
@@ -1246,52 +1444,85 @@ export const dbService = {
 
   addLecture: async (lecture: Omit<LectureItem, 'id' | 'createdAt'>): Promise<LectureItem> => {
     checkAdminWrite('add_lecture', { lecture });
+    await requireCloudWriteAuth(true);
     const newId = 'lec_' + Date.now();
+    const status = lecture.status || (lecture.published === false ? 'draft' : 'published');
     const item: LectureItem = {
       id: newId,
       ...lecture,
+      status,
+      published: status === 'published',
       createdAt: new Date().toISOString()
     };
-    const current = getStorageItem<LectureItem[]>('lectures', defaultLectures);
-    const updated = [...current.filter(l => l.id !== newId), item];
-    setStorageItem('lectures', updated);
 
     if (isFirebaseConfigured) {
       try {
         await setDoc(doc(firestoreDb, 'lectures', newId), sanitizeForFirestore(item));
       } catch (e) {
-        console.warn("addLecture sync notice:", e);
+        throw new Error(formatCloudErrorMessage(e, 'تعذر حفظ المحاضرة في قاعدة البيانات السحابية.'));
       }
     }
+
+    const current = getStorageItem<LectureItem[]>('lectures', defaultLectures);
+    const updated = [...current.filter(l => l.id !== newId), item];
+    setStorageItem('lectures', updated);
     return item;
   },
 
   updateLecture: async (id: string, patch: Partial<LectureItem>): Promise<void> => {
     checkAdminWrite('update_lecture', { id, patch });
+    await requireCloudWriteAuth(true);
     const current = getStorageItem<LectureItem[]>('lectures', defaultLectures);
-    const updated = current.map(l => l.id === id ? { ...l, ...patch } : l);
-    setStorageItem('lectures', updated);
+    const prev = current.find(l => l.id === id);
+
+    const normalizedPatch: Partial<LectureItem> = { ...patch, updatedAt: new Date().toISOString() };
+    if (normalizedPatch.status !== undefined) {
+      normalizedPatch.published = normalizedPatch.status === 'published';
+    } else if (normalizedPatch.published !== undefined) {
+      normalizedPatch.status = normalizedPatch.published ? 'published' : 'draft';
+    }
 
     if (isFirebaseConfigured) {
       try {
-        await setDoc(doc(firestoreDb, 'lectures', id), sanitizeForFirestore(patch), { merge: true });
+        await setDoc(doc(firestoreDb, 'lectures', id), sanitizeForFirestore(normalizedPatch), { merge: true });
       } catch (e) {
-        console.warn("updateLecture sync notice:", e);
+        throw new Error(formatCloudErrorMessage(e, 'تعذر تحديث المحاضرة في قاعدة البيانات السحابية.'));
       }
+    }
+
+    const updatedItem = prev ? { ...prev, ...normalizedPatch } : null;
+    const updated = current.map(l => l.id === id ? { ...l, ...normalizedPatch } : l);
+    setStorageItem('lectures', updated);
+
+    if (prev && updatedItem) {
+      const oldUrls = extractMediaUrlsFromItem(prev);
+      const newUrls = new Set(extractMediaUrlsFromItem(updatedItem));
+      const removed = oldUrls.filter(u => !newUrls.has(u));
+      if (removed.length > 0) cleanupUnreferencedMedia(removed, id).catch(() => {});
     }
   },
 
   deleteLecture: async (id: string): Promise<void> => {
     checkAdminWrite('delete_lecture', { id });
+    await requireCloudWriteAuth(true);
     const current = getStorageItem<LectureItem[]>('lectures', defaultLectures);
-    setStorageItem('lectures', current.filter(l => l.id !== id));
+    let target = current.find(l => l.id === id);
 
     if (isFirebaseConfigured) {
       try {
+        if (!target) {
+          const snap = await getDoc(doc(firestoreDb, 'lectures', id));
+          if (snap.exists()) target = { id: snap.id, ...snap.data() } as LectureItem;
+        }
         await deleteDoc(doc(firestoreDb, 'lectures', id));
       } catch (e) {
-        console.warn("deleteLecture notice:", e);
+        throw new Error(formatCloudErrorMessage(e, 'تعذر حذف المحاضرة من قاعدة البيانات السحابية.'));
       }
+    }
+
+    setStorageItem('lectures', current.filter(l => l.id !== id));
+    if (target) {
+      cleanupUnreferencedMedia(extractMediaUrlsFromItem(target), id).catch(() => {});
     }
   },
 
@@ -1301,11 +1532,14 @@ export const dbService = {
       await waitForFirebaseAuth();
       if (canReadApprovedContentFromFirestore()) {
         try {
-          const snap = await getDocs(collection(firestoreDb, 'sections'));
+          const isAdminSession = isFirebaseSignedInAdmin();
+          const colRef = collection(firestoreDb, 'sections');
+          const qRef = isAdminSession ? colRef : query(colRef, where('published', '==', true));
+          const snap = await getDocs(qRef);
           const list: SectionItem[] = [];
           snap.forEach(d => list.push({ id: d.id, ...d.data() } as SectionItem));
           list.sort((a, b) => a.number - b.number);
-          setStorageItem('sections', list);
+          if (isAdminSession) setStorageItem('sections', list);
           return courseId ? list.filter(s => s.courseId === courseId) : list;
         } catch (err) {
           console.warn("Firestore getSections notice:", err);
@@ -1318,14 +1552,19 @@ export const dbService = {
 
   listenToSections: (onUpdate: (sections: SectionItem[]) => void, courseId?: string) => {
     const initial = getStorageItem<SectionItem[]>('sections', defaultSections);
-    onUpdate(courseId ? initial.filter(s => s.courseId === courseId) : initial);
+    if (!isFirebaseConfigured || isFirebaseSignedInAdmin()) {
+      onUpdate(courseId ? initial.filter(s => s.courseId === courseId) : initial);
+    }
 
     if (isFirebaseConfigured && canReadApprovedContentFromFirestore()) {
-      const unsub = onSnapshot(collection(firestoreDb, 'sections'), (snap) => {
+      const isAdminSession = isFirebaseSignedInAdmin();
+      const colRef = collection(firestoreDb, 'sections');
+      const qRef = isAdminSession ? colRef : query(colRef, where('published', '==', true));
+      const unsub = onSnapshot(qRef, (snap) => {
         const list: SectionItem[] = [];
         snap.forEach(d => list.push({ id: d.id, ...d.data() } as SectionItem));
         list.sort((a, b) => a.number - b.number);
-        setStorageItem('sections', list);
+        if (isAdminSession) setStorageItem('sections', list);
         onUpdate(courseId ? list.filter(s => s.courseId === courseId) : list);
       }, (err) => {
         console.warn("Sections listener notice:", err);
@@ -1348,52 +1587,85 @@ export const dbService = {
 
   addSection: async (section: Omit<SectionItem, 'id' | 'createdAt'>): Promise<SectionItem> => {
     checkAdminWrite('add_section', { section });
+    await requireCloudWriteAuth(true);
     const newId = 'sec_' + Date.now();
+    const status = section.status || (section.published === false ? 'draft' : 'published');
     const item: SectionItem = {
       id: newId,
       ...section,
+      status,
+      published: status === 'published',
       createdAt: new Date().toISOString()
     };
-    const current = getStorageItem<SectionItem[]>('sections', defaultSections);
-    const updated = [...current.filter(s => s.id !== newId), item];
-    setStorageItem('sections', updated);
 
     if (isFirebaseConfigured) {
       try {
         await setDoc(doc(firestoreDb, 'sections', newId), sanitizeForFirestore(item));
       } catch (e) {
-        console.warn("addSection sync notice:", e);
+        throw new Error(formatCloudErrorMessage(e, 'تعذر حفظ السكشن في قاعدة البيانات السحابية.'));
       }
     }
+
+    const current = getStorageItem<SectionItem[]>('sections', defaultSections);
+    const updated = [...current.filter(s => s.id !== newId), item];
+    setStorageItem('sections', updated);
     return item;
   },
 
   updateSection: async (id: string, patch: Partial<SectionItem>): Promise<void> => {
     checkAdminWrite('update_section', { id, patch });
+    await requireCloudWriteAuth(true);
     const current = getStorageItem<SectionItem[]>('sections', defaultSections);
-    const updated = current.map(s => s.id === id ? { ...s, ...patch } : s);
-    setStorageItem('sections', updated);
+    const prev = current.find(s => s.id === id);
+
+    const normalizedPatch: Partial<SectionItem> = { ...patch, updatedAt: new Date().toISOString() };
+    if (normalizedPatch.status !== undefined) {
+      normalizedPatch.published = normalizedPatch.status === 'published';
+    } else if (normalizedPatch.published !== undefined) {
+      normalizedPatch.status = normalizedPatch.published ? 'published' : 'draft';
+    }
 
     if (isFirebaseConfigured) {
       try {
-        await setDoc(doc(firestoreDb, 'sections', id), sanitizeForFirestore(patch), { merge: true });
+        await setDoc(doc(firestoreDb, 'sections', id), sanitizeForFirestore(normalizedPatch), { merge: true });
       } catch (e) {
-        console.warn("updateSection sync notice:", e);
+        throw new Error(formatCloudErrorMessage(e, 'تعذر تحديث السكشن في قاعدة البيانات السحابية.'));
       }
+    }
+
+    const updatedItem = prev ? { ...prev, ...normalizedPatch } : null;
+    const updated = current.map(s => s.id === id ? { ...s, ...normalizedPatch } : s);
+    setStorageItem('sections', updated);
+
+    if (prev && updatedItem) {
+      const oldUrls = extractMediaUrlsFromItem(prev);
+      const newUrls = new Set(extractMediaUrlsFromItem(updatedItem));
+      const removed = oldUrls.filter(u => !newUrls.has(u));
+      if (removed.length > 0) cleanupUnreferencedMedia(removed, id).catch(() => {});
     }
   },
 
   deleteSection: async (id: string): Promise<void> => {
     checkAdminWrite('delete_section', { id });
+    await requireCloudWriteAuth(true);
     const current = getStorageItem<SectionItem[]>('sections', defaultSections);
-    setStorageItem('sections', current.filter(s => s.id !== id));
+    let target = current.find(s => s.id === id);
 
     if (isFirebaseConfigured) {
       try {
+        if (!target) {
+          const snap = await getDoc(doc(firestoreDb, 'sections', id));
+          if (snap.exists()) target = { id: snap.id, ...snap.data() } as SectionItem;
+        }
         await deleteDoc(doc(firestoreDb, 'sections', id));
       } catch (e) {
-        console.warn("deleteSection notice:", e);
+        throw new Error(formatCloudErrorMessage(e, 'تعذر حذف السكشن من قاعدة البيانات السحابية.'));
       }
+    }
+
+    setStorageItem('sections', current.filter(s => s.id !== id));
+    if (target) {
+      cleanupUnreferencedMedia(extractMediaUrlsFromItem(target), id).catch(() => {});
     }
   },
 
@@ -1403,10 +1675,13 @@ export const dbService = {
       await waitForFirebaseAuth();
       if (canReadApprovedContentFromFirestore()) {
         try {
-          const snap = await getDocs(collection(firestoreDb, 'exams'));
+          const isAdminSession = isFirebaseSignedInAdmin();
+          const colRef = collection(firestoreDb, 'exams');
+          const qRef = isAdminSession ? colRef : query(colRef, where('published', '==', true));
+          const snap = await getDocs(qRef);
           const list: ExamItem[] = [];
           snap.forEach(d => list.push({ id: d.id, ...d.data() } as ExamItem));
-          setStorageItem('exams', list);
+          if (isAdminSession) setStorageItem('exams', list);
           return courseId ? list.filter(e => e.courseId === courseId) : list;
         } catch (err) {
           console.warn("Firestore getExams notice:", err);
@@ -1419,13 +1694,18 @@ export const dbService = {
 
   listenToExams: (onUpdate: (exams: ExamItem[]) => void, courseId?: string) => {
     const initial = getStorageItem<ExamItem[]>('exams', defaultExams);
-    onUpdate(courseId ? initial.filter(e => e.courseId === courseId) : initial);
+    if (!isFirebaseConfigured || isFirebaseSignedInAdmin()) {
+      onUpdate(courseId ? initial.filter(e => e.courseId === courseId) : initial);
+    }
 
     if (isFirebaseConfigured && canReadApprovedContentFromFirestore()) {
-      const unsub = onSnapshot(collection(firestoreDb, 'exams'), (snap) => {
+      const isAdminSession = isFirebaseSignedInAdmin();
+      const colRef = collection(firestoreDb, 'exams');
+      const qRef = isAdminSession ? colRef : query(colRef, where('published', '==', true));
+      const unsub = onSnapshot(qRef, (snap) => {
         const list: ExamItem[] = [];
         snap.forEach(d => list.push({ id: d.id, ...d.data() } as ExamItem));
-        setStorageItem('exams', list);
+        if (isAdminSession) setStorageItem('exams', list);
         onUpdate(courseId ? list.filter(e => e.courseId === courseId) : list);
       }, (err) => {
         console.warn("Exams listener notice:", err);
@@ -1446,54 +1726,190 @@ export const dbService = {
     }
   },
 
+  getAllExamPrivateKeys: async (): Promise<Record<string, ExamPrivateKeyDoc>> => {
+    const map: Record<string, ExamPrivateKeyDoc> = {};
+    if (isFirebaseConfigured) {
+      await waitForFirebaseAuth();
+      if (isFirebaseSignedInAdmin()) {
+        try {
+          const snap = await getDocs(collection(firestoreDb, 'exam_private_keys'));
+          const arr: ExamPrivateKeyDoc[] = [];
+          snap.forEach(d => {
+            const data = { examId: d.id, ...d.data() } as ExamPrivateKeyDoc;
+            map[d.id] = data;
+            arr.push(data);
+          });
+          setStorageItem('exam_private_keys', arr);
+          return map;
+        } catch (err) {
+          console.warn('getAllExamPrivateKeys notice:', err);
+        }
+      }
+    }
+    const local = getStorageItem<ExamPrivateKeyDoc[]>('exam_private_keys', []);
+    local.forEach(k => { map[k.examId] = k; });
+    return map;
+  },
+
+  getExamPrivateKey: async (examId: string): Promise<ExamPrivateKeyDoc | null> => {
+    if (isFirebaseConfigured) {
+      await waitForFirebaseAuth();
+      try {
+        const snap = await getDoc(doc(firestoreDb, 'exam_private_keys', examId));
+        if (snap.exists()) {
+          return { examId: snap.id, ...snap.data() } as ExamPrivateKeyDoc;
+        }
+      } catch (err: any) {
+        if (err?.code === 'permission-denied' || String(err?.message || '').includes('permission')) {
+          throw new Error(formatCloudErrorMessage(err, 'غير مصرح بالوصول لمفاتيح إجابات الامتحان في الوقت الحالي.'));
+        }
+        console.warn('getExamPrivateKey notice:', err);
+      }
+    }
+    const local = getStorageItem<ExamPrivateKeyDoc[]>('exam_private_keys', []);
+    return local.find(k => k.examId === examId) || null;
+  },
+
+  createExamSubmissionReceipt: async (examId: string, studentId: string): Promise<void> => {
+    const receiptId = `${examId}_${studentId}`;
+    const receipt = {
+      examId,
+      studentId,
+      createdAt: new Date().toISOString()
+    };
+    if (isFirebaseConfigured) {
+      await requireCloudWriteAuth(false);
+      try {
+        await setDoc(doc(firestoreDb, 'exam_submission_receipts', receiptId), receipt);
+      } catch (e) {
+        throw new Error(formatCloudErrorMessage(e, 'تعذر تسجيل إيصال تسليم الامتحان.'));
+      }
+    }
+  },
+
   addExam: async (exam: Omit<ExamItem, 'id' | 'createdAt'>): Promise<ExamItem> => {
     checkAdminWrite('add_exam', { exam });
+    await requireCloudWriteAuth(true);
     const newId = 'exam_' + Date.now();
+    const status = exam.status || (exam.published === false ? 'draft' : 'published');
     const item: ExamItem = {
       id: newId,
       ...exam,
+      status,
+      published: status === 'published',
       createdAt: new Date().toISOString()
     };
-    const current = getStorageItem<ExamItem[]>('exams', defaultExams);
-    const updated = [...current.filter(e => e.id !== newId), item];
-    setStorageItem('exams', updated);
+
+    const publicPayload = stripExamPublicFields(item);
+    const privateKeyDoc = extractExamPrivateKeyDoc(newId, item);
 
     if (isFirebaseConfigured) {
       try {
-        await setDoc(doc(firestoreDb, 'exams', newId), sanitizeForFirestore(item));
+        await setDoc(doc(firestoreDb, 'exams', newId), sanitizeForFirestore(publicPayload));
+        await setDoc(doc(firestoreDb, 'exam_private_keys', newId), sanitizeForFirestore(privateKeyDoc));
       } catch (e) {
-        console.warn("addExam sync notice:", e);
+        throw new Error(formatCloudErrorMessage(e, 'تعذر حفظ الامتحان في قاعدة البيانات السحابية.'));
       }
     }
+
+    const current = getStorageItem<ExamItem[]>('exams', defaultExams);
+    setStorageItem('exams', [...current.filter(e => e.id !== newId), item]);
+    const localKeys = getStorageItem<ExamPrivateKeyDoc[]>('exam_private_keys', []);
+    setStorageItem('exam_private_keys', [...localKeys.filter(k => k.examId !== newId), privateKeyDoc]);
     return item;
   },
 
   updateExam: async (id: string, patch: Partial<ExamItem>): Promise<void> => {
     checkAdminWrite('update_exam', { id, patch });
+    await requireCloudWriteAuth(true);
     const current = getStorageItem<ExamItem[]>('exams', defaultExams);
-    const updated = current.map(e => e.id === id ? { ...e, ...patch } : e);
-    setStorageItem('exams', updated);
+    const prev = current.find(e => e.id === id);
+
+    const normalizedPatch: Partial<ExamItem> = { ...patch, updatedAt: new Date().toISOString() };
+    if (normalizedPatch.status !== undefined) {
+      normalizedPatch.published = normalizedPatch.status === 'published';
+    } else if (normalizedPatch.published !== undefined) {
+      normalizedPatch.status = normalizedPatch.published ? 'published' : 'draft';
+    }
+
+    const publicPatch = stripExamPublicFields(normalizedPatch);
+    // Explicitly remove any legacy secret fields on public exams/{id}
+    const firestorePublicPatch: Record<string, any> = {
+      ...sanitizeForFirestore(publicPatch),
+      modelAnswerUrl: deleteField(),
+      answersFileUrl: deleteField()
+    };
+
+    // Build updated private key patch
+    const localKeys = getStorageItem<ExamPrivateKeyDoc[]>('exam_private_keys', []);
+    const existingKey = localKeys.find(k => k.examId === id);
+    const mergedForKey: Partial<ExamItem> = {
+      ...(prev || {}),
+      ...(existingKey ? {
+        modelAnswerUrl: existingKey.modelAnswerUrl,
+        answersFileUrl: existingKey.answersFileUrl
+      } : {}),
+      ...normalizedPatch
+    };
+    const nextPrivateKey = extractExamPrivateKeyDoc(id, mergedForKey);
+    if (!normalizedPatch.questions && existingKey?.questionKeys) {
+      nextPrivateKey.questionKeys = existingKey.questionKeys;
+    }
 
     if (isFirebaseConfigured) {
       try {
-        await setDoc(doc(firestoreDb, 'exams', id), sanitizeForFirestore(patch), { merge: true });
+        await setDoc(doc(firestoreDb, 'exams', id), firestorePublicPatch, { merge: true });
+        await setDoc(doc(firestoreDb, 'exam_private_keys', id), sanitizeForFirestore(nextPrivateKey), { merge: true });
       } catch (e) {
-        console.warn("updateExam sync notice:", e);
+        throw new Error(formatCloudErrorMessage(e, 'تعذر تحديث الامتحان في قاعدة البيانات السحابية.'));
       }
+    }
+
+    const updatedItem = prev ? { ...prev, ...normalizedPatch } : null;
+    setStorageItem('exams', current.map(e => e.id === id ? { ...e, ...normalizedPatch } : e));
+    setStorageItem('exam_private_keys', [...localKeys.filter(k => k.examId !== id), nextPrivateKey]);
+
+    if (prev && updatedItem) {
+      const oldUrls = extractMediaUrlsFromItem(prev);
+      const newUrls = new Set(extractMediaUrlsFromItem(updatedItem));
+      const removed = oldUrls.filter(u => !newUrls.has(u));
+      if (removed.length > 0) cleanupUnreferencedMedia(removed, id).catch(() => {});
     }
   },
 
   deleteExam: async (id: string): Promise<void> => {
     checkAdminWrite('delete_exam', { id });
+    await requireCloudWriteAuth(true);
     const current = getStorageItem<ExamItem[]>('exams', defaultExams);
-    setStorageItem('exams', current.filter(e => e.id !== id));
+    const localKeys = getStorageItem<ExamPrivateKeyDoc[]>('exam_private_keys', []);
+    let target = current.find(e => e.id === id);
+    let targetKey = localKeys.find(k => k.examId === id);
 
     if (isFirebaseConfigured) {
       try {
+        if (!target) {
+          const snap = await getDoc(doc(firestoreDb, 'exams', id));
+          if (snap.exists()) target = { id: snap.id, ...snap.data() } as ExamItem;
+        }
+        if (!targetKey) {
+          const kSnap = await getDoc(doc(firestoreDb, 'exam_private_keys', id));
+          if (kSnap.exists()) targetKey = kSnap.data() as ExamPrivateKeyDoc;
+        }
         await deleteDoc(doc(firestoreDb, 'exams', id));
+        await deleteDoc(doc(firestoreDb, 'exam_private_keys', id)).catch(() => {});
       } catch (e) {
-        console.warn("deleteExam notice:", e);
+        throw new Error(formatCloudErrorMessage(e, 'تعذر حذف الامتحان من قاعدة البيانات السحابية.'));
       }
+    }
+
+    setStorageItem('exams', current.filter(e => e.id !== id));
+    setStorageItem('exam_private_keys', localKeys.filter(k => k.examId !== id));
+    const mediaToClean = [
+      ...extractMediaUrlsFromItem(target),
+      ...extractMediaUrlsFromItem(targetKey)
+    ];
+    if (mediaToClean.length > 0) {
+      cleanupUnreferencedMedia(mediaToClean, id).catch(() => {});
     }
   },
 
@@ -1503,11 +1919,14 @@ export const dbService = {
       await waitForFirebaseAuth();
       if (canReadApprovedContentFromFirestore()) {
         try {
-          const snap = await getDocs(collection(firestoreDb, 'sheets'));
+          const isAdminSession = isFirebaseSignedInAdmin();
+          const colRef = collection(firestoreDb, 'sheets');
+          const qRef = isAdminSession ? colRef : query(colRef, where('published', '==', true));
+          const snap = await getDocs(qRef);
           const list: SheetItem[] = [];
           snap.forEach(d => list.push({ id: d.id, ...d.data() } as SheetItem));
           list.sort((a, b) => a.referenceNumber - b.referenceNumber);
-          setStorageItem('sheets', list);
+          if (isAdminSession) setStorageItem('sheets', list);
           let res = list;
           if (courseId) res = res.filter(s => s.courseId === courseId);
           if (sheetType) res = res.filter(s => s.sheetType === sheetType);
@@ -1525,14 +1944,19 @@ export const dbService = {
 
   listenToSheets: (onUpdate: (sheets: SheetItem[]) => void, courseId?: string) => {
     const initial = getStorageItem<SheetItem[]>('sheets', defaultSheets);
-    onUpdate(courseId ? initial.filter(s => s.courseId === courseId) : initial);
+    if (!isFirebaseConfigured || isFirebaseSignedInAdmin()) {
+      onUpdate(courseId ? initial.filter(s => s.courseId === courseId) : initial);
+    }
 
     if (isFirebaseConfigured && canReadApprovedContentFromFirestore()) {
-      const unsub = onSnapshot(collection(firestoreDb, 'sheets'), (snap) => {
+      const isAdminSession = isFirebaseSignedInAdmin();
+      const colRef = collection(firestoreDb, 'sheets');
+      const qRef = isAdminSession ? colRef : query(colRef, where('published', '==', true));
+      const unsub = onSnapshot(qRef, (snap) => {
         const list: SheetItem[] = [];
         snap.forEach(d => list.push({ id: d.id, ...d.data() } as SheetItem));
         list.sort((a, b) => a.referenceNumber - b.referenceNumber);
-        setStorageItem('sheets', list);
+        if (isAdminSession) setStorageItem('sheets', list);
         onUpdate(courseId ? list.filter(s => s.courseId === courseId) : list);
       }, (err) => {
         console.warn("Sheets listener notice:", err);
@@ -1553,54 +1977,166 @@ export const dbService = {
     }
   },
 
+  getAllSheetAnswerKeys: async (): Promise<Record<string, SheetAnswerKeyDoc>> => {
+    const map: Record<string, SheetAnswerKeyDoc> = {};
+    if (isFirebaseConfigured) {
+      await waitForFirebaseAuth();
+      if (isFirebaseSignedInAdmin()) {
+        try {
+          const snap = await getDocs(collection(firestoreDb, 'sheet_answer_keys'));
+          const arr: SheetAnswerKeyDoc[] = [];
+          snap.forEach(d => {
+            const data = { sheetId: d.id, ...d.data() } as SheetAnswerKeyDoc;
+            map[d.id] = data;
+            arr.push(data);
+          });
+          setStorageItem('sheet_answer_keys', arr);
+          return map;
+        } catch (err) {
+          console.warn('getAllSheetAnswerKeys notice:', err);
+        }
+      }
+    }
+    const local = getStorageItem<SheetAnswerKeyDoc[]>('sheet_answer_keys', []);
+    local.forEach(k => { map[k.sheetId] = k; });
+    return map;
+  },
+
+  getSheetAnswerKey: async (sheetId: string): Promise<SheetAnswerKeyDoc | null> => {
+    if (isFirebaseConfigured) {
+      await waitForFirebaseAuth();
+      try {
+        const snap = await getDoc(doc(firestoreDb, 'sheet_answer_keys', sheetId));
+        if (snap.exists()) {
+          return { sheetId: snap.id, ...snap.data() } as SheetAnswerKeyDoc;
+        }
+      } catch (err: any) {
+        if (err?.code === 'permission-denied' || String(err?.message || '').includes('permission')) {
+          throw new Error(formatCloudErrorMessage(err, 'نموذج الإجابة مغلق حالياً من قبل الإدارة.'));
+        }
+        console.warn('getSheetAnswerKey notice:', err);
+      }
+    }
+    const local = getStorageItem<SheetAnswerKeyDoc[]>('sheet_answer_keys', []);
+    return local.find(k => k.sheetId === sheetId) || null;
+  },
+
   addSheet: async (sheet: Omit<SheetItem, 'id' | 'createdAt'>): Promise<SheetItem> => {
     checkAdminWrite('add_sheet', { sheet });
+    await requireCloudWriteAuth(true);
     const newId = 'sheet_' + Date.now();
+    const status = sheet.status || (sheet.published === false ? 'draft' : 'published');
     const item: SheetItem = {
       id: newId,
       ...sheet,
+      status,
+      published: status === 'published',
       createdAt: new Date().toISOString()
     };
-    const current = getStorageItem<SheetItem[]>('sheets', defaultSheets);
-    const updated = [...current.filter(s => s.id !== newId), item];
-    setStorageItem('sheets', updated);
+
+    const publicPayload = stripSheetPublicFields(item);
+    const answerKeyDoc = extractSheetAnswerKeyDoc(newId, item);
 
     if (isFirebaseConfigured) {
       try {
-        await setDoc(doc(firestoreDb, 'sheets', newId), sanitizeForFirestore(item));
+        await setDoc(doc(firestoreDb, 'sheets', newId), sanitizeForFirestore(publicPayload));
+        await setDoc(doc(firestoreDb, 'sheet_answer_keys', newId), sanitizeForFirestore(answerKeyDoc));
       } catch (e) {
-        console.warn("addSheet sync notice:", e);
+        throw new Error(formatCloudErrorMessage(e, 'تعذر حفظ الشيت في قاعدة البيانات السحابية.'));
       }
     }
+
+    const current = getStorageItem<SheetItem[]>('sheets', defaultSheets);
+    setStorageItem('sheets', [...current.filter(s => s.id !== newId), item]);
+    const localKeys = getStorageItem<SheetAnswerKeyDoc[]>('sheet_answer_keys', []);
+    setStorageItem('sheet_answer_keys', [...localKeys.filter(k => k.sheetId !== newId), answerKeyDoc]);
     return item;
   },
 
   updateSheet: async (id: string, patch: Partial<SheetItem>): Promise<void> => {
     checkAdminWrite('update_sheet', { id, patch });
+    await requireCloudWriteAuth(true);
     const current = getStorageItem<SheetItem[]>('sheets', defaultSheets);
-    const updated = current.map(s => s.id === id ? { ...s, ...patch } : s);
-    setStorageItem('sheets', updated);
+    const prev = current.find(s => s.id === id);
+
+    const normalizedPatch: Partial<SheetItem> = { ...patch, updatedAt: new Date().toISOString() };
+    if (normalizedPatch.status !== undefined) {
+      normalizedPatch.published = normalizedPatch.status === 'published';
+    } else if (normalizedPatch.published !== undefined) {
+      normalizedPatch.status = normalizedPatch.published ? 'published' : 'draft';
+    }
+
+    const publicPatch = stripSheetPublicFields(normalizedPatch);
+    const firestorePublicPatch: Record<string, any> = {
+      ...sanitizeForFirestore(publicPatch),
+      modelAnswerUrl: deleteField(),
+      modelAnswerText: deleteField()
+    };
+
+    const localKeys = getStorageItem<SheetAnswerKeyDoc[]>('sheet_answer_keys', []);
+    const existingKey = localKeys.find(k => k.sheetId === id);
+    const nextAnswerKey: SheetAnswerKeyDoc = {
+      sheetId: id,
+      modelAnswerUrl: normalizedPatch.modelAnswerUrl !== undefined ? normalizedPatch.modelAnswerUrl : (existingKey?.modelAnswerUrl ?? prev?.modelAnswerUrl ?? ''),
+      modelAnswerText: normalizedPatch.modelAnswerText !== undefined ? normalizedPatch.modelAnswerText : (existingKey?.modelAnswerText ?? prev?.modelAnswerText ?? ''),
+      showAnswersToStudents: normalizedPatch.showAnswersToStudents !== undefined ? normalizedPatch.showAnswersToStudents : Boolean(existingKey?.showAnswersToStudents ?? prev?.showAnswersToStudents),
+      updatedAt: new Date().toISOString()
+    };
 
     if (isFirebaseConfigured) {
       try {
-        await setDoc(doc(firestoreDb, 'sheets', id), sanitizeForFirestore(patch), { merge: true });
+        await setDoc(doc(firestoreDb, 'sheets', id), firestorePublicPatch, { merge: true });
+        await setDoc(doc(firestoreDb, 'sheet_answer_keys', id), sanitizeForFirestore(nextAnswerKey), { merge: true });
       } catch (e) {
-        console.warn("updateSheet sync notice:", e);
+        throw new Error(formatCloudErrorMessage(e, 'تعذر تحديث الشيت في قاعدة البيانات السحابية.'));
       }
+    }
+
+    const updatedItem = prev ? { ...prev, ...normalizedPatch } : null;
+    setStorageItem('sheets', current.map(s => s.id === id ? { ...s, ...normalizedPatch } : s));
+    setStorageItem('sheet_answer_keys', [...localKeys.filter(k => k.sheetId !== id), nextAnswerKey]);
+
+    if (prev && updatedItem) {
+      const oldUrls = extractMediaUrlsFromItem(prev);
+      const newUrls = new Set(extractMediaUrlsFromItem(updatedItem));
+      const removed = oldUrls.filter(u => !newUrls.has(u));
+      if (removed.length > 0) cleanupUnreferencedMedia(removed, id).catch(() => {});
     }
   },
 
   deleteSheet: async (id: string): Promise<void> => {
     checkAdminWrite('delete_sheet', { id });
+    await requireCloudWriteAuth(true);
     const current = getStorageItem<SheetItem[]>('sheets', defaultSheets);
-    setStorageItem('sheets', current.filter(s => s.id !== id));
+    const localKeys = getStorageItem<SheetAnswerKeyDoc[]>('sheet_answer_keys', []);
+    let target = current.find(s => s.id === id);
+    let targetKey = localKeys.find(k => k.sheetId === id);
 
     if (isFirebaseConfigured) {
       try {
+        if (!target) {
+          const snap = await getDoc(doc(firestoreDb, 'sheets', id));
+          if (snap.exists()) target = { id: snap.id, ...snap.data() } as SheetItem;
+        }
+        if (!targetKey) {
+          const kSnap = await getDoc(doc(firestoreDb, 'sheet_answer_keys', id));
+          if (kSnap.exists()) targetKey = kSnap.data() as SheetAnswerKeyDoc;
+        }
         await deleteDoc(doc(firestoreDb, 'sheets', id));
+        await deleteDoc(doc(firestoreDb, 'sheet_answer_keys', id)).catch(() => {});
       } catch (e) {
-        console.warn("deleteSheet notice:", e);
+        throw new Error(formatCloudErrorMessage(e, 'تعذر حذف الشيت من قاعدة البيانات السحابية.'));
       }
+    }
+
+    setStorageItem('sheets', current.filter(s => s.id !== id));
+    setStorageItem('sheet_answer_keys', localKeys.filter(k => k.sheetId !== id));
+    const mediaToClean = [
+      ...extractMediaUrlsFromItem(target),
+      ...extractMediaUrlsFromItem(targetKey)
+    ];
+    if (mediaToClean.length > 0) {
+      cleanupUnreferencedMedia(mediaToClean, id).catch(() => {});
     }
   },
 
@@ -1655,74 +2191,78 @@ export const dbService = {
 
   addQuestionBankItem: async (item: Omit<QuestionBankItem, 'id' | 'createdAt'>): Promise<QuestionBankItem> => {
     checkAdminWrite('add_question_bank', { item });
+    await requireCloudWriteAuth(true);
     const newId = 'qb_' + Date.now();
     const fullItem: QuestionBankItem = {
       id: newId,
       ...item,
       createdAt: new Date().toISOString()
     };
-    const current = getStorageItem<QuestionBankItem[]>('question_bank', defaultQuestionBank);
-    const updated = [...current.filter(q => q.id !== newId), fullItem];
-    setStorageItem('question_bank', updated);
 
     if (isFirebaseConfigured) {
       try {
         await setDoc(doc(firestoreDb, 'question_bank', newId), sanitizeForFirestore(fullItem));
       } catch (e) {
-        console.warn("addQuestionBankItem sync notice:", e);
+        throw new Error(formatCloudErrorMessage(e, 'تعذر حفظ السؤال في بنك الأسئلة.'));
       }
     }
+
+    const current = getStorageItem<QuestionBankItem[]>('question_bank', defaultQuestionBank);
+    const updated = [...current.filter(q => q.id !== newId), fullItem];
+    setStorageItem('question_bank', updated);
     return fullItem;
   },
 
   updateQuestionBankItem: async (id: string, patch: Partial<QuestionBankItem>): Promise<void> => {
     checkAdminWrite('update_question_bank', { id, patch });
-    const current = getStorageItem<QuestionBankItem[]>('question_bank', defaultQuestionBank);
-    const updated = current.map(q => q.id === id ? { ...q, ...patch } : q);
-    setStorageItem('question_bank', updated);
-
+    await requireCloudWriteAuth(true);
     if (isFirebaseConfigured) {
       try {
         await setDoc(doc(firestoreDb, 'question_bank', id), sanitizeForFirestore(patch), { merge: true });
       } catch (e) {
-        console.warn("updateQuestionBankItem sync notice:", e);
+        throw new Error(formatCloudErrorMessage(e, 'تعذر تحديث السؤال في بنك الأسئلة.'));
       }
     }
+    const current = getStorageItem<QuestionBankItem[]>('question_bank', defaultQuestionBank);
+    const updated = current.map(q => q.id === id ? { ...q, ...patch } : q);
+    setStorageItem('question_bank', updated);
   },
 
   deleteQuestionBankItem: async (id: string): Promise<void> => {
     checkAdminWrite('delete_question_bank', { id });
-    const current = getStorageItem<QuestionBankItem[]>('question_bank', defaultQuestionBank);
-    setStorageItem('question_bank', current.filter(q => q.id !== id));
-
+    await requireCloudWriteAuth(true);
     if (isFirebaseConfigured) {
       try {
         await deleteDoc(doc(firestoreDb, 'question_bank', id));
       } catch (e) {
-        console.warn("deleteQuestionBankItem notice:", e);
+        throw new Error(formatCloudErrorMessage(e, 'تعذر حذف السؤال من بنك الأسئلة.'));
       }
     }
+    const current = getStorageItem<QuestionBankItem[]>('question_bank', defaultQuestionBank);
+    setStorageItem('question_bank', current.filter(q => q.id !== id));
   },
 
   // --- Online Exam Submissions (تسليمات الامتحانات ونتائج الطلاب) ---
   submitExamResult: async (submission: Omit<ExamSubmission, 'id' | 'submittedAt'>): Promise<ExamSubmission> => {
+    await requireCloudWriteAuth(false);
     const newId = 'sub_' + Date.now() + '_' + Math.random().toString(36).substring(2, 6);
     const item: ExamSubmission = {
       id: newId,
       ...submission,
       submittedAt: new Date().toISOString()
     };
-    const current = getStorageItem<ExamSubmission[]>('exam_submissions', defaultExamSubmissions);
-    const updated = [item, ...current.filter(s => s.id !== newId)];
-    setStorageItem('exam_submissions', updated);
 
     if (isFirebaseConfigured) {
       try {
         await setDoc(doc(firestoreDb, 'exam_submissions', newId), sanitizeForFirestore(item));
       } catch (e) {
-        console.warn("submitExamResult sync notice:", e);
+        throw new Error(formatCloudErrorMessage(e, 'تعذر حفظ إجابات الامتحان في قاعدة البيانات السحابية.'));
       }
     }
+
+    const current = getStorageItem<ExamSubmission[]>('exam_submissions', defaultExamSubmissions);
+    const updated = [item, ...current.filter(s => s.id !== newId)];
+    setStorageItem('exam_submissions', updated);
     return item;
   },
 
@@ -1803,42 +2343,45 @@ export const dbService = {
 
   updateExamSubmission: async (id: string, patch: Partial<ExamSubmission>): Promise<void> => {
     checkAdminWrite('update_exam_submission', { id, patch });
-    const current = getStorageItem<ExamSubmission[]>('exam_submissions', defaultExamSubmissions);
-    const updated = current.map(s => s.id === id ? { ...s, ...patch } : s);
-    setStorageItem('exam_submissions', updated);
-
+    await requireCloudWriteAuth(true);
     if (isFirebaseConfigured) {
       try {
         await setDoc(doc(firestoreDb, 'exam_submissions', id), sanitizeForFirestore(patch), { merge: true });
       } catch (e) {
-        console.warn("updateExamSubmission sync notice:", e);
+        throw new Error(formatCloudErrorMessage(e, 'تعذر تحديث درجة الامتحان في قاعدة البيانات.'));
       }
     }
+    const current = getStorageItem<ExamSubmission[]>('exam_submissions', defaultExamSubmissions);
+    const updated = current.map(s => s.id === id ? { ...s, ...patch } : s);
+    setStorageItem('exam_submissions', updated);
   },
 
   // --- Sheet Submissions (تسليمات وتقييم الشيتات الجامعية) ---
   submitSheetSolution: async (submission: Omit<SheetSubmission, 'id' | 'submittedAt'>): Promise<SheetSubmission> => {
+    await requireCloudWriteAuth(false);
     const newId = 'sheetsub_' + Date.now() + '_' + Math.random().toString(36).substring(2, 6);
     const item: SheetSubmission = {
       id: newId,
       ...submission,
       submittedAt: new Date().toISOString()
     };
-    const current = getStorageItem<SheetSubmission[]>('sheet_submissions', []);
-    setStorageItem('sheet_submissions', [item, ...current.filter(s => s.id !== newId)]);
 
     if (isFirebaseConfigured) {
       try {
         await setDoc(doc(firestoreDb, 'sheet_submissions', newId), sanitizeForFirestore(item));
       } catch (e) {
-        console.warn("submitSheetSolution sync notice:", e);
+        throw new Error(formatCloudErrorMessage(e, 'تعذر تسليم حل الشيت إلى قاعدة البيانات السحابية.'));
       }
     }
+
+    const current = getStorageItem<SheetSubmission[]>('sheet_submissions', []);
+    setStorageItem('sheet_submissions', [item, ...current.filter(s => s.id !== newId)]);
     return item;
   },
 
   gradeSheetSubmission: async (id: string, score: number | undefined, feedback: string, gradedBy: string): Promise<void> => {
     checkAdminWrite('grade_sheet_submission', { id, score, feedback });
+    await requireCloudWriteAuth(true);
     const patch: Partial<SheetSubmission> = {
       status: 'graded',
       score,
@@ -1846,16 +2389,17 @@ export const dbService = {
       gradedBy,
       gradedAt: new Date().toISOString()
     };
-    const current = getStorageItem<SheetSubmission[]>('sheet_submissions', []);
-    setStorageItem('sheet_submissions', current.map(s => s.id === id ? { ...s, ...patch } : s));
 
     if (isFirebaseConfigured) {
       try {
         await setDoc(doc(firestoreDb, 'sheet_submissions', id), sanitizeForFirestore(patch), { merge: true });
       } catch (e) {
-        console.warn("gradeSheetSubmission sync notice:", e);
+        throw new Error(formatCloudErrorMessage(e, 'تعذر حفظ تقييم الشيت في قاعدة البيانات السحابية.'));
       }
     }
+
+    const current = getStorageItem<SheetSubmission[]>('sheet_submissions', []);
+    setStorageItem('sheet_submissions', current.map(s => s.id === id ? { ...s, ...patch } : s));
   },
 
   listenToSheetSubmissions: (onUpdate: (subs: SheetSubmission[]) => void, sheetId?: string, studentId?: string) => {
@@ -4423,14 +4967,16 @@ function saveActiveUserSession(user: UserAuth): void {
 export const authService = {
   isRealFirebase: () => isFirebaseConfigured,
 
-  // Authenticate teacher/admin user with Firestore role checking
+  // Authenticate manager/admin user with real Firebase Email/Password or local fallback
   loginAdmin: async (email: string, password: string): Promise<{ success: boolean; admin?: Admin; error?: string }> => {
     const cleanEmail = email.trim().toLowerCase();
-    const targetEmail = 'mhmdbdaltwabalsdawy7@gmail.com';
-    const targetPassword = 'MoJoker77';
+    const cleanPassword = password;
 
-    if (cleanEmail !== targetEmail || password !== targetPassword) {
-      return { success: false, error: 'بيانات تسجيل دخول المشرف غير صحيحة. يرجى التأكد من البريد الإلكتروني وكلمة المرور.' };
+    if (!cleanEmail) {
+      return { success: false, error: 'يرجى إدخال البريد الإلكتروني للمدير.' };
+    }
+    if (!cleanPassword || cleanPassword.length < 6) {
+      return { success: false, error: 'كلمة المرور يجب أن لا تقل عن 6 أحرف.' };
     }
 
     const defaultAdminUser: UserAuth = {
@@ -4446,47 +4992,88 @@ export const authService = {
       createdAt: new Date().toISOString()
     };
 
-    if (isFirebaseConfigured) {
+    if (isFirebaseConfigured && firebaseAuth) {
       try {
         let firebaseUid: string | null = null;
+        let authErrCode = '';
 
         try {
-          const userCredential = await signInWithEmailAndPassword(firebaseAuth, cleanEmail, password);
+          const userCredential = await signInWithEmailAndPassword(firebaseAuth, cleanEmail, cleanPassword);
           firebaseUid = userCredential.user.uid;
         } catch (signInErr: any) {
-          try {
-            const newCredential = await createUserWithEmailAndPassword(firebaseAuth, cleanEmail, password);
-            firebaseUid = newCredential.user.uid;
-          } catch (createErr: any) {
-            console.warn("Firebase Auth creation/signin fallback for admin:", createErr);
+          authErrCode = signInErr?.code || '';
+          if (authErrCode === 'auth/user-not-found' && isAdminEmail(cleanEmail)) {
+            try {
+              const newCredential = await createUserWithEmailAndPassword(firebaseAuth, cleanEmail, cleanPassword);
+              firebaseUid = newCredential.user.uid;
+              authErrCode = '';
+            } catch (createErr: any) {
+              authErrCode = createErr?.code || authErrCode;
+            }
           }
         }
 
-        let userData: UserAuth = { ...defaultAdminUser };
-        if (firebaseUid) {
-          userData.id = firebaseUid;
-          try {
-            const userRef = doc(firestoreDb, 'users', firebaseUid);
-            const snap = await getDoc(userRef);
-            if (snap.exists()) {
-              userData = { id: firebaseUid, ...(snap.data() as UserAuth), role: 'admin' };
-            }
-            await setDoc(userRef, { ...userData, role: 'admin', email: cleanEmail }, { merge: true });
-          } catch (dbErr) {
-            console.error("Firestore sync warning during admin login:", dbErr);
+        if (!firebaseUid) {
+          if (authErrCode === 'auth/operation-not-allowed') {
+            return {
+              success: false,
+              error: 'مزود الدخول بالبريد الإلكتروني وكلمة المرور (Email/Password) غير مفعّل في Firebase Console. قم بتفعيله من Authentication > Sign-in method، أو اضغط على «الدخول بحساب Google (المدير)» بالأسفل.'
+            };
           }
-        } else {
-          // If Firebase auth password mismatch occurred, still allow teacher access
-          try {
-            const q = query(collection(firestoreDb, 'users'), where('email', '==', cleanEmail));
-            const querySnap = await getDocs(q);
-            if (!querySnap.empty) {
-              const docSnap = querySnap.docs[0];
-              userData = { id: docSnap.id, ...(docSnap.data() as UserAuth), role: 'admin' };
-            }
-          } catch (err) {
-            console.error("Query admin error:", err);
+          if (authErrCode === 'auth/too-many-requests') {
+            return {
+              success: false,
+              error: 'تم إيقاف المحاولات مؤقتاً لكثرة المحاولات الخاطئة. حاول بعد قليل أو استخدم «تعيين / نسيت كلمة المرور».'
+            };
           }
+          if (authErrCode === 'auth/invalid-email') {
+            return { success: false, error: 'صيغة البريد الإلكتروني غير صحيحة.' };
+          }
+          if (authErrCode === 'auth/weak-password') {
+            return { success: false, error: 'كلمة المرور ضعيفة، يجب أن لا تقل عن 6 أحرف.' };
+          }
+          return {
+            success: false,
+            error: isAdminEmail(cleanEmail)
+              ? 'كلمة المرور غير صحيحة، أو لم يتم ربط كلمة مرور بهذا البريد بعد (إذا كنت تدخل بـ Google يمكنك الضغط على «تعيين / نسيت كلمة المرور» لإرسال رابط تعيين كلمة المرور لبريدك).'
+              : 'بيانات تسجيل دخول المدير غير صحيحة.'
+          };
+        }
+
+        // Verify admin role authorization
+        let isAuthorizedAdmin = isAdminEmail(cleanEmail);
+        let userData: UserAuth = { ...defaultAdminUser, id: firebaseUid, uid: firebaseUid };
+        try {
+          const userRef = doc(firestoreDb, 'users', firebaseUid);
+          const snap = await getDoc(userRef);
+          if (snap.exists()) {
+            const existing = snap.data() as UserAuth;
+            if (existing.role === 'admin') isAuthorizedAdmin = true;
+            userData = { id: firebaseUid, uid: firebaseUid, ...existing };
+          }
+          if (!isAuthorizedAdmin) {
+            try {
+              const adminSnap = await getDoc(doc(firestoreDb, 'admins', firebaseUid));
+              if (adminSnap.exists()) isAuthorizedAdmin = true;
+            } catch {}
+          }
+        } catch (dbErr) {
+          console.warn("Firestore role verification notice during manager login:", dbErr);
+        }
+
+        if (!isAuthorizedAdmin) {
+          await signOut(firebaseAuth).catch(() => {});
+          recordLoginAttempt(cleanEmail, false);
+          return { success: false, error: 'هذا البريد الإلكتروني غير مصرح له بصلاحيات المدير.' };
+        }
+
+        userData.role = 'admin';
+        userData.status = 'active';
+        userData.isApproved = true;
+        try {
+          await setDoc(doc(firestoreDb, 'users', firebaseUid), { ...userData, role: 'admin', email: cleanEmail, status: 'active', isApproved: true }, { merge: true });
+        } catch (syncErr) {
+          console.warn("Firestore user sync warning during manager login:", syncErr);
         }
 
         recordLoginAttempt(cleanEmail, true);
@@ -4494,13 +5081,21 @@ export const authService = {
         saveActiveUserSession(userData);
         return { success: true, admin: { id: userData.id, name: userData.name || 'Eng/Mohamed abdal tawab', email: userData.email, role: 'super' } };
       } catch (err: any) {
-        // Fallback to local admin
-        recordLoginAttempt(cleanEmail, true);
-        saveActiveUserSession(defaultAdminUser);
-        return { success: true, admin: { id: defaultAdminUser.id, name: defaultAdminUser.name, email: defaultAdminUser.email, role: 'super' } };
+        console.error("Manager login error:", err);
+        return { success: false, error: err?.message || 'تعذر تسجيل الدخول كمدير.' };
       }
     } else {
       // Local Simulation DB Fallback
+      if (!isAdminEmail(cleanEmail)) {
+        return { success: false, error: 'هذا البريد الإلكتروني غير مصرح له بصلاحيات المدير.' };
+      }
+      const savedLocalPass = typeof localStorage !== 'undefined' ? localStorage.getItem('academy_admin_local_pass') : null;
+      if (savedLocalPass && savedLocalPass !== cleanPassword) {
+        return { success: false, error: 'كلمة المرور غير صحيحة.' };
+      }
+      if (!savedLocalPass && typeof localStorage !== 'undefined') {
+        localStorage.setItem('academy_admin_local_pass', cleanPassword);
+      }
       const users = getStorageItem<UserAuth[]>('users', defaultUsers);
       let found = users.find(u => u.email.toLowerCase() === cleanEmail);
       if (!found) {
@@ -4516,6 +5111,31 @@ export const authService = {
       secureLog('auth_success_admin_simulation', { email: cleanEmail });
       saveActiveUserSession(found);
       return { success: true, admin: { id: found.id, name: found.name || 'Eng/Mohamed abdal tawab', email: found.email, role: 'super' } };
+    }
+  },
+
+  sendAdminPasswordReset: async (email: string): Promise<{ success: boolean; error?: string }> => {
+    const cleanEmail = email.trim().toLowerCase();
+    if (!cleanEmail) {
+      return { success: false, error: 'يرجى إدخال البريد الإلكتروني للمدير أولاً.' };
+    }
+    if (!isAdminEmail(cleanEmail)) {
+      return { success: false, error: 'هذا البريد غير مسجل كبريد المدير المصرح له.' };
+    }
+    if (!isFirebaseConfigured || !firebaseAuth) {
+      return { success: false, error: 'خدمة إعادة تعيين كلمة المرور متاحة عند الاتصال بـ Firebase.' };
+    }
+    try {
+      await sendPasswordResetEmail(firebaseAuth, cleanEmail);
+      return { success: true };
+    } catch (err: any) {
+      if (err?.code === 'auth/operation-not-allowed') {
+        return {
+          success: false,
+          error: 'مزود Email/Password غير مفعّل في Firebase Console. يرجى تفعيله من Authentication > Sign-in method أولاً.'
+        };
+      }
+      return { success: false, error: err?.message || 'تعذر إرسال رابط تعيين كلمة المرور.' };
     }
   },
 
@@ -4549,12 +5169,6 @@ export const authService = {
     }
     if (!password) {
       return { success: false, error: 'يرجى إدخال كلمة المرور.' };
-    }
-
-    if (isAdminEmail(normalizedEmail) || normalizedEmail === 'mhmdbdaltwabalsdawy7@gmail.com') {
-      if (password !== 'MoJoker77') {
-        return { success: false, error: 'كلمة المرور الخاصة بحساب الإدارة غير صحيحة.' };
-      }
     }
 
     if (isFirebaseConfigured) {
@@ -4638,52 +5252,34 @@ export const authService = {
       } catch (err: any) {
         console.warn("Firebase Login Notice:", err);
 
-        // Fallback: Check Firestore users collection directly if Auth fails or method is disabled
-        try {
-          const q = query(collection(firestoreDb, 'users'), where('email', '==', normalizedEmail));
-          const querySnap = await getDocs(q);
-          if (!querySnap.empty) {
-            const docSnap = querySnap.docs[0];
-            const userData = docSnap.data() as UserAuth;
-            if (userData.status === 'suspended') {
-              recordLoginAttempt(normalizedEmail, false);
-              return { success: false, accountStatus: 'suspended', error: 'تم إيقاف هذا الحساب من قبل إدارة المنصة الجامعية.' };
+        // Fallback only if Email/Password provider isn't enabled for students; never bypass wrong credentials for admins
+        if (!isAdminEmail(normalizedEmail) && err.code === 'auth/operation-not-allowed') {
+          try {
+            const q = query(collection(firestoreDb, 'users'), where('email', '==', normalizedEmail));
+            const querySnap = await getDocs(q);
+            if (!querySnap.empty) {
+              const docSnap = querySnap.docs[0];
+              const userData = docSnap.data() as UserAuth;
+              if (userData.status === 'suspended') {
+                recordLoginAttempt(normalizedEmail, false);
+                return { success: false, accountStatus: 'suspended', error: 'تم إيقاف هذا الحساب من قبل إدارة المنصة الجامعية.' };
+              }
+              if (userData.status === 'pending' || (userData.role !== 'admin' && userData.isApproved === false && userData.status !== 'active')) {
+                recordLoginAttempt(normalizedEmail, false);
+                return { success: false, accountStatus: 'pending', error: 'حسابك قيد المراجعة حالياً (Pending) من قبل إدارة المنصة الجامعية. يرجى الانتظار حتى يتم قبول الحساب.' };
+              }
+              if (userData.status === 'rejected') {
+                recordLoginAttempt(normalizedEmail, false);
+                return { success: false, accountStatus: 'rejected', error: 'تم رفض طلب تسجيل حسابك (Rejected) من قبل إدارة المنصة الجامعية.' };
+              }
+              const finalUser: UserAuth = { id: docSnap.id, uid: docSnap.id, ...userData };
+              recordLoginAttempt(normalizedEmail, true);
+              saveActiveUserSession(finalUser);
+              return { success: true, user: finalUser };
             }
-            if (userData.status === 'pending' || (userData.role !== 'admin' && userData.isApproved === false && userData.status !== 'active')) {
-              recordLoginAttempt(normalizedEmail, false);
-              return { success: false, accountStatus: 'pending', error: 'حسابك قيد المراجعة حالياً (Pending) من قبل إدارة المنصة الجامعية. يرجى الانتظار حتى يتم قبول الحساب.' };
-            }
-            if (userData.status === 'rejected') {
-              recordLoginAttempt(normalizedEmail, false);
-              return { success: false, accountStatus: 'rejected', error: 'تم رفض طلب تسجيل حسابك (Rejected) من قبل إدارة المنصة الجامعية.' };
-            }
-            const finalUser: UserAuth = { id: docSnap.id, uid: docSnap.id, ...userData };
-            if (isAdminEmail(normalizedEmail)) {
-              finalUser.role = 'admin';
-            }
-            recordLoginAttempt(normalizedEmail, true);
-            saveActiveUserSession(finalUser);
-            return { success: true, user: finalUser };
+          } catch (dbQueryErr) {
+            console.error("Firestore user search error on login fallback:", dbQueryErr);
           }
-        } catch (dbQueryErr) {
-          console.error("Firestore user search error on login fallback:", dbQueryErr);
-        }
-
-        if (isAdminEmail(normalizedEmail)) {
-          const nowIso = new Date().toISOString();
-          const adminUser: UserAuth = {
-            id: 'admin_' + Date.now(),
-            uid: 'admin_' + Date.now(),
-            name: 'Eng/Mohamed abdal tawab',
-            email: normalizedEmail,
-            phone: '201010298878',
-            role: 'admin',
-            status: 'active',
-            createdAt: nowIso
-          };
-          recordLoginAttempt(normalizedEmail, true);
-          saveActiveUserSession(adminUser);
-          return { success: true, user: adminUser };
         }
 
         let errorMsg = 'البريد الإلكتروني أو كلمة المرور غير صحيحة.';
@@ -4767,10 +5363,8 @@ export const authService = {
       return { success: false, error: 'الاسم يجب أن لا يقل عن 3 أحرف.' };
     }
 
-    if (isAdminEmail(normalizedEmail) || normalizedEmail === 'mhmdbdaltwabalsdawy7@gmail.com') {
-      if (password !== 'MoJoker77') {
-        return { success: false, error: 'كلمة المرور الخاصة بحساب المشرف غير صحيحة.' };
-      }
+    if (isAdminEmail(normalizedEmail)) {
+      return { success: false, error: 'هذا البريد الإلكتروني مخصص لحساب المدير. يرجى تسجيل الدخول من تبويب «المدير».' };
     }
 
     const nowIso = new Date().toISOString();

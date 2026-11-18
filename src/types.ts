@@ -84,7 +84,7 @@ export interface LectureItem {
   imageUrls?: string[];
   attachments?: AttachmentFile[];
   lectureDate?: string;
-  status?: 'draft' | 'published';
+  status?: 'draft' | 'published' | 'unpublished';
   published?: boolean;
   createdAt: string;
   updatedAt?: string;
@@ -113,7 +113,7 @@ export interface SectionItem {
   practicalExamples?: SectionExample[];
   attachments?: AttachmentFile[];
   sectionDate?: string;
-  status?: 'draft' | 'published';
+  status?: 'draft' | 'published' | 'unpublished';
   published?: boolean;
   createdAt: string;
   updatedAt?: string;
@@ -160,7 +160,7 @@ export interface ExamItem {
   showResultsImmediately?: boolean;
   showAnswersToStudents?: boolean;
   questions?: OnlineExamQuestion[];
-  status?: 'draft' | 'published';
+  status?: 'draft' | 'published' | 'unpublished';
   published?: boolean;
 }
 
@@ -296,10 +296,40 @@ export interface SheetItem {
   modelAnswerUrl?: string;
   modelAnswerText?: string;
   showAnswersToStudents?: boolean;
-  status?: 'draft' | 'published' | 'closed';
+  status?: 'draft' | 'published' | 'unpublished' | 'closed';
   published?: boolean;
   createdAt: string;
   updatedAt?: string;
+}
+
+export interface SheetAnswerKeyDoc {
+  sheetId: string;
+  modelAnswerUrl?: string;
+  modelAnswerText?: string;
+  showAnswersToStudents: boolean;
+  updatedAt: string;
+}
+
+export interface ExamPrivateKeyEntry {
+  correctAnswerIndex: number;
+  acceptedAnswers?: string[];
+  explanation?: string;
+}
+
+export interface ExamPrivateKeyDoc {
+  examId: string;
+  modelAnswerUrl?: string;
+  answersFileUrl?: string;
+  questionKeys: Record<string, ExamPrivateKeyEntry>;
+  showAnswersToStudents: boolean;
+  showResultsImmediately: boolean;
+  updatedAt: string;
+}
+
+export interface ExamSubmissionReceipt {
+  examId: string;
+  studentId: string;
+  createdAt: string;
 }
 
 export interface SheetSubmission {

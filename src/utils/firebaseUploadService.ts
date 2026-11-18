@@ -21,6 +21,9 @@ export interface UploadControlHolder {
   };
 }
 
+// Session cache: if Firebase Storage bucket is unavailable/unconfigured, subsequent uploads route straight to Firestore chunks
+let storageBucketUnavailableForSession = false;
+
 export function formatBytes(bytes: number): string {
   if (bytes === 0) return '0 B';
   const k = 1024;
@@ -137,16 +140,25 @@ export async function fastCompressImage(file: File, maxDimension = 1200, quality
 }
 
 /**
- * Universal Instant Upload Engine with Multi-Tier Cloud Guarantee
- * 1. Tries Firebase Storage with connection monitor.
- * 2. Seamlessly falls back to High-Speed Public Cloud CDN (tmpfiles.org / litterbox) for direct global HTTPS streaming.
- * 3. Base64 / IndexedDB offline fallback for total data preservation.
+ * Permanent Cloud Upload Engine:
+ * 1. Validates connectivity, authentication, and size bounds (up to 100 MB).
+ * 2. Attempts Firebase Storage with a fast 8s connection probe (and caches session unavailability so retries are instant).
+ * 3. Automatically persists up to 100 MB via permanent Firestore Cloud Chunks (`firestore://{id}` in `cloud_media`).
+ * 4. Throws clear localized errors if offline, unauthenticated, > 100 MB, or permission-denied.
  */
 export async function uploadFileToFirebaseStorage(options: UploadOptions): Promise<string> {
   const { file, folder = 'uploads', onProgress, cancelControlHolder } = options;
 
   if (!file || typeof file !== 'object') {
     throw new Error('لم يتم اختيار أي ملف للرفع.');
+  }
+
+  if (typeof navigator !== 'undefined' && navigator.onLine === false) {
+    throw new Error('لا يوجد اتصال بالإنترنت. يرجى التحقق من الشبكة ثم إعادة المحاولة.');
+  }
+
+  if (firebaseAuth && !firebaseAuth.currentUser) {
+    throw new Error('يجب تسجيل الدخول بحساب معتمد (المزامنة السحابية) قبل رفع الملفات.');
   }
 
   let uploadTargetFile = file;
@@ -163,6 +175,12 @@ export async function uploadFileToFirebaseStorage(options: UploadOptions): Promi
     throw new Error('حجم الملف المحدد غير صالح (0 بايت).');
   }
 
+  const MAX_CLOUD_BYTES = 100 * 1024 * 1024; // 100 MB (supported across Storage & Firestore Cloud Chunks)
+
+  if (fileSize > MAX_CLOUD_BYTES) {
+    throw new Error(`حجم الملف (${formatBytes(fileSize)}) يتجاوز الحد الأقصى المسموح به (100 MB).`);
+  }
+
   const originalName = uploadTargetFile.name || file.name || 'file';
   const safeName = originalName.replace(/[^a-zA-Z0-9._-]/g, '_');
   const uniqueId = 'up_' + Date.now() + '_' + Math.random().toString(36).substring(2, 7);
@@ -170,7 +188,6 @@ export async function uploadFileToFirebaseStorage(options: UploadOptions): Promi
 
   let isCanceledByUser = false;
 
-  // Immediate 1% progress trigger
   if (onProgress) {
     onProgress({
       progress: 1,
@@ -183,477 +200,233 @@ export async function uploadFileToFirebaseStorage(options: UploadOptions): Promi
     });
   }
 
-  // Backup in parallel to IndexedDB for safety
-  const dbSavePromise = saveVideoToIndexedDB(uploadTargetFile, uniqueId).catch(() => `indexeddb://${uniqueId}`);
+  let storageFailureReason = '';
 
-  // --- HELPER 1: Public Cloud Direct Upload (tmpfiles.org) with XHR Progress ---
-  const uploadViaTmpFiles = (): Promise<string> => {
-    return new Promise((resolve, reject) => {
-      const xhr = new XMLHttpRequest();
-      const formData = new FormData();
-      formData.append('file', uploadTargetFile, safeName);
+  // --- Step 1: Firebase Cloud Storage (skipped immediately if bucket failed probe in this session) ---
+  if (app && firebaseAppletConfig?.storageBucket && !storageBucketUnavailableForSession) {
+    try {
+      const { getStorage, ref, uploadBytesResumable, getDownloadURL } = await import('firebase/storage');
+      const storageInstance = getStorage(app);
+      const fileRef = ref(storageInstance, storagePath);
+      const ext = (uploadTargetFile.name.split('.').pop() || '').toLowerCase();
+      const mimeByExt: Record<string, string> = {
+        pdf: 'application/pdf',
+        doc: 'application/msword',
+        docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        ppt: 'application/vnd.ms-powerpoint',
+        pptx: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+        zip: 'application/zip',
+        rar: 'application/vnd.rar',
+        py: 'text/x-python',
+        js: 'application/javascript',
+        ts: 'text/typescript',
+        c: 'text/x-c',
+        cpp: 'text/x-c++src',
+        html: 'text/html',
+        css: 'text/css',
+        sql: 'application/sql',
+        json: 'application/json',
+        txt: 'text/plain',
+        png: 'image/png',
+        jpg: 'image/jpeg',
+        jpeg: 'image/jpeg',
+        webp: 'image/webp',
+        mp4: 'video/mp4',
+        webm: 'video/webm',
+        mov: 'video/quicktime'
+      };
+      const contentType = uploadTargetFile.type || mimeByExt[ext] || 'application/octet-stream';
+      const metadata = {
+        contentType,
+        cacheControl: 'public,max-age=31536000'
+      };
 
-      if (cancelControlHolder) {
-        cancelControlHolder.current = {
-          cancel: () => {
-            isCanceledByUser = true;
-            try { xhr.abort(); } catch (e) {}
+      const firebaseUploadPromise = new Promise<string>((resolve, reject) => {
+        let isSettled = false;
+        let lastBytes = 0;
+        let lastTime = Date.now();
+        let hasRealTransferStarted = false;
+
+        const uploadTask = uploadBytesResumable(fileRef, uploadTargetFile, metadata);
+
+        // Fast 8s connection probe so users fail over swiftly if Storage bucket is unprovisioned
+        const probeWatchdog = setTimeout(() => {
+          if (!hasRealTransferStarted && !isSettled) {
+            isSettled = true;
+            storageBucketUnavailableForSession = true;
+            try { uploadTask.cancel(); } catch {}
+            reject(new Error('تعذر بدء الاتصال بـ Firebase Storage خلال 8 ثوانٍ.'));
           }
+        }, 8000);
+
+        let stallTimer: ReturnType<typeof setTimeout> | null = null;
+        const resetStallTimer = () => {
+          if (stallTimer) clearTimeout(stallTimer);
+          stallTimer = setTimeout(() => {
+            if (!isSettled) {
+              isSettled = true;
+              try { uploadTask.cancel(); } catch {}
+              reject(new Error('توقف اتصال الرفع عبر Firebase Storage لفترة طويلة.'));
+            }
+          }, 25000);
         };
-      }
 
-      const startTime = Date.now();
-      let lastTime = startTime;
-      let lastBytes = 0;
+        if (cancelControlHolder) {
+          cancelControlHolder.current = {
+            cancel: () => {
+              isCanceledByUser = true;
+              clearTimeout(probeWatchdog);
+              if (stallTimer) clearTimeout(stallTimer);
+              try { uploadTask.cancel(); } catch {}
+            },
+            pause: () => { try { uploadTask.pause(); } catch {} },
+            resume: () => { try { uploadTask.resume(); } catch {} }
+          };
+        }
 
-      xhr.upload.onprogress = (event) => {
-        if (isCanceledByUser) return;
-        if (event.lengthComputable) {
-          const currentTime = Date.now();
-          const timeDiff = (currentTime - lastTime) / 1000;
-          const bytesTransferred = event.loaded;
-          const totalBytes = event.total || fileSize;
-          const progressPercent = Math.min(99, Math.round((bytesTransferred / totalBytes) * 100));
+        uploadTask.on(
+          'state_changed',
+          (snapshot) => {
+            if (isCanceledByUser || isSettled) return;
 
-          let speedStr = 'جاري الرفع السحابي...';
-          let remainingStr = 'حساب...';
+            const bytesTransferred = snapshot.bytesTransferred;
+            const totalBytes = snapshot.totalBytes || fileSize;
 
-          if (timeDiff >= 0.1 || bytesTransferred === totalBytes) {
+            if (bytesTransferred > 0) {
+              hasRealTransferStarted = true;
+              clearTimeout(probeWatchdog);
+              resetStallTimer();
+            }
+
+            const currentTime = Date.now();
+            const timeDiff = (currentTime - lastTime) / 1000;
             const bytesDiff = bytesTransferred - lastBytes;
-            const currentSpeed = timeDiff > 0 ? bytesDiff / timeDiff : 0;
-            const remainingBytes = totalBytes - bytesTransferred;
+            const currentSpeed = timeDiff > 0.1 ? bytesDiff / timeDiff : 0;
+            const remainingBytes = Math.max(0, totalBytes - bytesTransferred);
             const remainingSeconds = currentSpeed > 0 ? Math.ceil(remainingBytes / currentSpeed) : 0;
 
-            speedStr = formatSpeed(currentSpeed);
-            remainingStr = formatTime(remainingSeconds);
-            lastTime = currentTime;
-            lastBytes = bytesTransferred;
-          }
-
-          if (onProgress) {
-            onProgress({
-              progress: Math.max(2, progressPercent),
-              bytesTransferred,
-              totalBytes,
-              speed: speedStr,
-              remainingTime: remainingStr,
-              formattedSize: `${formatBytes(bytesTransferred)} / ${formatBytes(totalBytes)}`,
-              state: 'running'
-            });
-          }
-        }
-      };
-
-      xhr.onload = () => {
-        if (xhr.status >= 200 && xhr.status < 300) {
-          try {
-            const res = JSON.parse(xhr.responseText);
-            if (res && res.status === 'success' && res.data && res.data.url) {
-              const rawUrl: string = res.data.url;
-              // Convert https://tmpfiles.org/12345/file.mp4 to direct streaming link https://tmpfiles.org/dl/12345/file.mp4
-              const directStreamUrl = rawUrl.includes('/dl/')
-                ? rawUrl
-                : rawUrl.replace('tmpfiles.org/', 'tmpfiles.org/dl/');
-
-              console.log('[UploadService] Cloud upload successful via tmpfiles:', directStreamUrl);
-              resolve(directStreamUrl);
-              return;
+            if (timeDiff > 0.1) {
+              lastTime = currentTime;
+              lastBytes = bytesTransferred;
             }
-          } catch (jsonErr) {
-            console.warn('[UploadService] tmpfiles JSON parse failed:', jsonErr);
-          }
-        }
-        reject(new Error(`Tmpfiles upload failed with status ${xhr.status}`));
-      };
 
-      xhr.onerror = () => reject(new Error('خطأ في الاتصال أثناء الرفع إلى السحابة.'));
-      xhr.onabort = () => {
-        const cancelErr: any = new Error('تم إلغاء عملية الرفع من قبل المستخدم.');
-        cancelErr.isCanceled = true;
-        reject(cancelErr);
-      };
+            const progressPercent = totalBytes > 0 ? (bytesTransferred / totalBytes) * 100 : 0;
 
-      xhr.open('POST', 'https://tmpfiles.org/api/v1/upload', true);
-      xhr.send(formData);
-    });
-  };
-
-  // --- HELPER 2: Secondary Public Cloud CDN (litterbox & catbox) with XHR Progress ---
-  const uploadViaLitterbox = (): Promise<string> => {
-    return new Promise((resolve, reject) => {
-      const xhr = new XMLHttpRequest();
-      const formData = new FormData();
-      formData.append('reqtype', 'fileupload');
-      formData.append('time', '72h');
-      formData.append('fileToUpload', uploadTargetFile, safeName);
-
-      if (cancelControlHolder) {
-        cancelControlHolder.current = {
-          cancel: () => {
-            isCanceledByUser = true;
-            try { xhr.abort(); } catch (e) {}
-          }
-        };
-      }
-
-      xhr.upload.onprogress = (event) => {
-        if (isCanceledByUser) return;
-        if (event.lengthComputable && onProgress) {
-          const progressPercent = Math.min(99, Math.round((event.loaded / event.total) * 100));
-          onProgress({
-            progress: Math.max(2, progressPercent),
-            bytesTransferred: event.loaded,
-            totalBytes: event.total,
-            speed: 'جاري الرفع السحابي...',
-            remainingTime: '...',
-            formattedSize: `${formatBytes(event.loaded)} / ${formatBytes(event.total)}`,
-            state: 'running'
-          });
-        }
-      };
-
-      xhr.onload = () => {
-        if (xhr.status >= 200 && xhr.status < 300) {
-          const directUrl = xhr.responseText.trim();
-          if (directUrl.startsWith('http://') || directUrl.startsWith('https://')) {
-            console.log('[UploadService] Cloud upload successful via Litterbox:', directUrl);
-            resolve(directUrl.replace('http://', 'https://'));
-            return;
-          }
-        }
-        reject(new Error(`Litterbox upload failed with status ${xhr.status}`));
-      };
-
-      xhr.onerror = () => reject(new Error('خطأ في الاتصال أثناء الرفع إلى Litterbox.'));
-      xhr.onabort = () => {
-        const cancelErr: any = new Error('تم إلغاء عملية الرفع من قبل المستخدم.');
-        cancelErr.isCanceled = true;
-        reject(cancelErr);
-      };
-
-      xhr.open('POST', 'https://litterbox.catbox.moe/resources/internals/api.php', true);
-      xhr.send(formData);
-    });
-  };
-
-  // --- HELPER 3: Pixeldrain Direct Cloud Upload ---
-  const uploadViaPixeldrain = (): Promise<string> => {
-    return new Promise((resolve, reject) => {
-      const xhr = new XMLHttpRequest();
-      const formData = new FormData();
-      formData.append('file', uploadTargetFile, safeName);
-
-      if (cancelControlHolder) {
-        cancelControlHolder.current = {
-          cancel: () => {
-            isCanceledByUser = true;
-            try { xhr.abort(); } catch (e) {}
-          }
-        };
-      }
-
-      xhr.upload.onprogress = (event) => {
-        if (isCanceledByUser) return;
-        if (event.lengthComputable && onProgress) {
-          const progressPercent = Math.min(99, Math.round((event.loaded / event.total) * 100));
-          onProgress({
-            progress: Math.max(2, progressPercent),
-            bytesTransferred: event.loaded,
-            totalBytes: event.total,
-            speed: 'جاري الرفع...',
-            remainingTime: '...',
-            formattedSize: `${formatBytes(event.loaded)} / ${formatBytes(event.total)}`,
-            state: 'running'
-          });
-        }
-      };
-
-      xhr.onload = () => {
-        if (xhr.status >= 200 && xhr.status < 300) {
-          try {
-            const data = JSON.parse(xhr.responseText);
-            if (data && data.id) {
-              const directUrl = `https://pixeldrain.com/api/file/${data.id}`;
-              console.log('[UploadService] Cloud upload successful via Pixeldrain:', directUrl);
-              resolve(directUrl);
-              return;
+            if (onProgress) {
+              onProgress({
+                progress: Math.max(1, Math.min(99, Math.round(progressPercent))),
+                bytesTransferred,
+                totalBytes,
+                speed: formatSpeed(currentSpeed),
+                remainingTime: formatTime(remainingSeconds),
+                formattedSize: `${formatBytes(bytesTransferred)} / ${formatBytes(totalBytes)}`,
+                state: 'running'
+              });
             }
-          } catch (e) {}
-        }
-        reject(new Error(`Pixeldrain failed with status ${xhr.status}`));
-      };
-
-      xhr.onerror = () => reject(new Error('Pixeldrain network error'));
-      xhr.open('POST', 'https://pixeldrain.com/api/file', true);
-      xhr.send(formData);
-    });
-  };
-
-  // --- Step 1: Try Firebase Cloud Storage with resilient progress watchdog ---
-  try {
-    if (firebaseAuth && !firebaseAuth.currentUser) {
-      try {
-        const { signInAnonymously } = await import('firebase/auth');
-        await signInAnonymously(firebaseAuth);
-      } catch (authErr) {
-        console.log('[UploadService] Anonymous auth notice:', authErr);
-      }
-    }
-
-    const { getStorage, ref, uploadBytesResumable, getDownloadURL } = await import('firebase/storage');
-    const storageInstance = getStorage(app);
-    const fileRef = ref(storageInstance, storagePath);
-    const ext = (uploadTargetFile.name.split('.').pop() || '').toLowerCase();
-    const mimeByExt: Record<string, string> = {
-      pdf: 'application/pdf',
-      doc: 'application/msword',
-      docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-      ppt: 'application/vnd.ms-powerpoint',
-      pptx: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
-      zip: 'application/zip',
-      rar: 'application/vnd.rar',
-      py: 'text/x-python',
-      js: 'application/javascript',
-      c: 'text/x-c',
-      cpp: 'text/x-c++src',
-      html: 'text/html',
-      css: 'text/css',
-      sql: 'application/sql',
-      json: 'application/json',
-      txt: 'text/plain',
-      png: 'image/png',
-      jpg: 'image/jpeg',
-      jpeg: 'image/jpeg',
-      webp: 'image/webp',
-      mp4: 'video/mp4'
-    };
-    const contentType = uploadTargetFile.type || mimeByExt[ext] || 'application/octet-stream';
-    const metadata = {
-      contentType,
-      cacheControl: 'public,max-age=31536000'
-    };
-
-    const firebaseUploadPromise = new Promise<string>((resolve, reject) => {
-      let isSettled = false;
-      let lastBytes = 0;
-      let lastTime = Date.now();
-      let hasRealTransferStarted = false;
-
-      // Smart Watchdog: Fails over to high-speed cloud CDN if 0 bytes transfer after 4 seconds
-      const probeWatchdog = setTimeout(() => {
-        if (!hasRealTransferStarted && !isSettled) {
-          console.warn('[UploadService] Firebase Storage transfer did not start in 4s. Switching to High-Speed Cloud CDN...');
-          isSettled = true;
-          try { uploadTask.cancel(); } catch (e) {}
-          reject(new Error('Firebase Storage probe timeout'));
-        }
-      }, 4000);
-
-      // Stalled transfer watchdog (if progress freezes for more than 10s)
-      let stallTimer: any = null;
-      const resetStallTimer = () => {
-        if (stallTimer) clearTimeout(stallTimer);
-        stallTimer = setTimeout(() => {
-          if (!isSettled) {
-            console.warn('[UploadService] Firebase Storage upload stalled. Switching to Cloud CDN...');
-            isSettled = true;
-            try { uploadTask.cancel(); } catch (e) {}
-            reject(new Error('Firebase Storage stalled'));
-          }
-        }, 10000);
-      };
-
-      const uploadTask = uploadBytesResumable(fileRef, uploadTargetFile, metadata);
-
-      if (cancelControlHolder) {
-        cancelControlHolder.current = {
-          cancel: () => {
-            isCanceledByUser = true;
+          },
+          (error: any) => {
             clearTimeout(probeWatchdog);
             if (stallTimer) clearTimeout(stallTimer);
-            try { uploadTask.cancel(); } catch (e) {}
+            if (!isSettled) {
+              isSettled = true;
+              const code = String(error?.code || '');
+              if (
+                code === 'storage/bucket-not-found' ||
+                code === 'storage/project-not-found' ||
+                code === 'storage/retry-limit-exceeded' ||
+                code === 'storage/unauthorized'
+              ) {
+                storageBucketUnavailableForSession = true;
+              }
+              reject(error);
+            }
           },
-          pause: () => { try { uploadTask.pause(); } catch (e) {} },
-          resume: () => { try { uploadTask.resume(); } catch (e) {} }
-        };
-      }
-
-      uploadTask.on(
-        'state_changed',
-        (snapshot) => {
-          if (isCanceledByUser || isSettled) return;
-
-          const bytesTransferred = snapshot.bytesTransferred;
-          const totalBytes = snapshot.totalBytes || fileSize;
-
-          if (bytesTransferred > 0) {
-            hasRealTransferStarted = true;
+          async () => {
             clearTimeout(probeWatchdog);
-            resetStallTimer();
+            if (stallTimer) clearTimeout(stallTimer);
+            if (isSettled) return;
+            isSettled = true;
+            try {
+              const url = await getDownloadURL(uploadTask.snapshot.ref);
+              if (url && url.startsWith('http')) {
+                resolve(url);
+              } else {
+                reject(new Error('رابط التحميل المسترجع من Firebase غير صالح.'));
+              }
+            } catch (err) {
+              reject(err);
+            }
           }
+        );
+      });
 
-          const currentTime = Date.now();
-          const timeDiff = (currentTime - lastTime) / 1000;
-          const bytesDiff = bytesTransferred - lastBytes;
-          const currentSpeed = timeDiff > 0.1 ? bytesDiff / timeDiff : 0;
-          const remainingBytes = Math.max(0, totalBytes - bytesTransferred);
-          const remainingSeconds = currentSpeed > 0 ? Math.ceil(remainingBytes / currentSpeed) : 0;
+      const resultUrl = await firebaseUploadPromise;
+      try {
+        setVideoMemoryCache(resultUrl, uploadTargetFile);
+        await saveVideoToIndexedDB(uploadTargetFile, resultUrl);
+      } catch {}
 
-          if (timeDiff > 0.1) {
-            lastTime = currentTime;
-            lastBytes = bytesTransferred;
-          }
+      if (onProgress) {
+        onProgress({
+          progress: 100,
+          bytesTransferred: fileSize,
+          totalBytes: fileSize,
+          speed: 'مكتمل سحابياً',
+          remainingTime: '0ث',
+          formattedSize: `${formatBytes(fileSize)} / ${formatBytes(fileSize)}`,
+          state: 'success'
+        });
+      }
+      return resultUrl;
+    } catch (firebaseErr: any) {
+      if (firebaseErr?.isCanceled || firebaseErr?.code === 'storage/canceled' || isCanceledByUser) {
+        const cancelErr: any = new Error('تم إلغاء عملية الرفع من قبل المستخدم.');
+        cancelErr.isCanceled = true;
+        throw cancelErr;
+      }
+      storageFailureReason = firebaseErr?.message || String(firebaseErr);
+      console.warn('[UploadService] Firebase Storage unavailable, routing to permanent Firestore Cloud Chunks:', storageFailureReason);
+    }
+  }
 
-          const progressPercent = totalBytes > 0 ? (bytesTransferred / totalBytes) * 100 : 0;
+  // --- Step 2: Permanent Firestore Multi-Chunk Persistence (up to 100 MB) ---
+  if (cancelControlHolder) {
+    cancelControlHolder.current = {
+      cancel: () => {
+        isCanceledByUser = true;
+      }
+    };
+  }
 
-          if (onProgress) {
+  try {
+    const firestoreUrl = await saveFileToFirestoreChunks(
+      uploadTargetFile,
+      uniqueId,
+      undefined,
+      {
+        shouldCancel: () => isCanceledByUser,
+        onStats: ({ percent, bytesTransferred, totalBytes, bytesPerSec, remainingSeconds }) => {
+          if (onProgress && !isCanceledByUser) {
             onProgress({
-              progress: Math.max(1, Math.min(99, Math.round(progressPercent))),
+              progress: percent,
               bytesTransferred,
               totalBytes,
-              speed: formatSpeed(currentSpeed),
+              speed: formatSpeed(bytesPerSec),
               remainingTime: formatTime(remainingSeconds),
               formattedSize: `${formatBytes(bytesTransferred)} / ${formatBytes(totalBytes)}`,
               state: 'running'
             });
           }
-        },
-        (error: any) => {
-          clearTimeout(probeWatchdog);
-          if (stallTimer) clearTimeout(stallTimer);
-          if (!isSettled) {
-            isSettled = true;
-            console.warn('[UploadService] Firebase Storage upload task error:', error);
-            reject(error);
-          }
-        },
-        async () => {
-          clearTimeout(probeWatchdog);
-          if (stallTimer) clearTimeout(stallTimer);
-          if (isSettled) return;
-          isSettled = true;
-          try {
-            const url = await getDownloadURL(uploadTask.snapshot.ref);
-            if (url && url.startsWith('http')) {
-              resolve(url);
-            } else {
-              reject(new Error('Invalid URL from Firebase'));
-            }
-          } catch (err) {
-            reject(err);
-          }
         }
-      );
-    });
+      }
+    );
 
-    const resultUrl = await firebaseUploadPromise;
-    console.log('[UploadService] Firebase Storage upload succeeded:', resultUrl);
-
-    try {
-      setVideoMemoryCache(resultUrl, uploadTargetFile);
-      setVideoMemoryCache(uniqueId, uploadTargetFile);
-      await saveVideoToIndexedDB(uploadTargetFile, uniqueId);
-      await saveVideoToIndexedDB(uploadTargetFile, resultUrl);
-    } catch (e) {}
-
-    if (onProgress) {
-      onProgress({
-        progress: 100,
-        bytesTransferred: fileSize,
-        totalBytes: fileSize,
-        speed: 'مكتمل سحابياً',
-        remainingTime: '0ث',
-        formattedSize: `${formatBytes(fileSize)} / ${formatBytes(fileSize)}`,
-        state: 'success'
-      });
-    }
-    return resultUrl;
-  } catch (firebaseErr: any) {
-    if (firebaseErr?.isCanceled || isCanceledByUser) {
+    if (isCanceledByUser) {
       const cancelErr: any = new Error('تم إلغاء عملية الرفع من قبل المستخدم.');
       cancelErr.isCanceled = true;
       throw cancelErr;
     }
-    console.log('[UploadService] Switching to High-Speed Cloud Direct Upload...');
-  }
 
-  // --- Step 2: High-Speed Direct Cloud Upload via tmpfiles.org ---
-  try {
-    const cloudUrl = await uploadViaTmpFiles();
-    if (onProgress) {
-      onProgress({
-        progress: 100,
-        bytesTransferred: fileSize,
-        totalBytes: fileSize,
-        speed: 'مكتمل بنجاح',
-        remainingTime: '0ث',
-        formattedSize: `${formatBytes(fileSize)} / ${formatBytes(fileSize)}`,
-        state: 'success'
-      });
-    }
-    return cloudUrl;
-  } catch (tmpErr: any) {
-    if (tmpErr?.isCanceled || isCanceledByUser) throw tmpErr;
-    console.warn('[UploadService] tmpfiles failed, trying secondary cloud provider (Litterbox)...', tmpErr);
-  }
-
-  // --- Step 3: Secondary Cloud Provider via Litterbox ---
-  try {
-    const litterboxUrl = await uploadViaLitterbox();
-    if (onProgress) {
-      onProgress({
-        progress: 100,
-        bytesTransferred: fileSize,
-        totalBytes: fileSize,
-        speed: 'مكتمل بنجاح',
-        remainingTime: '0ث',
-        formattedSize: `${formatBytes(fileSize)} / ${formatBytes(fileSize)}`,
-        state: 'success'
-      });
-    }
-    return litterboxUrl;
-  } catch (litterErr: any) {
-    if (litterErr?.isCanceled || isCanceledByUser) throw litterErr;
-    console.warn('[UploadService] Litterbox failed, trying Pixeldrain...', litterErr);
-  }
-
-  // --- Step 4: Tertiary Cloud Provider via Pixeldrain ---
-  try {
-    const pixelUrl = await uploadViaPixeldrain();
-    if (onProgress) {
-      onProgress({
-        progress: 100,
-        bytesTransferred: fileSize,
-        totalBytes: fileSize,
-        speed: 'مكتمل بنجاح',
-        remainingTime: '0ث',
-        formattedSize: `${formatBytes(fileSize)} / ${formatBytes(fileSize)}`,
-        state: 'success'
-      });
-    }
-    return pixelUrl;
-  } catch (pixelErr: any) {
-    if (pixelErr?.isCanceled || isCanceledByUser) throw pixelErr;
-    console.warn('[UploadService] Pixeldrain failed, saving directly to Firestore Database Cloud Chunks...', pixelErr);
-  }
-
-  // --- Step 5: Firestore Database Multi-Chunk Cloud Storage (100% Global Sync on GitHub) ---
-  try {
-    const firestoreUrl = await saveFileToFirestoreChunks(uploadTargetFile, uniqueId, (percent) => {
-      if (onProgress) {
-        onProgress({
-          progress: percent,
-          bytesTransferred: Math.round((percent / 100) * fileSize),
-          totalBytes: fileSize,
-          speed: 'جاري الحفظ السحابي في قاعدة البيانات...',
-          remainingTime: '...',
-          formattedSize: `${formatBytes(Math.round((percent / 100) * fileSize))} / ${formatBytes(fileSize)}`,
-          state: 'running'
-        });
-      }
-    });
-
-    console.log('[UploadService] Upload successful via Firestore Cloud Chunks:', firestoreUrl);
     if (onProgress) {
       onProgress({
         progress: 100,
@@ -666,41 +439,23 @@ export async function uploadFileToFirebaseStorage(options: UploadOptions): Promi
       });
     }
     return firestoreUrl;
-  } catch (firestoreChunkErr: any) {
-    console.warn('[UploadService] Firestore chunk storage notice:', firestoreChunkErr);
+  } catch (firestoreErr: any) {
+    if (firestoreErr?.isCanceled || isCanceledByUser) throw firestoreErr;
+    const errMsg = firestoreErr?.message || '';
+    if (onProgress) {
+      onProgress({
+        progress: 0,
+        bytesTransferred: 0,
+        totalBytes: fileSize,
+        speed: 'فشل الرفع السحابي',
+        remainingTime: '-',
+        formattedSize: `0 / ${formatBytes(fileSize)}`,
+        state: 'error'
+      });
+    }
+    if (errMsg.includes('permission') || errMsg.includes('Missing or insufficient permissions')) {
+      throw new Error('تعذر حفظ الملف لعدم كفاية الصلاحيات السحابية (Missing permissions). تأكد من تسجيل الدخول بحساب معتمد.');
+    }
+    throw new Error(`فشل رفع وحفظ الملف سحابياً: ${errMsg || storageFailureReason || 'خطأ في الاتصال بقاعدة البيانات'}`);
   }
-
-  // --- Step 6: Data URL fallback for images/documents or small media (< 10MB) ---
-  if (fileSize < 10 * 1024 * 1024) {
-    try {
-      const dataUrl = await readFileAsDataUrl(uploadTargetFile);
-      if (onProgress) {
-        onProgress({
-          progress: 100,
-          bytesTransferred: fileSize,
-          totalBytes: fileSize,
-          speed: 'مكتمل',
-          remainingTime: '0ث',
-          formattedSize: `${formatBytes(fileSize)} / ${formatBytes(fileSize)}`,
-          state: 'success'
-        });
-      }
-      return dataUrl;
-    } catch (e) {}
-  }
-
-  // --- Step 7: IndexedDB Local Reference ---
-  const dbUrl = await dbSavePromise;
-  if (onProgress) {
-    onProgress({
-      progress: 100,
-      bytesTransferred: fileSize,
-      totalBytes: fileSize,
-      speed: 'مكتمل',
-      remainingTime: '0ث',
-      formattedSize: `${formatBytes(fileSize)} / ${formatBytes(fileSize)}`,
-      state: 'success'
-    });
-  }
-  return dbUrl || `indexeddb://${uniqueId}`;
 }

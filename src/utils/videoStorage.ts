@@ -112,6 +112,29 @@ export async function getVideoFromIndexedDB(key: string): Promise<Blob | null> {
   }
 }
 
+export function emitAppToast(message: string, type: 'error' | 'info' | 'success' = 'info'): void {
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new CustomEvent('app-toast', { detail: { message, type } }));
+  }
+}
+
+export async function deleteVideoFromIndexedDB(key: string): Promise<void> {
+  if (!key) return;
+  const cleanKey = key.replace('indexeddb://', '').replace('firestore://', '');
+  memoryBlobCache.delete(cleanKey);
+  memoryBlobCache.delete(key);
+  try {
+    const db = await openVideoDB();
+    await new Promise<void>((resolve) => {
+      const tx = db.transaction(STORE_NAME, 'readwrite');
+      const store = tx.objectStore(STORE_NAME);
+      const req = store.delete(cleanKey);
+      req.onsuccess = () => resolve();
+      req.onerror = () => resolve();
+    });
+  } catch {}
+}
+
 export const getFileFromIndexedDB = getVideoFromIndexedDB;
 
 import { getFileFromFirestoreChunks } from './firestoreMediaStorage';
@@ -121,7 +144,7 @@ import { getFileFromFirestoreChunks } from './firestoreMediaStorage';
  */
 export async function triggerFileDownload(url: string | undefined | null, fileName?: string): Promise<void> {
   if (!url || typeof url !== 'string' || url.trim() === '' || url === '#') {
-    alert('رابط الملف غير متاح حالياً.');
+    emitAppToast('رابط الملف غير متاح حالياً.', 'error');
     return;
   }
 
@@ -134,8 +157,8 @@ export async function triggerFileDownload(url: string | undefined | null, fileNa
     try {
       const blob = await getFileFromFirestoreChunks(key);
       if (blob) {
-        const mimeType = (blob.type && blob.type.trim() !== '') 
-          ? blob.type 
+        const mimeType = (blob.type && blob.type.trim() !== '')
+          ? blob.type
           : (safeName.toLowerCase().endsWith('.pdf') ? 'application/pdf' : 'application/octet-stream');
         const safeBlob = new Blob([blob], { type: mimeType });
         const objectUrl = URL.createObjectURL(safeBlob);
@@ -148,12 +171,12 @@ export async function triggerFileDownload(url: string | undefined | null, fileNa
         setTimeout(() => URL.revokeObjectURL(objectUrl), 10000);
         return;
       } else {
-        alert('تعذر تحميل الملف من السحابة.');
+        emitAppToast('تعذر تحميل الملف من التخزين السحابي.', 'error');
         return;
       }
     } catch (err) {
       console.error('Error downloading Firestore chunked file:', err);
-      alert('تعذر فتح الملف السحابي.');
+      emitAppToast('تعذر فتح الملف السحابي.', 'error');
       return;
     }
   }
@@ -164,8 +187,8 @@ export async function triggerFileDownload(url: string | undefined | null, fileNa
     try {
       const blob = await getVideoFromIndexedDB(key);
       if (blob) {
-        const mimeType = (blob.type && blob.type.trim() !== '') 
-          ? blob.type 
+        const mimeType = (blob.type && blob.type.trim() !== '')
+          ? blob.type
           : (safeName.toLowerCase().endsWith('.pdf') ? 'application/pdf' : 'application/octet-stream');
         const safeBlob = new Blob([blob], { type: mimeType });
         const objectUrl = URL.createObjectURL(safeBlob);
@@ -178,17 +201,17 @@ export async function triggerFileDownload(url: string | undefined | null, fileNa
         setTimeout(() => URL.revokeObjectURL(objectUrl), 10000);
         return;
       } else {
-        alert('الملف غير موجود في التخزين المحلي المحفوظ.');
+        emitAppToast('الملف غير موجود في التخزين المحلي المحفوظ على هذا الجهاز.', 'error');
         return;
       }
     } catch (err) {
       console.error('Error downloading IndexedDB file:', err);
-      alert('تعذر فتح الملف المحلي.');
+      emitAppToast('تعذر فتح الملف المحلي.', 'error');
       return;
     }
   }
 
-  // 2. Data URL or Blob URL
+  // 3. Data URL or Blob URL
   if (clean.startsWith('data:') || clean.startsWith('blob:')) {
     const a = document.createElement('a');
     a.href = clean;
@@ -199,7 +222,7 @@ export async function triggerFileDownload(url: string | undefined | null, fileNa
     return;
   }
 
-  // 3. HTTP / HTTPS / Firebase Storage file
+  // 4. HTTP / HTTPS / Firebase Storage file
   try {
     const response = await fetch(clean, { mode: 'cors' });
     if (response.ok) {

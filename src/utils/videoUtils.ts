@@ -212,10 +212,6 @@ export function parseVideoSource(url?: string | null): ParsedVideoInfo {
     cleanLower.includes('firebasestorage.googleapis.com') ||
     cleanLower.includes('firebasestorage.app') ||
     cleanLower.includes('storage.googleapis.com') ||
-    cleanLower.includes('catbox.moe') ||
-    cleanLower.includes('litterbox.catbox.moe') ||
-    cleanLower.includes('tmpfiles.org') ||
-    cleanLower.includes('pixeldrain.com') ||
     /\.(mp4|webm|ogg|mov|mkv|m3u8|avi|3gp|m4v)(\?.*)?$/i.test(clean)
   ) {
     return { type: 'video', embedUrl: clean, rawUrl: clean, isDirectFile: true };

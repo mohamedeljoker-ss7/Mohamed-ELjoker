@@ -1,6 +1,7 @@
-import React, { useState, useRef, useMemo } from 'react';
+import React, { useState, useRef, useMemo, useEffect } from 'react';
 import { uploadLargeVideo, UploadProgressInfo, UploadControlHolder } from '../utils/largeVideoUploader';
 import { formatBytes } from '../utils/firebaseUploadService';
+import { isValidMediaOrWebUrl } from '../utils/gradeMatching';
 import { useLanguage } from './LanguageContext';
 import { extractYouTubeVideoId, parseVideoSource } from '../utils/videoUtils';
 
@@ -12,6 +13,8 @@ interface VideoHostingUploaderProps {
   onPreviewUrl?: (url: string) => void;
   label?: string;
   onFileSelect?: (file: File) => void;
+  onUploadingChange?: (busy: boolean) => void;
+  onErrorChange?: (err: string | null) => void;
 }
 
 export const VideoHostingUploader: React.FC<VideoHostingUploaderProps> = ({
@@ -21,7 +24,9 @@ export const VideoHostingUploader: React.FC<VideoHostingUploaderProps> = ({
   lessonId,
   onPreviewUrl,
   label,
-  onFileSelect
+  onFileSelect,
+  onUploadingChange,
+  onErrorChange
 }) => {
   const { t } = useLanguage();
   const [activeTab, setActiveTab] = useState<'device' | 'url'>('device');
@@ -32,6 +37,16 @@ export const VideoHostingUploader: React.FC<VideoHostingUploaderProps> = ({
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const cancelControlHolder = useRef<UploadControlHolder>({});
+
+  useEffect(() => {
+    onUploadingChange?.(isUploading);
+  }, [isUploading]);
+
+  useEffect(() => {
+    onErrorChange?.(errorMsg);
+  }, [errorMsg]);
+
+  const urlLooksInvalid = Boolean(value && value.trim() && !isValidMediaOrWebUrl(value));
 
   const detectedYouTubeId = useMemo(() => {
     return extractYouTubeVideoId(value);
@@ -276,14 +291,24 @@ export const VideoHostingUploader: React.FC<VideoHostingUploaderProps> = ({
               placeholder="e.g. https://www.youtube.com/watch?v=... or https://youtu.be/... or Google Drive / MP4"
               value={value}
               onChange={(e) => {
+                setErrorMsg(null);
                 const newVal = e.target.value;
                 onChange(newVal);
-                if (onPreviewUrl) onPreviewUrl(newVal);
               }}
-              className="w-full rounded-xl bg-white dark:bg-slate-950 border border-slate-300 dark:border-slate-800 p-3 pr-10 text-slate-900 dark:text-white focus:outline-none focus:border-brand-cyan font-mono text-xs text-left dir-ltr"
+              className={`w-full rounded-xl bg-white dark:bg-slate-950 border p-3 pr-10 text-slate-900 dark:text-white focus:outline-none font-mono text-xs text-left dir-ltr ${
+                urlLooksInvalid
+                  ? 'border-rose-500 focus:border-rose-500'
+                  : 'border-slate-300 dark:border-slate-800 focus:border-brand-cyan'
+              }`}
             />
             <span className="absolute right-3 text-slate-400 text-sm">🔗</span>
           </div>
+
+          {urlLooksInvalid && (
+            <p className="text-[11px] font-bold text-rose-600 dark:text-rose-400">
+              ⚠️ {t('رابط الفيديو غير صالح. يرجى إدخال رابط يبدأ بـ https:// أو رابط YouTube صحيح.', 'Invalid video URL. Please enter a valid https:// or YouTube URL.')}
+            </p>
+          )}
 
           {/* Real-time YouTube Detection Badge */}
           {detectedYouTubeId && (
@@ -311,7 +336,7 @@ export const VideoHostingUploader: React.FC<VideoHostingUploaderProps> = ({
       )}
 
       {/* Successfully Uploaded / Attached Video Link Indicator */}
-      {value && value.trim().length > 0 && !isUploading && (
+      {value && value.trim().length > 0 && !isUploading && !urlLooksInvalid && (
         <div className="bg-emerald-500/10 border border-emerald-500/30 rounded-xl p-3 space-y-2">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div className="flex items-center gap-2 text-xs font-bold text-emerald-700 dark:text-emerald-400 truncate max-w-[80%]">
@@ -349,11 +374,16 @@ export const VideoHostingUploader: React.FC<VideoHostingUploaderProps> = ({
                 <span className="text-red-600 dark:text-red-400 font-bold">▶️ {t('فيديو YouTube مدمج داخل المنصة (ID: ' + detectedYouTubeId + ')', 'Embedded YouTube Video in Platform (ID: ' + detectedYouTubeId + ')')}</span>
                 <p className="text-slate-500 dark:text-slate-400 text-[10px] truncate">{value}</p>
               </div>
+            ) : value.startsWith('firestore://') ? (
+              <div className="space-y-1">
+                <span className="text-emerald-700 dark:text-emerald-400 font-bold">☁️ {t('تخزين سحابي دائم في قاعدة البيانات (Firestore Cloud Chunks) - متاح لجميع الطلاب', 'Permanent Cloud Storage (Firestore Chunks) - Available globally')}</span>
+                <p className="text-slate-500 dark:text-slate-400 text-[10px] truncate">{value}</p>
+              </div>
             ) : value.startsWith('indexeddb://') ? (
               <div className="space-y-1">
                 <span className="text-brand-cyan font-bold">📦 {t('تخزين الجهاز المحلي (IndexedDB)', 'Local Browser Store (IndexedDB)')}</span>
                 <p className="text-slate-500 dark:text-slate-400 text-[10px] font-sans">
-                  {t('💡 عند النشر على الموقع، يمكنك لصق رابط YouTube (عام أو غير مدرج Unlisted) أو Google Drive ليعمل لجميع الطلاب عبر الإنترنت.', '💡 For public deployment, you can also paste a YouTube Unlisted or Google Drive link in the Manual Hosted tab.')}
+                  {t('💡 يفضل استخدام YouTube أو رفع فيديو سحابياً ليعمل لجميع الطلاب عبر الإنترنت.', '💡 Upload via cloud or attach a YouTube link for all students online.')}
                 </p>
               </div>
             ) : value.startsWith('https://firebasestorage.googleapis.com') ? (

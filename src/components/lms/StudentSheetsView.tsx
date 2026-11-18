@@ -1,21 +1,25 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Course, SheetItem, SheetSubmission, UserAuth } from '../../types';
+import { Course, SheetAnswerKeyDoc, SheetItem, SheetSubmission, UserAuth } from '../../types';
 import { dbService } from '../../firebase';
 import { useLanguage } from '../LanguageContext';
 import { FileUploadField } from '../FileUploadField';
-import { triggerFileDownload } from '../../utils/videoStorage';
+import { ResolvedImage } from '../ResolvedMedia';
+import { emitAppToast, triggerFileDownload } from '../../utils/videoStorage';
 import {
   ACADEMIC_GRADES,
   ACADEMIC_SEMESTERS,
   ACADEMIC_SUBJECTS,
   doesItemMatchYearAndSemester,
+  doesSubjectMatch,
   getGradeName,
   getSemesterName,
-  isContentPublished
+  isContentPublished,
+  normalizeGradeCode,
+  normalizeSemesterCode
 } from '../../utils/gradeMatching';
 import {
   FileSpreadsheet, Search, FileText, Image as ImageIcon, Download, Eye, ArrowUpDown,
-  X, Clock, Upload, CheckCircle2, Lock, Unlock, Send, MessageSquare
+  X, Clock, Upload, CheckCircle2, Lock, Unlock, Send, MessageSquare, AlertCircle, Loader2
 } from 'lucide-react';
 
 interface StudentSheetsViewProps {
@@ -34,19 +38,28 @@ export const StudentSheetsView: React.FC<StudentSheetsViewProps> = ({
   const { language, t } = useLanguage();
 
   const [searchQuery, setSearchQuery] = useState('');
-  const [yearFilter, setYearFilter] = useState<string>(currentUser?.grade || 'all');
-  const [semesterFilter, setSemesterFilter] = useState<string>(currentUser?.semester || 'all');
+  const [yearFilter, setYearFilter] = useState<string>(() => normalizeGradeCode(currentUser?.grade) || 'all');
+  const [semesterFilter, setSemesterFilter] = useState<string>(() => normalizeSemesterCode(currentUser?.semester) || 'all');
   const [subjectFilter, setSubjectFilter] = useState<string>('all');
   const [typeFilter, setTypeFilter] = useState<'all' | 'lecture_sheet' | 'section_sheet'>('all');
   const [sortBy, setSortBy] = useState<'number' | 'date'>('number');
 
   const [mySubmissions, setMySubmissions] = useState<SheetSubmission[]>([]);
   const [gallerySheet, setGallerySheet] = useState<SheetItem | null>(null);
+
+  // Answer key modal state (fetched dynamically from sheet_answer_keys when showAnswersToStudents == true)
   const [answerModalSheet, setAnswerModalSheet] = useState<SheetItem | null>(null);
+  const [answerKeyDoc, setAnswerKeyDoc] = useState<SheetAnswerKeyDoc | null>(null);
+  const [loadingAnswerKey, setLoadingAnswerKey] = useState(false);
+  const [answerKeyError, setAnswerKeyError] = useState('');
+
+  // Solution submission modal state
   const [submitModalSheet, setSubmitModalSheet] = useState<SheetItem | null>(null);
   const [answerText, setAnswerText] = useState('');
   const [fileUrl, setFileUrl] = useState('');
+  const [uploadingFile, setUploadingFile] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [submitError, setSubmitError] = useState('');
 
   useEffect(() => {
     if (!currentUser?.id) return;
@@ -76,13 +89,12 @@ export const StudentSheetsView: React.FC<StudentSheetsViewProps> = ({
     return visibleSheets
       .filter(sheet => {
         if (!doesItemMatchYearAndSemester(sheet, yearFilter, semesterFilter, courses)) return false;
-        const subj = (sheet.subject || sheet.courseTitle || '').toLowerCase();
-        if (subjectFilter !== 'all' && !subj.includes(subjectFilter.toLowerCase())) return false;
+        if (!doesSubjectMatch(sheet, subjectFilter, courses)) return false;
         const sType = sheet.sheetType || sheet.type || 'lecture_sheet';
         if (typeFilter !== 'all' && sType !== typeFilter) return false;
         const q = searchQuery.trim().toLowerCase();
         if (q) {
-          const hay = `${sheet.title} ${sheet.description || ''} ${subj}`.toLowerCase();
+          const hay = `${sheet.title} ${sheet.description || ''} ${sheet.subject || ''} ${sheet.courseTitle || ''}`.toLowerCase();
           if (!hay.includes(q)) return false;
         }
         return true;
@@ -99,12 +111,45 @@ export const StudentSheetsView: React.FC<StudentSheetsViewProps> = ({
     setSubmitModalSheet(sheet);
     setAnswerText('');
     setFileUrl('');
+    setUploadingFile(false);
+    setSubmitError('');
+  };
+
+  const handleOpenAnswerModal = async (sheet: SheetItem) => {
+    if (sheet.showAnswersToStudents !== true) return;
+    setAnswerModalSheet(sheet);
+    setAnswerKeyError('');
+    setAnswerKeyDoc(
+      sheet.modelAnswerUrl || sheet.modelAnswerText
+        ? {
+            sheetId: sheet.id,
+            modelAnswerUrl: sheet.modelAnswerUrl || '',
+            modelAnswerText: sheet.modelAnswerText || '',
+            showAnswersToStudents: true
+          }
+        : null
+    );
+    setLoadingAnswerKey(true);
+    try {
+      const fetched = await dbService.getSheetAnswerKey(sheet.id);
+      if (fetched) {
+        setAnswerKeyDoc(fetched);
+      }
+    } catch (err: any) {
+      setAnswerKeyError(err?.message || t('تعذر تحميل نموذج الإجابة في الوقت الحالي.', 'Unable to load model answer at the moment.'));
+    } finally {
+      setLoadingAnswerKey(false);
+    }
   };
 
   const handleSubmitSolution = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!submitModalSheet || !currentUser) return;
-    if (!answerText.trim() && !fileUrl.trim()) return;
+    if (!submitModalSheet || !currentUser || uploadingFile || submitting) return;
+    if (!answerText.trim() && !fileUrl.trim()) {
+      setSubmitError(t('يرجى كتابة إجابتك أو إرفاق ملف الحل قبل الإرسال.', 'Please enter your answer or attach a solution file before submitting.'));
+      return;
+    }
+    setSubmitError('');
     setSubmitting(true);
     try {
       await dbService.submitSheetSolution({
@@ -125,13 +170,21 @@ export const StudentSheetsView: React.FC<StudentSheetsViewProps> = ({
         status: 'submitted',
         totalPoints: submitModalSheet.totalPoints ?? 10
       });
+      emitAppToast(t('تم تسليم حل الشيت بنجاح.', 'Sheet solution submitted successfully.'), 'success');
       setSubmitModalSheet(null);
       setAnswerText('');
       setFileUrl('');
+    } catch (err: any) {
+      const msg = err?.message || t('فشل إرسال حل الشيت للسحابة، حاول مرة أخرى.', 'Failed to submit sheet solution. Please try again.');
+      setSubmitError(msg);
+      emitAppToast(msg, 'error');
     } finally {
       setSubmitting(false);
     }
   };
+
+  const resolvedModelAnswerText = answerKeyDoc?.modelAnswerText ?? answerModalSheet?.modelAnswerText ?? '';
+  const resolvedModelAnswerUrl = answerKeyDoc?.modelAnswerUrl ?? answerModalSheet?.modelAnswerUrl ?? '';
 
   return (
     <div className="space-y-6">
@@ -226,7 +279,7 @@ export const StudentSheetsView: React.FC<StudentSheetsViewProps> = ({
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           {filteredSheets.map(sheet => {
             const sType = sheet.sheetType || sheet.type || 'lecture_sheet';
-            const pdfHref = sheet.pdfUrl || (sheet.fileUrl && /\.pdf(\?|$)/i.test(sheet.fileUrl) ? sheet.fileUrl : (!sheet.wordUrl ? sheet.fileUrl : ''));
+            const pdfHref = sheet.pdfUrl || (sheet.fileUrl && (/\.pdf(\?|$)/i.test(sheet.fileUrl) || sheet.fileUrl.startsWith('firestore://')) ? sheet.fileUrl : (!sheet.wordUrl ? sheet.fileUrl : ''));
             const latestSub = mySubmissions.find(s => s.sheetId === sheet.id);
             const isClosed = sheet.status === 'closed' || (sheet.deadline ? new Date(sheet.deadline).getTime() < Date.now() : false);
 
@@ -347,18 +400,17 @@ export const StudentSheetsView: React.FC<StudentSheetsViewProps> = ({
                     </button>
                   )}
 
-                  {/* Strictly gated Model Answer visibility */}
-                  {sheet.showAnswersToStudents === true && (sheet.modelAnswerUrl || sheet.modelAnswerText) && (
+                  {/* Strictly gated Model Answer visibility (resolved securely from sheet_answer_keys) */}
+                  {sheet.showAnswersToStudents === true ? (
                     <button
                       type="button"
-                      onClick={() => setAnswerModalSheet(sheet)}
+                      onClick={() => handleOpenAnswerModal(sheet)}
                       className="px-3 py-2 min-h-[38px] bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-xl text-xs flex items-center gap-1.5 cursor-pointer"
                     >
                       <Unlock className="h-3.5 w-3.5" />
                       <span>{t('نموذج الإجابة', 'Model Answer')}</span>
                     </button>
-                  )}
-                  {!sheet.showAnswersToStudents && (sheet.modelAnswerUrl || sheet.modelAnswerText) && (
+                  ) : (
                     <span className="text-[11px] font-bold text-slate-400 inline-flex items-center gap-1 px-2">
                       <Lock className="h-3 w-3" />
                       {t('نموذج الإجابة غير متاح بعد', 'Answer key locked')}
@@ -384,7 +436,11 @@ export const StudentSheetsView: React.FC<StudentSheetsViewProps> = ({
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               {(gallerySheet.imageUrls || []).map((img, i) => (
                 <div key={i} className="space-y-1.5">
-                  <img src={img} alt="" className="rounded-xl border border-slate-200 dark:border-slate-800 w-full object-contain max-h-72 bg-slate-100 dark:bg-slate-950" />
+                  <ResolvedImage
+                    src={img}
+                    alt={`${gallerySheet.title} ${i + 1}`}
+                    className="rounded-xl border border-slate-200 dark:border-slate-800 w-full object-contain max-h-72 bg-slate-100 dark:bg-slate-950"
+                  />
                   <button
                     type="button"
                     onClick={() => triggerFileDownload(img, `${gallerySheet.title}_img_${i + 1}.png`)}
@@ -414,6 +470,13 @@ export const StudentSheetsView: React.FC<StudentSheetsViewProps> = ({
               </button>
             </div>
 
+            {submitError && (
+              <div className="p-3 rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-600 dark:text-rose-400 text-xs font-bold flex items-start gap-2">
+                <AlertCircle className="h-4 w-4 shrink-0 mt-0.5" />
+                <span>{submitError}</span>
+              </div>
+            )}
+
             <form onSubmit={handleSubmitSolution} className="space-y-4">
               <div>
                 <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1.5">
@@ -432,6 +495,7 @@ export const StudentSheetsView: React.FC<StudentSheetsViewProps> = ({
                 label={t('إرفاق ملف الحل (PDF / Word / صورة / كود)', 'Attach Solution File (PDF / Word / Image / Code)')}
                 value={fileUrl}
                 onChange={(val) => setFileUrl(val)}
+                onUploadingChange={(busy) => setUploadingFile(busy)}
                 accept=".pdf,.doc,.docx,image/*,.zip,.rar,.py,.js,.c,.cpp"
                 fileType="other"
                 folder="sheet_submissions"
@@ -448,11 +512,17 @@ export const StudentSheetsView: React.FC<StudentSheetsViewProps> = ({
                 </button>
                 <button
                   type="submit"
-                  disabled={submitting || (!answerText.trim() && !fileUrl.trim())}
+                  disabled={submitting || uploadingFile || (!answerText.trim() && !fileUrl.trim())}
                   className="px-5 py-2.5 min-h-[40px] bg-brand-cyan hover:bg-cyan-600 text-white dark:text-slate-950 font-black rounded-xl text-xs flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
                 >
                   <Send className="h-3.5 w-3.5" />
-                  <span>{submitting ? t('جاري الإرسال...', 'Submitting...') : t('إرسال الحل', 'Submit Solution')}</span>
+                  <span>
+                    {uploadingFile
+                      ? t('جاري رفع الملف...', 'Uploading file...')
+                      : submitting
+                      ? t('جاري الإرسال...', 'Submitting...')
+                      : t('إرسال الحل', 'Submit Solution')}
+                  </span>
                 </button>
               </div>
             </form>
@@ -477,31 +547,51 @@ export const StudentSheetsView: React.FC<StudentSheetsViewProps> = ({
               </button>
             </div>
 
-            {answerModalSheet.modelAnswerText && (
-              <div className="p-4 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-2xl text-xs text-slate-800 dark:text-slate-200 whitespace-pre-wrap leading-relaxed">
-                {answerModalSheet.modelAnswerText}
+            {loadingAnswerKey ? (
+              <div className="py-10 flex items-center justify-center gap-2 text-xs font-bold text-slate-500">
+                <Loader2 className="h-4 w-4 animate-spin text-brand-cyan" />
+                <span>{t('جاري تحميل نموذج الإجابة...', 'Loading model answer...')}</span>
               </div>
-            )}
+            ) : answerKeyError ? (
+              <div className="p-3 rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-600 dark:text-rose-400 text-xs font-bold flex items-start gap-2">
+                <AlertCircle className="h-4 w-4 shrink-0 mt-0.5" />
+                <span>{answerKeyError}</span>
+              </div>
+            ) : (
+              <>
+                {resolvedModelAnswerText && (
+                  <div className="p-4 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-2xl text-xs text-slate-800 dark:text-slate-200 whitespace-pre-wrap leading-relaxed">
+                    {resolvedModelAnswerText}
+                  </div>
+                )}
 
-            {answerModalSheet.modelAnswerUrl && (
-              <div className="flex flex-wrap gap-2">
-                <button
-                  type="button"
-                  onClick={() => onOpenPdf(answerModalSheet.modelAnswerUrl!, `${answerModalSheet.title} - Model Answer`)}
-                  className="px-4 py-2.5 min-h-[40px] bg-emerald-600 text-white font-bold rounded-xl text-xs flex items-center gap-1.5 cursor-pointer"
-                >
-                  <Eye className="h-4 w-4" />
-                  <span>{t('عرض ملف الإجابة النموذجية', 'View Answer Key File')}</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => triggerFileDownload(answerModalSheet.modelAnswerUrl!, `${answerModalSheet.title}_model_answer.pdf`)}
-                  className="px-4 py-2.5 min-h-[40px] bg-slate-100 dark:bg-slate-800 text-slate-800 dark:text-slate-200 font-bold rounded-xl text-xs flex items-center gap-1.5 cursor-pointer"
-                >
-                  <Download className="h-4 w-4" />
-                  <span>{t('تحميل الملف', 'Download')}</span>
-                </button>
-              </div>
+                {resolvedModelAnswerUrl && (
+                  <div className="flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      onClick={() => onOpenPdf(resolvedModelAnswerUrl, `${answerModalSheet.title} - Model Answer`)}
+                      className="px-4 py-2.5 min-h-[40px] bg-emerald-600 text-white font-bold rounded-xl text-xs flex items-center gap-1.5 cursor-pointer"
+                    >
+                      <Eye className="h-4 w-4" />
+                      <span>{t('عرض ملف الإجابة النموذجية', 'View Answer Key File')}</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => triggerFileDownload(resolvedModelAnswerUrl, `${answerModalSheet.title}_model_answer.pdf`)}
+                      className="px-4 py-2.5 min-h-[40px] bg-slate-100 dark:bg-slate-800 text-slate-800 dark:text-slate-200 font-bold rounded-xl text-xs flex items-center gap-1.5 cursor-pointer"
+                    >
+                      <Download className="h-4 w-4" />
+                      <span>{t('تحميل الملف', 'Download')}</span>
+                    </button>
+                  </div>
+                )}
+
+                {!resolvedModelAnswerText && !resolvedModelAnswerUrl && (
+                  <p className="text-xs text-slate-500 dark:text-slate-400 py-4 text-center">
+                    {t('لم يتم إرفاق ملف أو نص لنموذج الإجابة لهذا الشيت بعد.', 'No model answer file or notes have been attached to this sheet yet.')}
+                  </p>
+                )}
+              </>
             )}
           </div>
         </div>

@@ -550,7 +550,9 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({ onLogout, on
               if ((globalVer > 0 && loginTime < globalVer) || (userVer > 0 && loginTime < userVer)) {
                 authService.logout();
                 onLogout();
-                alert('تم إنهاء جميع جلسات الدخول وتسجيل الخروج من المنصة بواسطة إدارة المنصة وقسم IT.');
+                if (typeof window !== 'undefined') {
+                  window.dispatchEvent(new CustomEvent('app-toast', { detail: { message: 'تم إنهاء جميع جلسات الدخول وتسجيل الخروج من المنصة بواسطة إدارة المنصة وقسم IT.', type: 'info' } }));
+                }
                 return;
               }
               const coursesToFilter = allPublishedCoursesRef.current;
@@ -971,13 +973,13 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({ onLogout, on
   // Quiz-taking mechanics
   const handleStartQuiz = (quiz: Quiz) => {
     if (quiz.published === false) {
-      alert(t('هذا الامتحان غير متاح للطلاب حالياً.', 'This exam is not available currently.'));
+      setErrorMsg(t('هذا الامتحان غير متاح للطلاب حالياً.', 'This exam is not available currently.'));
       return;
     }
     if (quiz.courseId && quiz.courseId !== 'all' && quiz.courseId.trim() !== '') {
       const isSubscribed = isStudentSubscribedToCourse(quiz.courseId);
       if (!isSubscribed) {
-        alert(t('عفواً، يجب تفعيل المقرر الدراسي المرتبط بالامتحان أولاً.', 'Subject access must be activated first to take this exam.'));
+        setErrorMsg(t('عفواً، يجب تفعيل المقرر الدراسي المرتبط بالامتحان أولاً.', 'Subject access must be activated first to take this exam.'));
         return;
       }
     }
@@ -1338,7 +1340,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({ onLogout, on
     task?: Assignment | null
   ) => {
     if (!url || typeof url !== 'string' || url.trim() === '' || url === '#') {
-      alert(t('هذا الرابط فارغ أو غير متاح حالياً.', 'This link is empty or currently unavailable.'));
+      setErrorMsg(t('هذا الرابط فارغ أو غير متاح حالياً.', 'This link is empty or currently unavailable.'));
       return;
     }
 
@@ -1350,8 +1352,8 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({ onLogout, on
       return;
     }
 
-    // Always allow opening Data URLs, Blob URLs, or IndexedDB stored files
-    if (cleanUrl.startsWith('data:') || cleanUrl.startsWith('blob:') || cleanUrl.startsWith('indexeddb://')) {
+    // Always allow opening Data URLs, Blob URLs, Firestore Chunks, or IndexedDB stored files
+    if (cleanUrl.startsWith('data:') || cleanUrl.startsWith('blob:') || cleanUrl.startsWith('indexeddb://') || cleanUrl.startsWith('firestore://')) {
       triggerFileDownload(cleanUrl, task?.titleAr || task?.titleEn || course?.titleAr || 'file_download');
       return;
     }
@@ -1371,7 +1373,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({ onLogout, on
         triggerFileDownload(cleanUrl, task.titleAr || task.titleEn || 'assignment_sheet.pdf');
         return;
       } else {
-        alert(t('عفواً، يرجى تفعيل الوصول للمقررات الدراسية أولاً لتنزيل هذا الملف.', 'Please ensure your academic access is activated to download this sheet.'));
+        setErrorMsg(t('عفواً، يرجى تفعيل الوصول للمقررات الدراسية أولاً لتنزيل هذا الملف.', 'Please ensure your academic access is activated to download this sheet.'));
         return;
       }
     }
@@ -4375,16 +4377,14 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({ onLogout, on
                 <h3 className="font-bold text-sm sm:text-base text-slate-900 dark:text-white truncate">{activePdfModal.title}</h3>
               </div>
               <div className="flex items-center gap-2 shrink-0">
-                <a
-                  href={activePdfModal.url}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  download
+                <button
+                  type="button"
+                  onClick={() => triggerFileDownload(activePdfModal.url, activePdfModal.title || 'document.pdf')}
                   className="flex items-center gap-1.5 rounded-xl bg-brand-cyan text-white dark:text-slate-950 px-3 py-1.5 text-xs font-bold hover:bg-brand-cyan-light cursor-pointer"
                 >
                   <Download className="h-3.5 w-3.5" />
                   <span>{t('تحميل الملف', 'Download File')}</span>
-                </a>
+                </button>
                 <button
                   type="button"
                   onClick={() => setActivePdfModal(null)}

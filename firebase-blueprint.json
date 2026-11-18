@@ -323,10 +323,51 @@
         "referenceNumber": { "type": "number" },
         "title": { "type": "string", "maxLength": 200 },
         "description": { "type": "string" },
-        "fileUrl": { "type": "string" },
+        "showAnswersToStudents": { "type": "boolean" },
+        "status": { "type": "string", "enum": ["draft", "published", "unpublished", "closed"] },
+        "published": { "type": "boolean" },
         "createdAt": { "type": "string" }
       },
       "required": ["courseId", "sheetType", "referenceNumber", "title", "fileUrl"]
+    },
+    "SheetAnswerKeyDoc": {
+      "title": "SheetAnswerKeyDoc",
+      "description": "Isolated model answer keys for sheets revealed only when authorized",
+      "type": "object",
+      "properties": {
+        "sheetId": { "type": "string" },
+        "modelAnswerUrl": { "type": "string" },
+        "modelAnswerText": { "type": "string" },
+        "showAnswersToStudents": { "type": "boolean" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["sheetId", "showAnswersToStudents", "updatedAt"]
+    },
+    "ExamPrivateKeyDoc": {
+      "title": "ExamPrivateKeyDoc",
+      "description": "Isolated exam answer keys and explanations gated by receipt or student release flag",
+      "type": "object",
+      "properties": {
+        "examId": { "type": "string" },
+        "modelAnswerUrl": { "type": "string" },
+        "answersFileUrl": { "type": "string" },
+        "questionKeys": { "type": "object" },
+        "showAnswersToStudents": { "type": "boolean" },
+        "showResultsImmediately": { "type": "boolean" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["examId", "questionKeys", "showAnswersToStudents", "showResultsImmediately", "updatedAt"]
+    },
+    "ExamSubmissionReceipt": {
+      "title": "ExamSubmissionReceipt",
+      "description": "Atomic student attempt receipt authorizing grading key check after submission",
+      "type": "object",
+      "properties": {
+        "examId": { "type": "string" },
+        "studentId": { "type": "string" },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["examId", "studentId", "createdAt"]
     },
     "QuestionBankItem": {
       "title": "QuestionBankItem",
@@ -469,7 +510,19 @@
     },
     "sheets/{sheetId}": {
       "schema": "SheetItem",
-      "description": "Lecture and section practice sheets"
+      "description": "Lecture and section practice sheets (public fields only)"
+    },
+    "sheet_answer_keys/{sheetId}": {
+      "schema": "SheetAnswerKeyDoc",
+      "description": "Isolated model answer keys for sheets"
+    },
+    "exam_private_keys/{examId}": {
+      "schema": "ExamPrivateKeyDoc",
+      "description": "Isolated private exam answer keys and explanations"
+    },
+    "exam_submission_receipts/{receiptId}": {
+      "schema": "ExamSubmissionReceipt",
+      "description": "Student exam submission receipt authorizing result key read"
     },
     "sheet_submissions/{submissionId}": {
       "schema": "SheetSubmission",

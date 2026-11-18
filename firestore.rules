@@ -60,24 +60,49 @@ service cloud.firestore {
       allow write: if isAdmin();
     }
 
-    // Academic Educational Content - ONLY APPROVED STUDENTS & ADMIN
+    // Academic Educational Content - Admins read all; approved students read published only
     match /lectures/{lectureId} {
-      allow read: if isApprovedStudent();
+      allow read: if isAdmin() || (isApprovedStudent() && resource.data.published == true);
       allow write: if isAdmin();
     }
 
     match /sections/{sectionId} {
-      allow read: if isApprovedStudent();
+      allow read: if isAdmin() || (isApprovedStudent() && resource.data.published == true);
       allow write: if isAdmin();
     }
 
     match /exams/{examId} {
-      allow read: if isApprovedStudent();
+      allow read: if isAdmin() || (isApprovedStudent() && resource.data.published == true);
       allow write: if isAdmin();
     }
 
     match /sheets/{sheetId} {
-      allow read: if isApprovedStudent();
+      allow read: if isAdmin() || (isApprovedStudent() && resource.data.published == true);
+      allow write: if isAdmin();
+    }
+
+    // Isolated Answer Key Collections - Strict Visibility & Receipt-Gated Release
+    match /sheet_answer_keys/{sheetId} {
+      allow read: if isAdmin() || (isApprovedStudent() && resource.data.showAnswersToStudents == true);
+      allow write: if isAdmin();
+    }
+
+    match /exam_submission_receipts/{receiptId} {
+      allow read: if isAdmin() || (isSignedIn() && resource.data.studentId == request.auth.uid);
+      allow create: if isApprovedStudent() && request.resource.data.studentId == request.auth.uid;
+      allow update, delete: if isAdmin();
+    }
+
+    match /exam_private_keys/{examId} {
+      allow get: if isAdmin() || (
+        isApprovedStudent() && (
+          resource.data.showAnswersToStudents == true || (
+            resource.data.showResultsImmediately == true &&
+            exists(/databases/$(database)/documents/exam_submission_receipts/$(examId + '_' + request.auth.uid))
+          )
+        )
+      );
+      allow list: if isAdmin();
       allow write: if isAdmin();
     }
 
@@ -91,15 +116,18 @@ service cloud.firestore {
       allow write: if isAdmin();
     }
 
-    // Cloud Media Chunks (for uploaded PDFs / DOCX / Lab Archives / Student Submissions)
+    // Cloud Media Chunks (owner/admin safe create & cleanup)
     match /cloud_media/{fileId} {
       allow read: if isApprovedStudent();
-      allow create: if isApprovedStudent();
-      allow update, delete: if isAdmin();
+      allow create: if isApprovedStudent() && (!('uploadedBy' in request.resource.data) || request.resource.data.uploadedBy == request.auth.uid);
+      allow update, delete: if isAdmin() || (isApprovedStudent() && resource.data.uploadedBy == request.auth.uid);
       match /chunks/{chunkId} {
         allow read: if isApprovedStudent();
         allow create: if isApprovedStudent();
-        allow update, delete: if isAdmin();
+        allow update, delete: if isAdmin() || (
+          isApprovedStudent() &&
+          get(/databases/$(database)/documents/cloud_media/$(fileId)).data.uploadedBy == request.auth.uid
+        );
       }
     }
 

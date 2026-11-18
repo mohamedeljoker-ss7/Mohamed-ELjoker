@@ -5,18 +5,23 @@ import { useLanguage } from '../LanguageContext';
 import { FileUploadField } from '../FileUploadField';
 import { VideoHostingUploader } from '../VideoHostingUploader';
 import { MultiFileUploadList } from './MultiFileUploadList';
+import { ResolvedImage } from '../ResolvedMedia';
+import { emitAppToast, triggerFileDownload } from '../../utils/videoStorage';
 import {
   ACADEMIC_GRADES,
   ACADEMIC_SEMESTERS,
   ACADEMIC_SUBJECTS,
   doesItemMatchYearAndSemester,
+  doesSubjectMatch,
   getGradeName,
   getSemesterName,
-  isContentPublished
+  isContentPublished,
+  isValidMediaOrWebUrl
 } from '../../utils/gradeMatching';
 import {
-  Layers, Plus, Search, Video, FileText, Code2, Archive, Image as ImageIcon,
-  Edit3, Trash2, Eye, CheckCircle2, X, Globe, FileEdit, ArrowUpDown
+  Layers, Plus, Search, Video, FileText, Code2, Archive,
+  Edit3, Trash2, Eye, CheckCircle2, X, Globe, FileEdit, ArrowUpDown,
+  Download, AlertCircle, EyeOff
 } from 'lucide-react';
 
 interface AdminSectionsManagerProps {
@@ -44,13 +49,24 @@ export const AdminSectionsManager: React.FC<AdminSectionsManagerProps> = ({
   const [yearFilter, setYearFilter] = useState('all');
   const [semesterFilter, setSemesterFilter] = useState('all');
   const [subjectFilter, setSubjectFilter] = useState('all');
-  const [statusFilter, setStatusFilter] = useState<'all' | 'published' | 'draft'>('all');
+  const [statusFilter, setStatusFilter] = useState<'all' | 'published' | 'draft' | 'unpublished'>('all');
   const [sortBy, setSortBy] = useState<'number' | 'date'>('number');
 
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const [formError, setFormError] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
+  const [uploadingFields, setUploadingFields] = useState<Record<string, boolean>>({});
   const [previewItem, setPreviewItem] = useState<SectionItem | null>(null);
+
+  const [deleteTarget, setDeleteTarget] = useState<SectionItem | null>(null);
+  const [deleting, setDeleting] = useState(false);
+
+  const isUploadingAny = Object.values(uploadingFields).some(Boolean);
+  const setFieldUploading = (field: string, busy: boolean) => {
+    setUploadingFields(prev => (prev[field] === busy ? prev : { ...prev, [field]: busy }));
+  };
 
   const [form, setForm] = useState({
     academicYear: 'year1',
@@ -65,7 +81,7 @@ export const AdminSectionsManager: React.FC<AdminSectionsManagerProps> = ({
     pdfUrl: '',
     archiveUrl: '',
     sectionDate: new Date().toISOString().split('T')[0],
-    status: 'published' as 'published' | 'draft',
+    status: 'published' as 'published' | 'draft' | 'unpublished',
     codeFiles: [] as AttachmentFile[],
     images: [] as AttachmentFile[],
     practicalExamples: [] as SectionExample[]
@@ -101,6 +117,8 @@ export const AdminSectionsManager: React.FC<AdminSectionsManagerProps> = ({
 
   const openAddModal = () => {
     setEditingId(null);
+    setFormError(null);
+    setUploadingFields({});
     setForm({
       academicYear: yearFilter !== 'all' ? yearFilter : 'year1',
       semester: semesterFilter !== 'all' ? semesterFilter : 'term1',
@@ -124,12 +142,16 @@ export const AdminSectionsManager: React.FC<AdminSectionsManagerProps> = ({
 
   const openEditModal = (sec: SectionItem) => {
     setEditingId(sec.id);
+    setFormError(null);
+    setUploadingFields({});
     const existingImages: AttachmentFile[] = (sec.imageUrls || []).map((url, idx) => ({
       id: `secimg_${idx}_${Date.now()}`,
       name: `Lab Image ${idx + 1}`,
       url,
       fileType: 'image'
     }));
+    const currentStatus: 'published' | 'draft' | 'unpublished' =
+      sec.status === 'unpublished' ? 'unpublished' : isContentPublished(sec) ? 'published' : 'draft';
     setForm({
       academicYear: sec.academicYear || 'year1',
       semester: sec.semester || 'term1',
@@ -143,7 +165,7 @@ export const AdminSectionsManager: React.FC<AdminSectionsManagerProps> = ({
       pdfUrl: sec.pdfUrl || sec.fileUrl || '',
       archiveUrl: sec.archiveUrl || '',
       sectionDate: sec.sectionDate || (sec.createdAt ? sec.createdAt.split('T')[0] : new Date().toISOString().split('T')[0]),
-      status: isContentPublished(sec) ? 'published' : 'draft',
+      status: currentStatus,
       codeFiles: sec.codeFiles || [],
       images: existingImages,
       practicalExamples: sec.practicalExamples || []
@@ -169,7 +191,29 @@ export const AdminSectionsManager: React.FC<AdminSectionsManagerProps> = ({
 
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!form.title.trim()) return;
+    setFormError(null);
+
+    if (isUploadingAny) {
+      setFormError(t('يرجى الانتظار حتى يكتمل رفع جميع الملفات أولاً.', 'Please wait for active file uploads to finish.'));
+      return;
+    }
+    if (!form.title.trim()) {
+      setFormError(t('عنوان السكشن العملي مطلوب.', 'Section title is required.'));
+      return;
+    }
+    if (!Number.isFinite(Number(form.sectionNumber)) || Number(form.sectionNumber) < 1) {
+      setFormError(t('يجب أن يكون رقم السكشن 1 فأكثر.', 'Section number must be 1 or greater.'));
+      return;
+    }
+    if (
+      !isValidMediaOrWebUrl(form.youtubeUrl) ||
+      !isValidMediaOrWebUrl(form.pdfUrl) ||
+      !isValidMediaOrWebUrl(form.archiveUrl)
+    ) {
+      setFormError(t('يوجد رابط ملف أو أرشيف أو فيديو غير صالح.', 'One or more file or video URLs are invalid.'));
+      return;
+    }
+
     setSaving(true);
     try {
       const { courseId, courseTitle } = resolveCourseMeta(form.subject, form.courseId);
@@ -202,6 +246,7 @@ export const AdminSectionsManager: React.FC<AdminSectionsManagerProps> = ({
       if (editingId) {
         await dbService.updateSection(editingId, payload);
         onLogAction('update', payload.title, `Updated section #${payload.sectionNumber} (${form.subject})`);
+        emitAppToast(t('تم تحديث السكشن العملي وحفظه سحابياً.', 'Practical section updated successfully.'), 'success');
       } else {
         await dbService.addSection(payload);
         onLogAction('create', payload.title, `Created section #${payload.sectionNumber} (${form.subject})`);
@@ -219,41 +264,65 @@ export const AdminSectionsManager: React.FC<AdminSectionsManagerProps> = ({
             createdAt: new Date().toISOString()
           }).catch(() => {});
         }
+        emitAppToast(t('تمت إضافة السكشن العملي وحفظه بنجاح.', 'Practical section saved successfully.'), 'success');
       }
       setIsModalOpen(false);
       onRefresh();
+    } catch (err: any) {
+      setFormError(err?.message || t('تعذر حفظ السكشن في قاعدة البيانات السحابية.', 'Failed to save section to cloud database.'));
     } finally {
       setSaving(false);
     }
   };
 
   const handleToggleStatus = async (sec: SectionItem) => {
-    const nextStatus = isContentPublished(sec) ? 'draft' : 'published';
-    await dbService.updateSection(sec.id, {
-      status: nextStatus,
-      published: nextStatus === 'published',
-      updatedAt: new Date().toISOString()
-    });
-    onLogAction('status_change', sec.title, `Set section status to ${nextStatus}`);
-    onRefresh();
+    setActionError(null);
+    const currentlyPub = isContentPublished(sec);
+    const nextStatus = currentlyPub ? 'unpublished' : 'published';
+    try {
+      await dbService.updateSection(sec.id, {
+        status: nextStatus,
+        published: nextStatus === 'published',
+        updatedAt: new Date().toISOString()
+      });
+      onLogAction('status_change', sec.title, `Set section status to ${nextStatus}`);
+      emitAppToast(
+        nextStatus === 'published'
+          ? t('تم نشر السكشن العملي للطلاب.', 'Practical section published.')
+          : t('تم إيقاف نشر السكشن وإخفاؤه عن الطلاب.', 'Practical section unpublished.'),
+        'success'
+      );
+      onRefresh();
+    } catch (err: any) {
+      setActionError(err?.message || t('تعذر تحديث حالة النشر.', 'Failed to update status.'));
+    }
   };
 
-  const handleDelete = async (sec: SectionItem) => {
-    if (!confirm(t(`هل تريد حذف السكشن "${sec.title}"؟`, `Delete section "${sec.title}"?`))) return;
-    await dbService.deleteSection(sec.id);
-    onLogAction('delete', sec.title, 'Deleted section');
-    onRefresh();
+  const confirmDelete = async () => {
+    if (!deleteTarget) return;
+    setDeleting(true);
+    setActionError(null);
+    try {
+      await dbService.deleteSection(deleteTarget.id);
+      onLogAction('delete', deleteTarget.title, 'Deleted section');
+      emitAppToast(t('تم حذف السكشن وملفاته غير المستخدمة بنجاح.', 'Section deleted successfully.'), 'success');
+      setDeleteTarget(null);
+      onRefresh();
+    } catch (err: any) {
+      setActionError(err?.message || t('تعذر حذف السكشن من قاعدة البيانات السحابية.', 'Failed to delete section.'));
+    } finally {
+      setDeleting(false);
+    }
   };
 
   const filteredSections = useMemo(() => {
     return sections
       .filter(sec => {
         if (!doesItemMatchYearAndSemester(sec, yearFilter, semesterFilter, courses)) return false;
-        const pub = isContentPublished(sec);
-        if (statusFilter === 'published' && !pub) return false;
-        if (statusFilter === 'draft' && pub) return false;
+        const statusKey = sec.status === 'unpublished' ? 'unpublished' : isContentPublished(sec) ? 'published' : 'draft';
+        if (statusFilter !== 'all' && statusKey !== statusFilter) return false;
+        if (!doesSubjectMatch(sec, subjectFilter, courses)) return false;
         const subj = (sec.subject || sec.courseTitle || '').toLowerCase();
-        if (subjectFilter !== 'all' && !subj.includes(subjectFilter.toLowerCase())) return false;
         const q = searchQuery.trim().toLowerCase();
         if (q) {
           const hay = `${sec.title} ${sec.practicalTopic || ''} ${sec.labInstructions || sec.description || ''} ${subj}`.toLowerCase();
@@ -301,12 +370,24 @@ export const AdminSectionsManager: React.FC<AdminSectionsManagerProps> = ({
         </button>
       </div>
 
+      {actionError && (
+        <div className="rounded-xl border border-rose-500/40 bg-rose-500/10 p-3 text-xs font-bold text-rose-700 dark:text-rose-300 flex items-center justify-between gap-3">
+          <span className="flex items-center gap-2">
+            <AlertCircle className="h-4 w-4 shrink-0" />
+            <span>{actionError}</span>
+          </span>
+          <button type="button" onClick={() => setActionError(null)} className="cursor-pointer">
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+      )}
+
       {/* KPI Strip */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
         {[
           { label: t('إجمالي السكاشن', 'Total Sections'), value: stats.total },
           { label: t('منشورة للطلاب', 'Published'), value: stats.publishedCount },
-          { label: t('مسودات', 'Drafts'), value: stats.drafts },
+          { label: t('مسودات / مخفية', 'Drafts / Hidden'), value: stats.drafts },
           { label: t('تتضمن أكواد أو أمثلة محلولة', 'With Code / Examples'), value: stats.withCodeOrExamples }
         ].map((kpi, idx) => (
           <div key={idx} className="rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950/50 p-4">
@@ -365,8 +446,8 @@ export const AdminSectionsManager: React.FC<AdminSectionsManagerProps> = ({
         </div>
 
         <div className="flex flex-wrap items-center justify-between gap-3 pt-1">
-          <div className="flex items-center gap-1.5 bg-white dark:bg-slate-950 p-1 rounded-xl border border-slate-200 dark:border-slate-800">
-            {(['all', 'published', 'draft'] as const).map(st => (
+          <div className="flex flex-wrap items-center gap-1.5 bg-white dark:bg-slate-950 p-1 rounded-xl border border-slate-200 dark:border-slate-800">
+            {(['all', 'published', 'draft', 'unpublished'] as const).map(st => (
               <button
                 key={st}
                 type="button"
@@ -375,7 +456,13 @@ export const AdminSectionsManager: React.FC<AdminSectionsManagerProps> = ({
                   statusFilter === st ? 'bg-brand-cyan text-white dark:text-slate-950' : 'text-slate-600 dark:text-slate-400'
                 }`}
               >
-                {st === 'all' ? t('الكل', 'All') : st === 'published' ? t('المنشورة', 'Published') : t('المسودات', 'Drafts')}
+                {st === 'all'
+                  ? t('الكل', 'All')
+                  : st === 'published'
+                  ? t('المنشورة', 'Published')
+                  : st === 'draft'
+                  ? t('المسودات', 'Drafts')
+                  : t('متوقفة', 'Unpublished')}
               </button>
             ))}
           </div>
@@ -414,6 +501,7 @@ export const AdminSectionsManager: React.FC<AdminSectionsManagerProps> = ({
             ) : (
               filteredSections.map(sec => {
                 const pub = isContentPublished(sec);
+                const isUnpub = sec.status === 'unpublished';
                 const num = sec.sectionNumber ?? sec.number ?? 1;
                 return (
                   <tr key={sec.id} className="hover:bg-slate-50 dark:hover:bg-slate-900/40 transition-colors">
@@ -453,11 +541,15 @@ export const AdminSectionsManager: React.FC<AdminSectionsManagerProps> = ({
                         type="button"
                         onClick={() => handleToggleStatus(sec)}
                         className={`inline-flex items-center gap-1 text-[11px] font-bold cursor-pointer ${
-                          pub ? 'text-emerald-600 dark:text-emerald-400' : 'text-amber-600 dark:text-amber-400'
+                          pub
+                            ? 'text-emerald-600 dark:text-emerald-400'
+                            : isUnpub
+                            ? 'text-slate-500 dark:text-slate-400'
+                            : 'text-amber-600 dark:text-amber-400'
                         }`}
                       >
-                        {pub ? <Globe className="h-3.5 w-3.5" /> : <FileEdit className="h-3.5 w-3.5" />}
-                        <span>{pub ? t('منشور', 'Published') : t('مسودة', 'Draft')}</span>
+                        {pub ? <Globe className="h-3.5 w-3.5" /> : isUnpub ? <EyeOff className="h-3.5 w-3.5" /> : <FileEdit className="h-3.5 w-3.5" />}
+                        <span>{pub ? t('منشور', 'Published') : isUnpub ? t('متوقف', 'Unpublished') : t('مسودة', 'Draft')}</span>
                       </button>
                     </td>
                     <td className="p-3.5">
@@ -468,7 +560,7 @@ export const AdminSectionsManager: React.FC<AdminSectionsManagerProps> = ({
                         <button type="button" onClick={() => openEditModal(sec)} className="p-2 rounded-lg text-brand-cyan hover:bg-brand-cyan/10 cursor-pointer" title={t('تعديل', 'Edit')}>
                           <Edit3 className="h-4 w-4" />
                         </button>
-                        <button type="button" onClick={() => handleDelete(sec)} className="p-2 rounded-lg text-rose-600 dark:text-rose-400 hover:bg-rose-500/10 cursor-pointer" title={t('حذف', 'Delete')}>
+                        <button type="button" onClick={() => setDeleteTarget(sec)} className="p-2 rounded-lg text-rose-600 dark:text-rose-400 hover:bg-rose-500/10 cursor-pointer" title={t('حذف', 'Delete')}>
                           <Trash2 className="h-4 w-4" />
                         </button>
                       </div>
@@ -494,6 +586,13 @@ export const AdminSectionsManager: React.FC<AdminSectionsManagerProps> = ({
                 <X className="h-4 w-4" />
               </button>
             </div>
+
+            {formError && (
+              <div className="rounded-xl border border-rose-500/40 bg-rose-500/10 p-3 text-xs font-bold text-rose-700 dark:text-rose-300 flex items-start gap-2">
+                <AlertCircle className="h-4 w-4 shrink-0 mt-0.5" />
+                <span>{formError}</span>
+              </div>
+            )}
 
             <form onSubmit={handleSave} className="space-y-4 text-xs">
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
@@ -548,6 +647,7 @@ export const AdminSectionsManager: React.FC<AdminSectionsManagerProps> = ({
                 onChange={url => setForm({ ...form, youtubeUrl: url })}
                 courseId={resolveCourseMeta(form.subject, form.courseId).courseId}
                 onPreviewUrl={onPreviewMedia}
+                onUploadingChange={busy => setFieldUploading('video', busy)}
               />
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -556,15 +656,20 @@ export const AdminSectionsManager: React.FC<AdminSectionsManagerProps> = ({
                   value={form.pdfUrl}
                   onChange={url => setForm({ ...form, pdfUrl: url })}
                   accept=".pdf,.doc,.docx,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                  fileType="pdf"
                   folder="sections_docs"
+                  onPreview={onPreviewMedia ? (url => onPreviewMedia(url)) : undefined}
+                  onUploadingChange={busy => setFieldUploading('pdf', busy)}
                 />
                 <FileUploadField
                   label={t('ملف المشروع المضغوط (.zip / .rar)', 'Compressed Project Archive (.zip / .rar)')}
                   value={form.archiveUrl}
                   onChange={url => setForm({ ...form, archiveUrl: url })}
                   accept=".zip,.rar,.7z,application/zip"
+                  fileType="other"
                   folder="sections_archives"
                   placeholder="https://.../lab-files.zip"
+                  onUploadingChange={busy => setFieldUploading('archive', busy)}
                 />
               </div>
 
@@ -574,6 +679,7 @@ export const AdminSectionsManager: React.FC<AdminSectionsManagerProps> = ({
                 onChange={files => setForm({ ...form, codeFiles: files })}
                 accept=".py,.js,.ts,.c,.cpp,.h,.html,.css,.sql,.json,.txt,.ipynb"
                 folder="sections_code"
+                onUploadingChange={busy => setFieldUploading('codeFiles', busy)}
               />
 
               <MultiFileUploadList
@@ -582,6 +688,7 @@ export const AdminSectionsManager: React.FC<AdminSectionsManagerProps> = ({
                 onChange={files => setForm({ ...form, images: files })}
                 accept="image/*"
                 folder="sections_images"
+                onUploadingChange={busy => setFieldUploading('images', busy)}
               />
 
               {/* Practical Worked Examples & Solutions Builder */}
@@ -673,11 +780,12 @@ export const AdminSectionsManager: React.FC<AdminSectionsManagerProps> = ({
                   <span className="font-bold text-slate-700 dark:text-slate-300">{t('حالة النشر:', 'Publish Status:')}</span>
                   <select
                     value={form.status}
-                    onChange={e => setForm({ ...form, status: e.target.value as 'published' | 'draft' })}
+                    onChange={e => setForm({ ...form, status: e.target.value as 'published' | 'draft' | 'unpublished' })}
                     className="rounded-xl bg-slate-50 dark:bg-slate-900 border border-slate-300 dark:border-slate-800 px-3 py-2 text-xs font-bold text-slate-900 dark:text-white"
                   >
                     <option value="published">{t('منشور للطلاب (Published)', 'Published')}</option>
                     <option value="draft">{t('مسودة مخفية (Draft)', 'Draft')}</option>
+                    <option value="unpublished">{t('تم إيقاف النشر (Unpublished)', 'Unpublished (Hidden)')}</option>
                   </select>
                 </div>
 
@@ -685,13 +793,54 @@ export const AdminSectionsManager: React.FC<AdminSectionsManagerProps> = ({
                   <button type="button" onClick={() => setIsModalOpen(false)} className="px-4 py-2.5 rounded-xl border border-slate-300 dark:border-slate-700 font-bold cursor-pointer">
                     {t('إلغاء', 'Cancel')}
                   </button>
-                  <button type="submit" disabled={saving} className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-brand-cyan text-white dark:text-slate-950 font-bold cursor-pointer disabled:opacity-50">
+                  <button type="submit" disabled={saving || isUploadingAny} className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-brand-cyan text-white dark:text-slate-950 font-bold cursor-pointer disabled:opacity-50">
                     <CheckCircle2 className="h-4 w-4" />
-                    <span>{saving ? t('جاري الحفظ...', 'Saving...') : t('حفظ السكشن العملي', 'Save Section')}</span>
+                    <span>
+                      {isUploadingAny
+                        ? t('جاري رفع الملفات...', 'Uploading files...')
+                        : saving
+                        ? t('جاري الحفظ...', 'Saving...')
+                        : t('حفظ السكشن العملي', 'Save Section')}
+                    </span>
                   </button>
                 </div>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* Delete Confirmation Modal */}
+      {deleteTarget && (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-slate-950/80 backdrop-blur-sm p-4">
+          <div className="w-full max-w-md rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950 p-6 shadow-2xl space-y-4">
+            <h3 className="text-base font-black text-slate-900 dark:text-white">
+              {t('تأكيد حذف السكشن العملي', 'Confirm Section Deletion')}
+            </h3>
+            <p className="text-xs text-slate-600 dark:text-slate-400 leading-relaxed">
+              {t(
+                `هل أنت متأكد من حذف السكشن "${deleteTarget.title}"؟ سيتم حذفه نهائياً من قاعدة البيانات السحابية.`,
+                `Are you sure you want to delete section "${deleteTarget.title}"? This action cannot be undone.`
+              )}
+            </p>
+            <div className="flex items-center justify-end gap-2 pt-2">
+              <button
+                type="button"
+                disabled={deleting}
+                onClick={() => setDeleteTarget(null)}
+                className="px-4 py-2 rounded-xl border border-slate-300 dark:border-slate-700 text-xs font-bold text-slate-700 dark:text-slate-300 cursor-pointer"
+              >
+                {t('إلغاء', 'Cancel')}
+              </button>
+              <button
+                type="button"
+                disabled={deleting}
+                onClick={confirmDelete}
+                className="px-4 py-2 rounded-xl bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold cursor-pointer disabled:opacity-50"
+              >
+                {deleting ? t('جاري الحذف...', 'Deleting...') : t('تأكيد الحذف', 'Confirm Delete')}
+              </button>
+            </div>
           </div>
         </div>
       )}
@@ -714,6 +863,61 @@ export const AdminSectionsManager: React.FC<AdminSectionsManagerProps> = ({
             )}
             {(previewItem.labInstructions || previewItem.description) && (
               <p className="text-xs text-slate-600 dark:text-slate-400 whitespace-pre-line">{previewItem.labInstructions || previewItem.description}</p>
+            )}
+            <div className="flex flex-wrap gap-2">
+              {(previewItem.youtubeUrl || previewItem.videoUrl) && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    const vUrl = previewItem.youtubeUrl || previewItem.videoUrl!;
+                    if (onPreviewMedia) onPreviewMedia(vUrl);
+                    else triggerFileDownload(vUrl, `${previewItem.title}.mp4`);
+                  }}
+                  className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-rose-600 text-white text-xs font-bold cursor-pointer"
+                >
+                  <Video className="h-3.5 w-3.5" /> {t('فيديو التطبيق', 'Watch Video')}
+                </button>
+              )}
+              {(previewItem.pdfUrl || previewItem.fileUrl) && (
+                <button
+                  type="button"
+                  onClick={() => triggerFileDownload((previewItem.pdfUrl || previewItem.fileUrl)!, `${previewItem.title}.pdf`)}
+                  className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-brand-cyan text-white dark:text-slate-950 text-xs font-bold cursor-pointer"
+                >
+                  <Download className="h-3.5 w-3.5" /> {t('دليل المعمل', 'Lab Guide')}
+                </button>
+              )}
+              {previewItem.archiveUrl && (
+                <button
+                  type="button"
+                  onClick={() => triggerFileDownload(previewItem.archiveUrl!, `${previewItem.title}.zip`)}
+                  className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-amber-600 text-white text-xs font-bold cursor-pointer"
+                >
+                  <Archive className="h-3.5 w-3.5" /> ZIP
+                </button>
+              )}
+              {(previewItem.codeFiles || []).map(cf => (
+                <button
+                  key={cf.id}
+                  type="button"
+                  onClick={() => triggerFileDownload(cf.url, cf.name)}
+                  className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-emerald-600 text-white text-xs font-bold cursor-pointer"
+                >
+                  <Code2 className="h-3.5 w-3.5" /> {cf.name}
+                </button>
+              ))}
+            </div>
+            {(previewItem.imageUrls?.length || 0) > 0 && (
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                {previewItem.imageUrls?.map((img, i) => (
+                  <ResolvedImage
+                    key={i}
+                    src={img}
+                    alt={`Lab output ${i + 1}`}
+                    className="w-full h-28 object-cover rounded-xl border border-slate-200 dark:border-slate-800"
+                  />
+                ))}
+              </div>
             )}
             {(previewItem.practicalExamples || []).map((ex, i) => (
               <div key={ex.id || i} className="rounded-xl border border-slate-200 dark:border-slate-800 p-3 space-y-2">

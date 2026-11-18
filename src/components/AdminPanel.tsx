@@ -298,12 +298,30 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
   const [submissionGradeInput, setSubmissionGradeInput] = useState<string>('');
   const [submissionFeedbackInput, setSubmissionFeedbackInput] = useState<string>('');
 
-  // Loading States
+  // Loading & Confirmation States
   const [loading, setLoading] = useState<boolean>(true);
   const [actionLoading, setActionLoading] = useState<boolean>(false);
   const [errorMsg, setErrorMsg] = useState<string>('');
   const [successMsg, setSuccessMsg] = useState<string>('');
   const [uploadingField, setUploadingField] = useState<string | null>(null);
+  const [confirmModal, setConfirmModal] = useState<{
+    title: string;
+    message: string;
+    confirmLabel?: string;
+    danger?: boolean;
+    onConfirm: () => Promise<void> | void;
+  } | null>(null);
+  const [confirmProcessing, setConfirmProcessing] = useState<boolean>(false);
+
+  const requestConfirmation = (
+    title: string,
+    message: string,
+    onConfirm: () => Promise<void> | void,
+    confirmLabel?: string,
+    danger: boolean = true
+  ) => {
+    setConfirmModal({ title, message, confirmLabel, danger, onConfirm });
+  };
 
   // Search and Filters for Course List
   const [courseSearchQuery, setCourseSearchQuery] = useState<string>('');
@@ -907,10 +925,15 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
   };
 
   const handleDeleteUnit = (index: number) => {
-    if (!window.confirm(t('هل أنت متأكد من حذف هذه الوحدة وجميع دروسها؟', 'Are you sure you want to delete this unit and all its lessons?'))) return;
-    const currentUnits = (courseForm.units || []).filter((_, idx) => idx !== index);
-    setCourseForm(prev => ({ ...prev, units: currentUnits }));
-    if (editingUnitIndex === index) setEditingUnitIndex(null);
+    requestConfirmation(
+      t('حذف الوحدة', 'Delete Unit'),
+      t('هل أنت متأكد من حذف هذه الوحدة وجميع دروسها؟', 'Are you sure you want to delete this unit and all its lessons?'),
+      () => {
+        const currentUnits = (courseForm.units || []).filter((_, idx) => idx !== index);
+        setCourseForm(prev => ({ ...prev, units: currentUnits }));
+        if (editingUnitIndex === index) setEditingUnitIndex(null);
+      }
+    );
   };
 
   const handleAddOrUpdateLesson = () => {
@@ -974,16 +997,21 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
   };
 
   const handleDeleteLesson = (unitIndex: number, lessonIndex: number) => {
-    if (!window.confirm(t('هل أنت متأكد من حذف هذا الدرس؟', 'Are you sure you want to delete this lesson?'))) return;
-    const currentUnits = [...(courseForm.units || [])];
-    const targetUnit = { ...currentUnits[unitIndex] };
-    targetUnit.lessons = (targetUnit.lessons || []).filter((_, idx) => idx !== lessonIndex);
-    currentUnits[unitIndex] = targetUnit;
-    setCourseForm(prev => ({ ...prev, units: currentUnits }));
-    if (editingLessonUnitIndex === unitIndex && editingLessonIndex === lessonIndex) {
-      setEditingLessonIndex(null);
-      setEditingLessonUnitIndex(null);
-    }
+    requestConfirmation(
+      t('حذف الدرس', 'Delete Lesson'),
+      t('هل أنت متأكد من حذف هذا الدرس؟', 'Are you sure you want to delete this lesson?'),
+      () => {
+        const currentUnits = [...(courseForm.units || [])];
+        const targetUnit = { ...currentUnits[unitIndex] };
+        targetUnit.lessons = (targetUnit.lessons || []).filter((_, idx) => idx !== lessonIndex);
+        currentUnits[unitIndex] = targetUnit;
+        setCourseForm(prev => ({ ...prev, units: currentUnits }));
+        if (editingLessonUnitIndex === unitIndex && editingLessonIndex === lessonIndex) {
+          setEditingLessonIndex(null);
+          setEditingLessonUnitIndex(null);
+        }
+      }
+    );
   };
 
   const handleEditCourse = (course: Course) => {
@@ -1058,58 +1086,54 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
     setIsModalOpen(true);
   };
 
-  const handleDeleteCourse = async (id: string) => {
-    const confirmation = window.confirm(
+  const handleDeleteCourse = (id: string) => {
+    requestConfirmation(
+      t('تأكيد حذف المقرر', 'Confirm Subject Deletion'),
       t(
         'هل أنت متأكد من حذف هذا المقرر وجميع الملفات المرتبطة به (الصور، الفيديوهات، وملفات PDF)؟ لا يمكن التراجع عن هذه العملية.',
         'Are you sure you want to delete this subject and all its associated files (images, videos, and PDFs)? This action cannot be undone.'
-      )
+      ),
+      async () => {
+        setActionLoading(true);
+        try {
+          // 1. Remove the course from the UI immediately
+          setCourses(prev => prev.filter(c => c.id !== id));
+
+          // 2. Delete the selected course document and its media files from storage/database
+          await dbService.deleteCourse(id);
+
+          // 3. Refresh the course list automatically from the backend
+          const freshCourses = await dbService.getCourses();
+          setCourses(freshCourses.filter(c => c.id !== id));
+
+          // 4. Show a success message
+          triggerNotification(t('تم حذف المقرر بنجاح وجميع الملفات المرتبطة به.', 'Subject and all its associated files deleted successfully.'));
+        } catch (err: any) {
+          console.error("Course deletion failed:", err);
+          let errorMessage = '';
+          try {
+            const parsed = JSON.parse(err.message);
+            errorMessage = parsed.error || err.message;
+          } catch {
+            errorMessage = err.message || String(err);
+          }
+
+          triggerNotification(
+            t(`فشل حذف المقرر: ${errorMessage}`, `Failed to delete subject: ${errorMessage}`),
+            true
+          );
+
+          try {
+            const freshCourses = await dbService.getCourses();
+            setCourses(freshCourses);
+          } catch (refreshErr) {
+            console.error("Failed to restore course list after error:", refreshErr);
+          }
+        } finally {
+          setActionLoading(false);
+        }
+      }
     );
-    if (!confirmation) return;
-
-    setActionLoading(true);
-    try {
-      // 1. Remove the course from the UI immediately
-      setCourses(prev => prev.filter(c => c.id !== id));
-
-      // 2. Delete the selected course document and its media files from storage/database
-      await dbService.deleteCourse(id);
-
-      // 3. Refresh the course list automatically from the backend
-      const freshCourses = await dbService.getCourses();
-      setCourses(freshCourses.filter(c => c.id !== id));
-
-      // 4. Show a success message
-      triggerNotification(t('تم حذف المقرر بنجاح وجميع الملفات المرتبطة به.', 'Subject and all its associated files deleted successfully.'));
-    } catch (err: any) {
-      // Log the exact error to the console
-      console.error("Course deletion failed:", err);
-
-      // Parse and display the exact Firebase error
-      let errorMessage = '';
-      try {
-        const parsed = JSON.parse(err.message);
-        errorMessage = parsed.error || err.message;
-      } catch {
-        errorMessage = err.message || String(err);
-      }
-
-      // Show the exact Firebase error in the notification
-      triggerNotification(
-        t(`فشل حذف المقرر: ${errorMessage}`, `Failed to delete subject: ${errorMessage}`),
-        true
-      );
-
-      // Restore the list in case of failure to keep UI in sync
-      try {
-        const freshCourses = await dbService.getCourses();
-        setCourses(freshCourses);
-      } catch (refreshErr) {
-        console.error("Failed to restore course list after error:", refreshErr);
-      }
-    } finally {
-      setActionLoading(false);
-    }
   };
 
   const handleTogglePublishCourse = async (course: Course) => {
@@ -1154,15 +1178,20 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
     setIsModalOpen(true);
   };
 
-  const handleDeleteCategory = async (id: string) => {
-    if (!window.confirm(t('سيتم حذف القسم. هل أنت متأكد؟', 'Category will be deleted. Are you sure?'))) return;
-    try {
-      await dbService.deleteCategory(id);
-      setCategories(prev => prev.filter(c => c.id !== id));
-      triggerNotification(t('تم حذف القسم.', 'Category deleted.'));
-    } catch {
-      triggerNotification('Failed to delete category', true);
-    }
+  const handleDeleteCategory = (id: string) => {
+    requestConfirmation(
+      t('حذف الفرقة / القسم', 'Delete Category'),
+      t('سيتم حذف القسم. هل أنت متأكد؟', 'Category will be deleted. Are you sure?'),
+      async () => {
+        try {
+          await dbService.deleteCategory(id);
+          setCategories(prev => prev.filter(c => c.id !== id));
+          triggerNotification(t('تم حذف القسم.', 'Category deleted.'));
+        } catch {
+          triggerNotification('Failed to delete category', true);
+        }
+      }
+    );
   };
 
   // 3. Students Management
@@ -1197,159 +1226,193 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
     setIsModalOpen(true);
   };
 
-  const handleToggleStudentStatus = async (stud: Student) => {
+  const handleToggleStudentStatus = (stud: Student) => {
     const newStatus: 'active' | 'suspended' = stud.status === 'active' ? 'suspended' : 'active';
     const nextApproved = newStatus === 'active';
-    const actionText = newStatus === 'active' 
-      ? t('تفعيل وترخيص', 'activate') 
+    const actionText = newStatus === 'active'
+      ? t('تفعيل وترخيص', 'activate')
       : t('حظر / إيقاف', 'suspend');
 
-    if (!window.confirm(t(`هل أنت متأكد من ${actionText} حساب الطالب (${stud.name})؟`, `Are you sure you want to ${actionText} student (${stud.name})?`))) return;
-    setActionLoading(true);
-    try {
-      await dbService.updateStudent(stud.id, { status: newStatus, isApproved: nextApproved } as any);
-      setStudents(prev => prev.map(s => s.id === stud.id ? { ...s, status: newStatus, isApproved: nextApproved } : s));
+    requestConfirmation(
+      t(`${actionText} حساب الطالب`, `${actionText} Student Account`),
+      t(`هل أنت متأكد من ${actionText} حساب الطالب (${stud.name})؟`, `Are you sure you want to ${actionText} student (${stud.name})?`),
+      async () => {
+        setActionLoading(true);
+        try {
+          await dbService.updateStudent(stud.id, { status: newStatus, isApproved: nextApproved } as any);
+          setStudents(prev => prev.map(s => s.id === stud.id ? { ...s, status: newStatus, isApproved: nextApproved } : s));
 
-      const cleanEmail = stud.email.trim().toLowerCase();
-      const allUsers = await authService.getAllUsers();
-      const matchingUser = allUsers.find(u => u.email.toLowerCase() === cleanEmail);
-      if (matchingUser) {
-        await authService.updateUser(matchingUser.id, { status: newStatus, isApproved: nextApproved } as any);
-      }
+          const cleanEmail = stud.email.trim().toLowerCase();
+          const allUsers = await authService.getAllUsers();
+          const matchingUser = allUsers.find(u => u.email.toLowerCase() === cleanEmail);
+          if (matchingUser) {
+            await authService.updateUser(matchingUser.id, { status: newStatus, isApproved: nextApproved } as any);
+          }
 
-      logAdminAction(
-        newStatus === 'active' ? 'approve' : 'suspend',
-        'student',
-        stud.name,
-        `${newStatus === 'active' ? 'Activated' : 'Suspended'} student (${stud.email})`
-      );
+          logAdminAction(
+            newStatus === 'active' ? 'approve' : 'suspend',
+            'student',
+            stud.name,
+            `${newStatus === 'active' ? 'Activated' : 'Suspended'} student (${stud.email})`
+          );
 
-      triggerNotification(newStatus === 'active' 
-        ? t('تم تفعيل حساب الطالب بنجاح!', 'Student account activated!') 
-        : t('تم حظر/إيقاف حساب الطالب من المنصة.', 'Student account suspended.')
-      );
-    } catch (err: any) {
-      console.error(err);
-      triggerNotification(t('خطأ أثناء تحديث حالة الطالب', 'Error updating student status'), true);
-    } finally {
-      setActionLoading(false);
-    }
+          triggerNotification(newStatus === 'active'
+            ? t('تم تفعيل حساب الطالب بنجاح!', 'Student account activated!')
+            : t('تم حظر/إيقاف حساب الطالب من المنصة.', 'Student account suspended.')
+          );
+        } catch (err: any) {
+          console.error(err);
+          triggerNotification(t('خطأ أثناء تحديث حالة الطالب', 'Error updating student status'), true);
+        } finally {
+          setActionLoading(false);
+        }
+      },
+      newStatus === 'active' ? t('تأكيد التفعيل', 'Confirm Activate') : t('تأكيد الإيقاف', 'Confirm Suspend'),
+      newStatus !== 'active'
+    );
   };
 
-  const handleAcceptStudent = async (stud: Student) => {
-    if (!window.confirm(t(`هل أنت متأكد من قبول حساب الطالب (${stud.name}) وتفعيله للدخول للمنصة؟`, `Accept and activate student (${stud.name})?`))) return;
-    setActionLoading(true);
-    try {
-      await dbService.updateStudent(stud.id, { status: 'active', isApproved: true } as any);
-      setStudents(prev => prev.map(s => s.id === stud.id ? { ...s, status: 'active', isApproved: true } : s));
-      const cleanEmail = stud.email.trim().toLowerCase();
-      const allUsers = await authService.getAllUsers();
-      const matchingUser = allUsers.find(u => u.email.toLowerCase() === cleanEmail);
-      if (matchingUser) {
-        await authService.updateUser(matchingUser.id, { status: 'active', isApproved: true } as any);
-      }
+  const handleAcceptStudent = (stud: Student) => {
+    requestConfirmation(
+      t('قبول وتفعيل الطالب', 'Approve Student'),
+      t(`هل أنت متأكد من قبول حساب الطالب (${stud.name}) وتفعيله للدخول للمنصة؟`, `Accept and activate student (${stud.name})?`),
+      async () => {
+        setActionLoading(true);
+        try {
+          await dbService.updateStudent(stud.id, { status: 'active', isApproved: true } as any);
+          setStudents(prev => prev.map(s => s.id === stud.id ? { ...s, status: 'active', isApproved: true } : s));
+          const cleanEmail = stud.email.trim().toLowerCase();
+          const allUsers = await authService.getAllUsers();
+          const matchingUser = allUsers.find(u => u.email.toLowerCase() === cleanEmail);
+          if (matchingUser) {
+            await authService.updateUser(matchingUser.id, { status: 'active', isApproved: true } as any);
+          }
 
-      logAdminAction('approve', 'student', stud.name, `Approved registration for ${stud.email}`);
+          logAdminAction('approve', 'student', stud.name, `Approved registration for ${stud.email}`);
 
-      try {
-        await dbService.addNotification({
-          userId: matchingUser ? matchingUser.id : stud.id,
-          titleAr: `تم تفعيل وقبول حسابك الأكاديمي بنجاح`,
-          titleEn: `Your Academic Account Has Been Approved`,
-          bodyAr: `مرحباً بك في منصة Eng/Mohamed abdal tawab - الجامعة التكنولوجية قسم IT. تم اعتماد حسابك بنجاح وأصبح بإمكانك الاطلاع على المحاضرات والسكاشن والامتحانات مجاناً بالكامل.`,
-          bodyEn: `Welcome to Eng/Mohamed abdal tawab IT University Platform! Your account is now active with free access to lectures, sections, and exams.`,
-          isRead: false,
-          createdAt: new Date().toISOString(),
-          type: 'course_activated'
-        });
-      } catch (notifErr) {
-        console.warn("Could not dispatch welcome notification:", notifErr);
-      }
+          try {
+            await dbService.addNotification({
+              userId: matchingUser ? matchingUser.id : stud.id,
+              titleAr: `تم تفعيل وقبول حسابك الأكاديمي بنجاح`,
+              titleEn: `Your Academic Account Has Been Approved`,
+              bodyAr: `مرحباً بك في منصة Eng/Mohamed abdal tawab - الجامعة التكنولوجية قسم IT. تم اعتماد حسابك بنجاح وأصبح بإمكانك الاطلاع على المحاضرات والسكاشن والامتحانات مجاناً بالكامل.`,
+              bodyEn: `Welcome to Eng/Mohamed abdal tawab IT University Platform! Your account is now active with free access to lectures, sections, and exams.`,
+              isRead: false,
+              createdAt: new Date().toISOString(),
+              type: 'course_activated'
+            });
+          } catch (notifErr) {
+            console.warn("Could not dispatch welcome notification:", notifErr);
+          }
 
-      triggerNotification(t('تم قبول حساب الطالب وتفعيله بنجاح وإرسال إشعار فوري له', 'Student account approved and notified successfully'));
-    } catch (err: any) {
-      console.error(err);
-      triggerNotification(t('خطأ أثناء تفعيل حساب الطالب', 'Error approving student account'), true);
-    } finally {
-      setActionLoading(false);
-    }
+          triggerNotification(t('تم قبول حساب الطالب وتفعيله بنجاح وإرسال إشعار فوري له', 'Student account approved and notified successfully'));
+        } catch (err: any) {
+          console.error(err);
+          triggerNotification(t('خطأ أثناء تفعيل حساب الطالب', 'Error approving student account'), true);
+        } finally {
+          setActionLoading(false);
+        }
+      },
+      t('تأكيد القبول', 'Confirm Approval'),
+      false
+    );
   };
 
-  const handleRejectStudent = async (stud: Student) => {
-    if (!window.confirm(t(`هل أنت متأكد من رفض طلب تسجيل الطالب (${stud.name})؟`, `Reject student registration (${stud.name})?`))) return;
-    setActionLoading(true);
-    try {
-      await dbService.updateStudent(stud.id, { status: 'rejected', isApproved: false } as any);
-      setStudents(prev => prev.map(s => s.id === stud.id ? { ...s, status: 'rejected', isApproved: false } : s));
-      const cleanEmail = stud.email.trim().toLowerCase();
-      const allUsers = await authService.getAllUsers();
-      const matchingUser = allUsers.find(u => u.email.toLowerCase() === cleanEmail);
-      if (matchingUser) {
-        await authService.updateUser(matchingUser.id, { status: 'rejected', isApproved: false } as any);
+  const handleRejectStudent = (stud: Student) => {
+    requestConfirmation(
+      t('رفض طلب التسجيل', 'Reject Registration'),
+      t(`هل أنت متأكد من رفض طلب تسجيل الطالب (${stud.name})؟`, `Reject student registration (${stud.name})?`),
+      async () => {
+        setActionLoading(true);
+        try {
+          await dbService.updateStudent(stud.id, { status: 'rejected', isApproved: false } as any);
+          setStudents(prev => prev.map(s => s.id === stud.id ? { ...s, status: 'rejected', isApproved: false } : s));
+          const cleanEmail = stud.email.trim().toLowerCase();
+          const allUsers = await authService.getAllUsers();
+          const matchingUser = allUsers.find(u => u.email.toLowerCase() === cleanEmail);
+          if (matchingUser) {
+            await authService.updateUser(matchingUser.id, { status: 'rejected', isApproved: false } as any);
+          }
+          logAdminAction('reject', 'student', stud.name, `Rejected registration for ${stud.email}`);
+          triggerNotification(t('تم رفض طلب تسجيل الطالب', 'Student registration rejected'));
+        } catch (err: any) {
+          console.error(err);
+          triggerNotification(t('خطأ أثناء رفض الحساب', 'Error rejecting student account'), true);
+        } finally {
+          setActionLoading(false);
+        }
       }
-      logAdminAction('reject', 'student', stud.name, `Rejected registration for ${stud.email}`);
-      triggerNotification(t('تم رفض طلب تسجيل الطالب', 'Student registration rejected'));
-    } catch (err: any) {
-      console.error(err);
-      triggerNotification(t('خطأ أثناء رفض الحساب', 'Error rejecting student account'), true);
-    } finally {
-      setActionLoading(false);
-    }
+    );
   };
 
-  const handleDeleteStudent = async (id: string, email?: string) => {
-    if (!window.confirm(t('هل أنت متأكد تماماً من حذف هذا الطالب نهائياً من المنصة؟ سيفقد الحساب والدخول كلياً.', 'Are you sure you want to permanently delete this student from the platform?'))) return;
-    setActionLoading(true);
-    try {
-      await dbService.deleteStudent(id, email);
-      if (email) {
-        await authService.deleteUser(id, email);
+  const handleDeleteStudent = (id: string, email?: string) => {
+    requestConfirmation(
+      t('حذف الطالب نهائياً', 'Delete Student'),
+      t('هل أنت متأكد تماماً من حذف هذا الطالب نهائياً من المنصة؟ سيفقد الحساب والدخول كلياً.', 'Are you sure you want to permanently delete this student from the platform?'),
+      async () => {
+        setActionLoading(true);
+        try {
+          await dbService.deleteStudent(id, email);
+          if (email) {
+            await authService.deleteUser(id, email);
+          }
+          setStudents(prev => prev.filter(s => s.id !== id && (email ? s.email?.toLowerCase() !== email.toLowerCase() : true)));
+          setOrders(prev => prev.filter(o => o.studentId !== id && (email ? o.studentEmail?.toLowerCase() !== email.toLowerCase() : true)));
+          triggerNotification(t('تم حذف الطالب نهائياً من المنصة بنجاح.', 'Student deleted from platform successfully.'));
+        } catch (err: any) {
+          console.error(err);
+          triggerNotification(t('خطأ أثناء حذف الطالب', 'Error deleting student'), true);
+        } finally {
+          setActionLoading(false);
+        }
       }
-      setStudents(prev => prev.filter(s => s.id !== id && (email ? s.email?.toLowerCase() !== email.toLowerCase() : true)));
-      setOrders(prev => prev.filter(o => o.studentId !== id && (email ? o.studentEmail?.toLowerCase() !== email.toLowerCase() : true)));
-      triggerNotification(t('تم حذف الطالب نهائياً من المنصة بنجاح.', 'Student deleted from platform successfully.'));
-    } catch (err: any) {
-      console.error(err);
-      triggerNotification(t('خطأ أثناء حذف الطالب', 'Error deleting student'), true);
-    } finally {
-      setActionLoading(false);
-    }
+    );
   };
 
-  const handleClearAllStudents = async () => {
-    if (!window.confirm(t(
-      'هل أنت متأكد من رغبتك في مسح جميع حسابات الطلاب المسجلة، طلبات الاشتراك، وتصفير المنصة بالكامل للبدء بتسجيلات جديدة؟ لا يمكن التراجع عن هذه الخطوة!',
-      'Are you sure you want to delete all registered student accounts, subscription orders, and reset the platform for new registrations? This cannot be undone!'
-    ))) return;
-    setActionLoading(true);
-    try {
-      await (dbService as any).clearAllStudentsAndOrders();
-      setStudents([]);
-      setOrders([]);
-      triggerNotification(t('تمت إزالة جميع الحسابات المسجلة وتنظيف المنصة لاستقبال تسجيلات جديدة بنجاح! 🚀', 'All student accounts removed and platform reset successfully!'));
-    } catch (err: any) {
-      console.error(err);
-      triggerNotification(t('خطأ أثناء مسح حسابات الطلاب', 'Error resetting student accounts'), true);
-    } finally {
-      setActionLoading(false);
-    }
+  const handleClearAllStudents = () => {
+    requestConfirmation(
+      t('تصفير جميع حسابات الطلاب', 'Reset All Student Accounts'),
+      t(
+        'هل أنت متأكد من رغبتك في مسح جميع حسابات الطلاب المسجلة، طلبات الاشتراك، وتصفير المنصة بالكامل للبدء بتسجيلات جديدة؟ لا يمكن التراجع عن هذه الخطوة!',
+        'Are you sure you want to delete all registered student accounts, subscription orders, and reset the platform for new registrations? This cannot be undone!'
+      ),
+      async () => {
+        setActionLoading(true);
+        try {
+          await (dbService as any).clearAllStudentsAndOrders();
+          setStudents([]);
+          setOrders([]);
+          triggerNotification(t('تمت إزالة جميع الحسابات المسجلة وتنظيف المنصة لاستقبال تسجيلات جديدة بنجاح! 🚀', 'All student accounts removed and platform reset successfully!'));
+        } catch (err: any) {
+          console.error(err);
+          triggerNotification(t('خطأ أثناء مسح حسابات الطلاب', 'Error resetting student accounts'), true);
+        } finally {
+          setActionLoading(false);
+        }
+      }
+    );
   };
 
-  const handleForceLogoutAll = async () => {
-    if (!window.confirm(t(
-      'هل أنت متأكد من رغبتك في إخراج (تسجيل خروج) جميع الطلاب والحسابات المسجلة حالياً من المنصة على جميع أجهزتهم دون حذف الحسابات؟ سيضطرون لتسجيل الدخول مرة أخرى باستخدام بريدهم وكلمة المرور.',
-      'Are you sure you want to log out all currently active student accounts across all devices without deleting their accounts? They will have to log in again.'
-    ))) return;
-    setActionLoading(true);
-    try {
-      await (dbService as any).forceLogoutAllUsers();
-      triggerNotification(t('تم إخراج جميع الحسابات المسجلة من المنصة على جميع الأجهزة بنجاح! ✅', 'All accounts have been logged out across all devices successfully!'));
-    } catch (err: any) {
-      console.error(err);
-      triggerNotification(t('خطأ أثناء تنفيذ تسجيل الخروج الجماعي', 'Error performing global logout'), true);
-    } finally {
-      setActionLoading(false);
-    }
+  const handleForceLogoutAll = () => {
+    requestConfirmation(
+      t('إخراج جميع الحسابات', 'Force Logout All Users'),
+      t(
+        'هل أنت متأكد من رغبتك في إخراج (تسجيل خروج) جميع الطلاب والحسابات المسجلة حالياً من المنصة على جميع أجهزتهم دون حذف الحسابات؟ سيضطرون لتسجيل الدخول مرة أخرى باستخدام بريدهم وكلمة المرور.',
+        'Are you sure you want to log out all currently active student accounts across all devices without deleting their accounts? They will have to log in again.'
+      ),
+      async () => {
+        setActionLoading(true);
+        try {
+          await (dbService as any).forceLogoutAllUsers();
+          triggerNotification(t('تم إخراج جميع الحسابات المسجلة من المنصة على جميع الأجهزة بنجاح! ✅', 'All accounts have been logged out across all devices successfully!'));
+        } catch (err: any) {
+          console.error(err);
+          triggerNotification(t('خطأ أثناء تنفيذ تسجيل الخروج الجماعي', 'Error performing global logout'), true);
+        } finally {
+          setActionLoading(false);
+        }
+      }
+    );
   };
 
   // 4. Articles Management
@@ -1386,18 +1449,23 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
     setIsModalOpen(true);
   };
 
-  const handleDeleteArticle = async (id: string) => {
-    if (!window.confirm(t('حذف هذا المقال؟', 'Delete this article?'))) return;
-    setActionLoading(true);
-    try {
-      await dbService.deleteArticle(id);
-      setArticles(prev => prev.filter(a => a.id !== id));
-      triggerNotification(t('تم حذف المقال بنجاح.', 'Article deleted successfully.'));
-    } catch {
-      triggerNotification('Error deleting article', true);
-    } finally {
-      setActionLoading(false);
-    }
+  const handleDeleteArticle = (id: string) => {
+    requestConfirmation(
+      t('حذف المقال', 'Delete Article'),
+      t('حذف هذا المقال؟', 'Delete this article?'),
+      async () => {
+        setActionLoading(true);
+        try {
+          await dbService.deleteArticle(id);
+          setArticles(prev => prev.filter(a => a.id !== id));
+          triggerNotification(t('تم حذف المقال بنجاح.', 'Article deleted successfully.'));
+        } catch {
+          triggerNotification('Error deleting article', true);
+        } finally {
+          setActionLoading(false);
+        }
+      }
+    );
   };
 
   // 5. News Management
@@ -1433,18 +1501,23 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
     setIsModalOpen(true);
   };
 
-  const handleDeleteNews = async (id: string) => {
-    if (!window.confirm(t('حذف هذا الخبر؟', 'Delete this news?'))) return;
-    setActionLoading(true);
-    try {
-      await dbService.deleteNews(id);
-      setNews(prev => prev.filter(n => n.id !== id));
-      triggerNotification(t('تم حذف الخبر بنجاح.', 'News item deleted successfully.'));
-    } catch {
-      triggerNotification('Error', true);
-    } finally {
-      setActionLoading(false);
-    }
+  const handleDeleteNews = (id: string) => {
+    requestConfirmation(
+      t('حذف الخبر', 'Delete News'),
+      t('حذف هذا الخبر؟', 'Delete this news?'),
+      async () => {
+        setActionLoading(true);
+        try {
+          await dbService.deleteNews(id);
+          setNews(prev => prev.filter(n => n.id !== id));
+          triggerNotification(t('تم حذف الخبر بنجاح.', 'News item deleted successfully.'));
+        } catch {
+          triggerNotification('Error', true);
+        } finally {
+          setActionLoading(false);
+        }
+      }
+    );
   };
 
   // 6. Reviews Management (Approve / Reject / CRUD)
@@ -1459,18 +1532,23 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
     }
   };
 
-  const handleDeleteReview = async (id: string) => {
-    if (!window.confirm(t('حذف هذا التقييم؟', 'Delete this review?'))) return;
-    setActionLoading(true);
-    try {
-      await dbService.deleteReview(id);
-      setReviews(prev => prev.filter(r => r.id !== id));
-      triggerNotification(t('تم حذف التقييم بنجاح.', 'Review deleted successfully.'));
-    } catch {
-      triggerNotification('Error deleting review', true);
-    } finally {
-      setActionLoading(false);
-    }
+  const handleDeleteReview = (id: string) => {
+    requestConfirmation(
+      t('حذف التقييم', 'Delete Review'),
+      t('حذف هذا التقييم؟', 'Delete this review?'),
+      async () => {
+        setActionLoading(true);
+        try {
+          await dbService.deleteReview(id);
+          setReviews(prev => prev.filter(r => r.id !== id));
+          triggerNotification(t('تم حذف التقييم بنجاح.', 'Review deleted successfully.'));
+        } catch {
+          triggerNotification('Error deleting review', true);
+        } finally {
+          setActionLoading(false);
+        }
+      }
+    );
   };
 
   // 7. Messages & Live Chat Management
@@ -1484,41 +1562,56 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
     }
   };
 
-  const handleDeleteMessage = async (id: string) => {
-    if (!window.confirm(t('هل أنت متأكد تماماً من حذف هذه الرسالة نهائياً من صندوق الوارد؟', 'Are you sure you want to permanently delete this message?'))) return;
-    try {
-      await dbService.deleteMessage(id);
-      setMessages(prev => prev.filter(m => m.id !== id));
-      triggerNotification(t('تم حذف الرسالة بنجاح من صندوق الوارد.', 'Message deleted successfully.'));
-    } catch {
-      triggerNotification(t('خطأ أثناء حذف الرسالة', 'Error deleting message'), true);
-    }
+  const handleDeleteMessage = (id: string) => {
+    requestConfirmation(
+      t('حذف الرسالة', 'Delete Message'),
+      t('هل أنت متأكد تماماً من حذف هذه الرسالة نهائياً من صندوق الوارد؟', 'Are you sure you want to permanently delete this message?'),
+      async () => {
+        try {
+          await dbService.deleteMessage(id);
+          setMessages(prev => prev.filter(m => m.id !== id));
+          triggerNotification(t('تم حذف الرسالة بنجاح من صندوق الوارد.', 'Message deleted successfully.'));
+        } catch {
+          triggerNotification(t('خطأ أثناء حذف الرسالة', 'Error deleting message'), true);
+        }
+      }
+    );
   };
 
-  const handleDeleteChatMessage = async (msgId: string) => {
+  const handleDeleteChatMessage = (msgId: string) => {
     if (!selectedChatStudentId) return;
-    if (!window.confirm(t('هل أنت متأكد من حذف هذه الرسالة من المحادثة؟', 'Are you sure you want to delete this chat message?'))) return;
-    try {
-      await dbService.deleteChatMessage(selectedChatStudentId, msgId);
-      setLiveChatMessages(prev => prev.filter(m => m.id !== msgId));
-      triggerNotification(t('تم حذف الرسالة من المحادثة بنجاح.', 'Chat message deleted successfully.'));
-    } catch (err) {
-      console.error(err);
-      triggerNotification(t('خطأ أثناء حذف الرسالة', 'Error deleting message'), true);
-    }
+    requestConfirmation(
+      t('حذف رسالة المحادثة', 'Delete Chat Message'),
+      t('هل أنت متأكد من حذف هذه الرسالة من المحادثة؟', 'Are you sure you want to delete this chat message?'),
+      async () => {
+        try {
+          await dbService.deleteChatMessage(selectedChatStudentId, msgId);
+          setLiveChatMessages(prev => prev.filter(m => m.id !== msgId));
+          triggerNotification(t('تم حذف الرسالة من المحادثة بنجاح.', 'Chat message deleted successfully.'));
+        } catch (err) {
+          console.error(err);
+          triggerNotification(t('خطأ أثناء حذف الرسالة', 'Error deleting message'), true);
+        }
+      }
+    );
   };
 
-  const handleClearStudentChat = async () => {
+  const handleClearStudentChat = () => {
     if (!selectedChatStudentId) return;
-    if (!window.confirm(t('هل أنت متأكد من حذف هذه المحادثة بالكامل وجميع الرسائل؟ لن يمكن استرجاعها.', 'Are you sure you want to delete this entire chat conversation and all messages? This cannot be undone.'))) return;
-    try {
-      await dbService.deleteStudentChat(selectedChatStudentId);
-      setLiveChatMessages([]);
-      triggerNotification(t('تم حذف المحادثة بالكامل بنجاح.', 'Chat deleted successfully.'));
-    } catch (err) {
-      console.error(err);
-      triggerNotification(t('خطأ أثناء حذف المحادثة', 'Error deleting chat'), true);
-    }
+    requestConfirmation(
+      t('حذف المحادثة بالكامل', 'Delete Conversation'),
+      t('هل أنت متأكد من حذف هذه المحادثة بالكامل وجميع الرسائل؟ لن يمكن استرجاعها.', 'Are you sure you want to delete this entire chat conversation and all messages? This cannot be undone.'),
+      async () => {
+        try {
+          await dbService.deleteStudentChat(selectedChatStudentId);
+          setLiveChatMessages([]);
+          triggerNotification(t('تم حذف المحادثة بالكامل بنجاح.', 'Chat deleted successfully.'));
+        } catch (err) {
+          console.error(err);
+          triggerNotification(t('خطأ أثناء حذف المحادثة', 'Error deleting chat'), true);
+        }
+      }
+    );
   };
 
   const handleSendAdminReply = async (e: React.FormEvent) => {
@@ -1574,19 +1667,24 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
     }
   };
 
-  const handleDeleteAdmin = async (id: string) => {
+  const handleDeleteAdmin = (id: string) => {
     if (admins.length <= 1) {
       triggerNotification(t('لا يمكن حذف المسؤول الأخير!', 'Cannot delete the last administrator!'), true);
       return;
     }
-    if (!window.confirm(t('هل تريد إزالة صلاحيات هذا المسؤول؟', 'Are you sure you want to remove this administrator?'))) return;
-    try {
-      await dbService.deleteAdmin(id);
-      setAdmins(prev => prev.filter(a => a.id !== id));
-      triggerNotification(t('تم إزالة المسؤول.', 'Administrator removed.'));
-    } catch {
-      triggerNotification('Error removing admin', true);
-    }
+    requestConfirmation(
+      t('إزالة مسؤول', 'Remove Administrator'),
+      t('هل تريد إزالة صلاحيات هذا المسؤول؟', 'Are you sure you want to remove this administrator?'),
+      async () => {
+        try {
+          await dbService.deleteAdmin(id);
+          setAdmins(prev => prev.filter(a => a.id !== id));
+          triggerNotification(t('تم إزالة المسؤول.', 'Administrator removed.'));
+        } catch {
+          triggerNotification('Error removing admin', true);
+        }
+      }
+    );
   };
 
   // --- Teacher CRUD Handlers ---
@@ -1621,15 +1719,20 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
     setIsModalOpen(true);
   };
 
-  const handleDeleteTeacher = async (id: string) => {
-    if (!window.confirm(t('هل أنت متأكد من حذف عضو هيئة التدريس هذا؟', 'Are you sure you want to delete this faculty supervisor?'))) return;
-    try {
-      await dbService.deleteTeacher(id);
-      setTeachers(prev => prev.filter(t => t.id !== id));
-      triggerNotification(t('تم حذف عضو هيئة التدريس بنجاح.', 'Faculty supervisor deleted successfully.'));
-    } catch {
-      triggerNotification('Error deleting supervisor', true);
-    }
+  const handleDeleteTeacher = (id: string) => {
+    requestConfirmation(
+      t('حذف عضو هيئة التدريس', 'Delete Faculty Supervisor'),
+      t('هل أنت متأكد من حذف عضو هيئة التدريس هذا؟', 'Are you sure you want to delete this faculty supervisor?'),
+      async () => {
+        try {
+          await dbService.deleteTeacher(id);
+          setTeachers(prev => prev.filter(t => t.id !== id));
+          triggerNotification(t('تم حذف عضو هيئة التدريس بنجاح.', 'Faculty supervisor deleted successfully.'));
+        } catch {
+          triggerNotification('Error deleting supervisor', true);
+        }
+      }
+    );
   };
 
   // --- Coupon CRUD Handlers ---
@@ -1663,15 +1766,20 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
     setIsModalOpen(true);
   };
 
-  const handleDeleteCoupon = async (id: string) => {
-    if (!window.confirm(t('هل أنت متأكد من حذف هذا الكوبون؟', 'Are you sure you want to delete this coupon?'))) return;
-    try {
-      await dbService.deleteCoupon(id);
-      setCoupons(prev => prev.filter(c => c.id !== id));
-      triggerNotification(t('تم حذف الكوبون بنجاح.', 'Coupon deleted.'));
-    } catch {
-      triggerNotification('Error deleting coupon', true);
-    }
+  const handleDeleteCoupon = (id: string) => {
+    requestConfirmation(
+      t('حذف الكوبون', 'Delete Coupon'),
+      t('هل أنت متأكد من حذف هذا الكوبون؟', 'Are you sure you want to delete this coupon?'),
+      async () => {
+        try {
+          await dbService.deleteCoupon(id);
+          setCoupons(prev => prev.filter(c => c.id !== id));
+          triggerNotification(t('تم حذف الكوبون بنجاح.', 'Coupon deleted.'));
+        } catch {
+          triggerNotification('Error deleting coupon', true);
+        }
+      }
+    );
   };
 
   // --- Order CRUD & Approval Handlers ---
@@ -1766,8 +1874,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
     }
   };
 
-  const handleRejectOrder = async (ord: Order, skipConfirm?: boolean) => {
-    if (!skipConfirm && !window.confirm(t('هل أنت متأكد من رفض طلب الاشتراك هذا؟', 'Are you sure you want to reject this subscription request?'))) return;
+  const executeRejectOrder = async (ord: Order) => {
     setActionLoading(true);
     try {
       const cleanEmail = (ord.studentEmail || '').trim().toLowerCase();
@@ -1787,7 +1894,6 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
       }
       setOrders(prev => prev.map(o => matchingOrders.some(m => m.id === o.id) ? { ...o, status: 'rejected' } : o));
 
-      // Remove course access if present across all matching students and users
       const matchingStudents = students.filter(s => {
         const sEmail = (s.email || '').trim().toLowerCase();
         const sPhone = (s.phone || '').replace(/\D/g, '');
@@ -1829,6 +1935,18 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
     } finally {
       setActionLoading(false);
     }
+  };
+
+  const handleRejectOrder = async (ord: Order, skipConfirm?: boolean) => {
+    if (skipConfirm) {
+      await executeRejectOrder(ord);
+      return;
+    }
+    requestConfirmation(
+      t('رفض طلب التفعيل', 'Reject Request'),
+      t('هل أنت متأكد من رفض طلب الاشتراك هذا؟', 'Are you sure you want to reject this subscription request?'),
+      () => executeRejectOrder(ord)
+    );
   };
 
   const handleOrderSubmit = async (e: React.FormEvent) => {
@@ -1880,15 +1998,20 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
     setIsModalOpen(true);
   };
 
-  const handleDeleteOrder = async (id: string) => {
-    if (!window.confirm(t('هل أنت متأكد من إلغاء/حذف اشتراك الطالب هذا؟', 'Are you sure you want to cancel/delete this enrollment?'))) return;
-    try {
-      await dbService.deleteOrder(id);
-      setOrders(prev => prev.filter(o => o.id !== id));
-      triggerNotification(t('تم حذف الاشتراك بنجاح.', 'Enrollment deleted successfully.'));
-    } catch {
-      triggerNotification('Error deleting enrollment', true);
-    }
+  const handleDeleteOrder = (id: string) => {
+    requestConfirmation(
+      t('حذف الاشتراك', 'Delete Enrollment'),
+      t('هل أنت متأكد من إلغاء/حذف اشتراك الطالب هذا؟', 'Are you sure you want to cancel/delete this enrollment?'),
+      async () => {
+        try {
+          await dbService.deleteOrder(id);
+          setOrders(prev => prev.filter(o => o.id !== id));
+          triggerNotification(t('تم حذف الاشتراك بنجاح.', 'Enrollment deleted successfully.'));
+        } catch {
+          triggerNotification('Error deleting enrollment', true);
+        }
+      }
+    );
   };
 
   // --- Quiz (Electronic Exam) Handlers ---
@@ -1959,15 +2082,20 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
     }
   };
 
-  const handleDeleteQuiz = async (id: string) => {
-    if (!window.confirm(t('حذف هذا الامتحان الإلكتروني نهائياً؟', 'Are you sure you want to delete this exam?'))) return;
-    try {
-      await dbService.deleteQuiz(id);
-      setQuizzes(prev => prev.filter(q => q.id !== id));
-      triggerNotification(t('تم حذف الامتحان بنجاح.', 'Exam deleted.'));
-    } catch {
-      triggerNotification('Error deleting quiz', true);
-    }
+  const handleDeleteQuiz = (id: string) => {
+    requestConfirmation(
+      t('حذف الامتحان الإلكتروني', 'Delete Online Exam'),
+      t('حذف هذا الامتحان الإلكتروني نهائياً؟', 'Are you sure you want to delete this exam?'),
+      async () => {
+        try {
+          await dbService.deleteQuiz(id);
+          setQuizzes(prev => prev.filter(q => q.id !== id));
+          triggerNotification(t('تم حذف الامتحان بنجاح.', 'Exam deleted.'));
+        } catch {
+          triggerNotification('Error deleting quiz', true);
+        }
+      }
+    );
   };
 
   // --- Assignment Task & Submission Handlers ---
@@ -2049,15 +2177,20 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
     }
   };
 
-  const handleDeleteAssignmentTask = async (id: string) => {
-    if (!window.confirm(t('هل أنت متأكد من حذف تكليف الواجب هذا؟', 'Are you sure you want to delete this assignment task?'))) return;
-    try {
-      await dbService.deleteAssignmentTask(id);
-      setAssignmentTasks(prev => prev.filter(a => a.id !== id));
-      triggerNotification(t('تم حذف تكليف الواجب.', 'Assignment deleted.'));
-    } catch {
-      triggerNotification('Error deleting assignment', true);
-    }
+  const handleDeleteAssignmentTask = (id: string) => {
+    requestConfirmation(
+      t('حذف التكليف', 'Delete Assignment'),
+      t('هل أنت متأكد من حذف تكليف الواجب هذا؟', 'Are you sure you want to delete this assignment task?'),
+      async () => {
+        try {
+          await dbService.deleteAssignmentTask(id);
+          setAssignmentTasks(prev => prev.filter(a => a.id !== id));
+          triggerNotification(t('تم حذف تكليف الواجب.', 'Assignment deleted.'));
+        } catch {
+          triggerNotification('Error deleting assignment', true);
+        }
+      }
+    );
   };
 
   const handleSaveGradeSubmission = async (e: React.FormEvent) => {
@@ -2082,15 +2215,20 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
     }
   };
 
-  const handleDeleteSubmission = async (id: string) => {
-    if (!window.confirm(t('هل أنت متأكد من حذف تسليم هذا الواجب؟', 'Delete this student assignment submission?'))) return;
-    try {
-      await dbService.deleteAssignmentSubmission(id);
-      setAssignmentSubmissions(prev => prev.filter(s => s.id !== id));
-      triggerNotification(t('تم حذف تسليم الواجب.', 'Submission deleted.'));
-    } catch {
-      triggerNotification('Error deleting submission', true);
-    }
+  const handleDeleteSubmission = (id: string) => {
+    requestConfirmation(
+      t('حذف التسليم', 'Delete Submission'),
+      t('هل أنت متأكد من حذف تسليم هذا الواجب؟', 'Delete this student assignment submission?'),
+      async () => {
+        try {
+          await dbService.deleteAssignmentSubmission(id);
+          setAssignmentSubmissions(prev => prev.filter(s => s.id !== id));
+          triggerNotification(t('تم حذف تسليم الواجب.', 'Submission deleted.'));
+        } catch {
+          triggerNotification('Error deleting submission', true);
+        }
+      }
+    );
   };
 
   // Educational Content CRUD Handlers
@@ -2138,16 +2276,21 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
     }
   };
 
-  const handleDeleteLecture = async (id: string) => {
-    if (!window.confirm(t('هل أنت متأكد من حذف هذه المحاضرة؟', 'Delete this lecture?'))) return;
-    try {
-      const target = lectures.find(l => l.id === id);
-      await dbService.deleteLecture(id);
-      logAdminAction('delete', 'lecture', target?.title || id, 'Deleted lecture');
-      triggerNotification(t('تم حذف المحاضرة بنجاح', 'Lecture deleted'));
-    } catch (err: any) {
-      triggerNotification(err.message, true);
-    }
+  const handleDeleteLecture = (id: string) => {
+    requestConfirmation(
+      t('حذف المحاضرة', 'Delete Lecture'),
+      t('هل أنت متأكد من حذف هذه المحاضرة؟', 'Delete this lecture?'),
+      async () => {
+        try {
+          const target = lectures.find(l => l.id === id);
+          await dbService.deleteLecture(id);
+          logAdminAction('delete', 'lecture', target?.title || id, 'Deleted lecture');
+          triggerNotification(t('تم حذف المحاضرة بنجاح', 'Lecture deleted'));
+        } catch (err: any) {
+          triggerNotification(err.message, true);
+        }
+      }
+    );
   };
 
   const handleSaveSection = async (e: React.FormEvent) => {
@@ -2180,16 +2323,21 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
     }
   };
 
-  const handleDeleteSection = async (id: string) => {
-    if (!window.confirm(t('هل أنت متأكد من حذف هذا السكشن؟', 'Delete this section?'))) return;
-    try {
-      const target = sections.find(s => s.id === id);
-      await dbService.deleteSection(id);
-      logAdminAction('delete', 'section', target?.title || id, 'Deleted section');
-      triggerNotification(t('تم حذف السكشن بنجاح', 'Section deleted'));
-    } catch (err: any) {
-      triggerNotification(err.message, true);
-    }
+  const handleDeleteSection = (id: string) => {
+    requestConfirmation(
+      t('حذف السكشن', 'Delete Section'),
+      t('هل أنت متأكد من حذف هذا السكشن؟', 'Delete this section?'),
+      async () => {
+        try {
+          const target = sections.find(s => s.id === id);
+          await dbService.deleteSection(id);
+          logAdminAction('delete', 'section', target?.title || id, 'Deleted section');
+          triggerNotification(t('تم حذف السكشن بنجاح', 'Section deleted'));
+        } catch (err: any) {
+          triggerNotification(err.message, true);
+        }
+      }
+    );
   };
 
   const handleSaveExam = async (e: React.FormEvent) => {
@@ -2238,16 +2386,21 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
     }
   };
 
-  const handleDeleteExam = async (id: string) => {
-    if (!window.confirm(t('هل أنت متأكد من حذف هذا الامتحان؟', 'Delete this exam?'))) return;
-    try {
-      const target = exams.find(x => x.id === id);
-      await dbService.deleteExam(id);
-      logAdminAction('delete', 'exam', target?.title || id, 'Deleted exam');
-      triggerNotification(t('تم حذف الامتحان بنجاح', 'Exam deleted'));
-    } catch (err: any) {
-      triggerNotification(err.message, true);
-    }
+  const handleDeleteExam = (id: string) => {
+    requestConfirmation(
+      t('حذف الامتحان', 'Delete Exam'),
+      t('هل أنت متأكد من حذف هذا الامتحان؟', 'Delete this exam?'),
+      async () => {
+        try {
+          const target = exams.find(x => x.id === id);
+          await dbService.deleteExam(id);
+          logAdminAction('delete', 'exam', target?.title || id, 'Deleted exam');
+          triggerNotification(t('تم حذف الامتحان بنجاح', 'Exam deleted'));
+        } catch (err: any) {
+          triggerNotification(err.message, true);
+        }
+      }
+    );
   };
 
   const handleSaveSheet = async (e: React.FormEvent) => {
@@ -2282,16 +2435,21 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
     }
   };
 
-  const handleDeleteSheet = async (id: string) => {
-    if (!window.confirm(t('هل أنت متأكد من حذف هذا الشيت؟', 'Delete this sheet?'))) return;
-    try {
-      const target = sheets.find(s => s.id === id);
-      await dbService.deleteSheet(id);
-      logAdminAction('delete', 'sheet', target?.title || id, 'Deleted sheet');
-      triggerNotification(t('تم حذف الشيت بنجاح', 'Sheet deleted'));
-    } catch (err: any) {
-      triggerNotification(err.message, true);
-    }
+  const handleDeleteSheet = (id: string) => {
+    requestConfirmation(
+      t('حذف الشيت', 'Delete Sheet'),
+      t('هل أنت متأكد من حذف هذا الشيت؟', 'Delete this sheet?'),
+      async () => {
+        try {
+          const target = sheets.find(s => s.id === id);
+          await dbService.deleteSheet(id);
+          logAdminAction('delete', 'sheet', target?.title || id, 'Deleted sheet');
+          triggerNotification(t('تم حذف الشيت بنجاح', 'Sheet deleted'));
+        } catch (err: any) {
+          triggerNotification(err.message, true);
+        }
+      }
+    );
   };
 
   const handleSaveQuestionBankItem = async (e: React.FormEvent) => {
@@ -2332,15 +2490,20 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
     }
   };
 
-  const handleDeleteQuestionBankItem = async (id: string) => {
-    if (!window.confirm(t('هل أنت متأكد من حذف هذا السؤال من بنك الأسئلة؟', 'Delete this question?'))) return;
-    try {
-      await dbService.deleteQuestionBankItem(id);
-      logAdminAction('delete', 'question_bank', id, 'Deleted question bank item');
-      triggerNotification(t('تم حذف السؤال بنجاح', 'Question deleted'));
-    } catch (err: any) {
-      triggerNotification(err?.message || 'Error deleting question', true);
-    }
+  const handleDeleteQuestionBankItem = (id: string) => {
+    requestConfirmation(
+      t('حذف السؤال', 'Delete Question'),
+      t('هل أنت متأكد من حذف هذا السؤال من بنك الأسئلة؟', 'Delete this question?'),
+      async () => {
+        try {
+          await dbService.deleteQuestionBankItem(id);
+          logAdminAction('delete', 'question_bank', id, 'Deleted question bank item');
+          triggerNotification(t('تم حذف السؤال بنجاح', 'Question deleted'));
+        } catch (err: any) {
+          triggerNotification(err?.message || 'Error deleting question', true);
+        }
+      }
+    );
   };
 
   const handleSaveScheduleItem = async (e: React.FormEvent) => {
@@ -2388,15 +2551,20 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
     }
   };
 
-  const handleDeleteScheduleItem = async (id: string) => {
-    if (!window.confirm(t('هل أنت متأكد من حذف هذا الموعد من الجدول؟', 'Delete this schedule slot?'))) return;
-    try {
-      await dbService.deleteScheduleItem(id);
-      logAdminAction('delete', 'schedule', id, 'Deleted schedule slot');
-      triggerNotification(t('تم حذف الموعد من الجدول بنجاح', 'Schedule slot deleted'));
-    } catch (err: any) {
-      triggerNotification(err?.message || 'Error deleting schedule', true);
-    }
+  const handleDeleteScheduleItem = (id: string) => {
+    requestConfirmation(
+      t('حذف الموعد', 'Delete Schedule Slot'),
+      t('هل أنت متأكد من حذف هذا الموعد من الجدول؟', 'Delete this schedule slot?'),
+      async () => {
+        try {
+          await dbService.deleteScheduleItem(id);
+          logAdminAction('delete', 'schedule', id, 'Deleted schedule slot');
+          triggerNotification(t('تم حذف الموعد من الجدول بنجاح', 'Schedule slot deleted'));
+        } catch (err: any) {
+          triggerNotification(err?.message || 'Error deleting schedule', true);
+        }
+      }
+    );
   };
 
   const handleReplyInquiry = async (inq: StudentInquiry) => {
@@ -2432,15 +2600,20 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
     }
   };
 
-  const handleDeleteInquiry = async (id: string) => {
-    if (!window.confirm(t('هل أنت متأكد من حذف هذا الاستفسار؟', 'Delete this inquiry?'))) return;
-    try {
-      await dbService.deleteInquiry(id);
-      logAdminAction('delete', 'inquiry', id, 'Deleted student inquiry');
-      triggerNotification(t('تم حذف الاستفسار', 'Inquiry deleted'));
-    } catch (err: any) {
-      triggerNotification(err?.message || 'Error deleting inquiry', true);
-    }
+  const handleDeleteInquiry = (id: string) => {
+    requestConfirmation(
+      t('حذف الاستفسار', 'Delete Inquiry'),
+      t('هل أنت متأكد من حذف هذا الاستفسار؟', 'Delete this inquiry?'),
+      async () => {
+        try {
+          await dbService.deleteInquiry(id);
+          logAdminAction('delete', 'inquiry', id, 'Deleted student inquiry');
+          triggerNotification(t('تم حذف الاستفسار', 'Inquiry deleted'));
+        } catch (err: any) {
+          triggerNotification(err?.message || 'Error deleting inquiry', true);
+        }
+      }
+    );
   };
 
   const handleSendBroadcastNotification = async (e: React.FormEvent) => {
@@ -2625,7 +2798,14 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
                   try {
                     const res = await authService.loginWithGoogle('admin');
                     if (res.success) {
-                      triggerNotification(t('تم ربط المزامنة السحابية لحساب الإدارة بنجاح!', 'Firebase Admin cloud sync linked!'));
+                      const purgeRes = await dbService.runOneTimeDemoAndCoursesPurge().catch(() => ({ ran: false }));
+                      await loadData();
+                      if (purgeRes.ran) {
+                        setCourses([]);
+                        triggerNotification(t('تم ربط المزامنة السحابية وحذف جميع المقررات السابقة بنجاح!', 'Cloud sync linked and previous courses cleared!'));
+                      } else {
+                        triggerNotification(t('تم ربط المزامنة السحابية لحساب الإدارة بنجاح!', 'Firebase Admin cloud sync linked!'));
+                      }
                     } else if (res.error) {
                       triggerNotification(res.error, true);
                     }
@@ -3184,18 +3364,31 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
                       <div className="flex items-center gap-2">
                         {courses.length > 0 && (
                           <button
-                            onClick={async () => {
-                              if (window.confirm(t('هل أنت متأكد من رغبتك في حذف جميع المقررات بالكامل من المنصة؟ لن تتمكن من التراجع.', 'Are you sure you want to delete ALL subjects from the platform? This cannot be undone.'))) {
-                                try {
-                                  await dbService.deleteAllCourses();
-                                  setCourses([]);
-                                  triggerNotification(t('تم حذف جميع المقررات بنجاح.', 'All subjects have been deleted successfully.'));
-                                } catch (err) {
-                                  triggerNotification(t('حدث خطأ أثناء حذف المقررات.', 'Error deleting subjects.'), true);
+                            type="button"
+                            disabled={actionLoading}
+                            onClick={() => {
+                              requestConfirmation(
+                                t('حذف جميع المقررات', 'Delete All Subjects'),
+                                t('هل أنت متأكد من رغبتك في حذف جميع المقررات بالكامل من المنصة؟ لن تتمكن من التراجع.', 'Are you sure you want to delete ALL subjects from the platform? This cannot be undone.'),
+                                async () => {
+                                  setActionLoading(true);
+                                  try {
+                                    await dbService.deleteAllCourses();
+                                    setCourses([]);
+                                    triggerNotification(t('تم حذف جميع المقررات بنجاح.', 'All subjects have been deleted successfully.'));
+                                  } catch (err: any) {
+                                    triggerNotification(err?.message || t('حدث خطأ أثناء حذف المقررات.', 'Error deleting subjects.'), true);
+                                    try {
+                                      const fresh = await dbService.getCourses();
+                                      setCourses(fresh);
+                                    } catch {}
+                                  } finally {
+                                    setActionLoading(false);
+                                  }
                                 }
-                              }
+                              );
                             }}
-                            className="flex items-center gap-1.5 rounded-xl bg-red-500/10 border border-red-500/30 text-red-600 dark:text-red-400 hover:bg-red-500/20 px-3.5 py-2 text-xs font-bold transition-all cursor-pointer"
+                            className="flex items-center gap-1.5 rounded-xl bg-red-500/10 border border-red-500/30 text-red-600 dark:text-red-400 hover:bg-red-500/20 px-3.5 py-2 text-xs font-bold transition-all cursor-pointer disabled:opacity-50"
                           >
                             <Trash2 className="h-4 w-4" />
                             <span>{t('حذف جميع المقررات', 'Delete All Subjects')}</span>
@@ -5742,18 +5935,24 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
                                   </button>
                                 </div>
                                 <button
-                                  onClick={async () => {
-                                    if (!window.confirm(t('هل أنت متأكد من حذف هذا التعليق نهائياً؟', 'Are you sure you want to delete this comment?'))) return;
-                                    setActionLoading(true);
-                                    try {
-                                      await dbService.deleteComment(comm.id);
-                                      triggerNotification(t('تم حذف التعليق بنجاح.', 'Comment deleted successfully.'));
-                                    } catch (err) {
-                                      console.error(err);
-                                      triggerNotification(t('حدث خطأ أثناء حذف التعليق.', 'Error deleting comment.'), true);
-                                    } finally {
-                                      setActionLoading(false);
-                                    }
+                                  type="button"
+                                  onClick={() => {
+                                    requestConfirmation(
+                                      t('حذف التعليق', 'Delete Comment'),
+                                      t('هل أنت متأكد من حذف هذا التعليق نهائياً؟', 'Are you sure you want to delete this comment?'),
+                                      async () => {
+                                        setActionLoading(true);
+                                        try {
+                                          await dbService.deleteComment(comm.id);
+                                          triggerNotification(t('تم حذف التعليق بنجاح.', 'Comment deleted successfully.'));
+                                        } catch (err) {
+                                          console.error(err);
+                                          triggerNotification(t('حدث خطأ أثناء حذف التعليق.', 'Error deleting comment.'), true);
+                                        } finally {
+                                          setActionLoading(false);
+                                        }
+                                      }
+                                    );
                                   }}
                                   disabled={actionLoading}
                                   className="rounded-xl bg-red-500/10 text-red-600 dark:text-red-400 border border-red-500/20 px-3 py-2 text-xs font-bold hover:bg-red-500 hover:text-white transition-all flex items-center justify-center gap-1.5 cursor-pointer"
@@ -8492,6 +8691,75 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
           </div>
         );
       })()}
+
+      {/* Reusable In-App Confirmation Modal (Safe inside iFrame & Mobile) */}
+      {confirmModal && (
+        <div
+          className="fixed inset-0 z-[120] flex items-center justify-center bg-slate-950/70 backdrop-blur-sm p-4 animate-fadeIn"
+          onClick={() => { if (!confirmProcessing) setConfirmModal(null); }}
+        >
+          <div
+            className="w-full max-w-md rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-6 shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-start gap-3">
+              <div className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border ${
+                confirmModal.danger !== false
+                  ? 'bg-red-500/10 border-red-500/20 text-red-600 dark:text-red-400'
+                  : 'bg-brand-cyan/10 border-brand-cyan/20 text-brand-cyan'
+              }`}>
+                {confirmModal.danger !== false ? <Trash2 className="h-5 w-5" /> : <ShieldAlert className="h-5 w-5" />}
+              </div>
+              <div className="flex-1 min-w-0">
+                <h3 className="text-base font-black text-slate-900 dark:text-white">
+                  {confirmModal.title}
+                </h3>
+                <p className="mt-2 text-xs sm:text-sm text-slate-600 dark:text-slate-300 leading-relaxed">
+                  {confirmModal.message}
+                </p>
+              </div>
+            </div>
+
+            <div className="mt-6 flex items-center justify-end gap-2.5">
+              <button
+                type="button"
+                disabled={confirmProcessing}
+                onClick={() => setConfirmModal(null)}
+                className="rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 px-4 py-2.5 text-xs font-bold text-slate-700 dark:text-slate-200 transition-all cursor-pointer disabled:opacity-50"
+              >
+                {t('إلغاء', 'Cancel')}
+              </button>
+              <button
+                type="button"
+                disabled={confirmProcessing}
+                onClick={async () => {
+                  setConfirmProcessing(true);
+                  try {
+                    await confirmModal.onConfirm();
+                  } finally {
+                    setConfirmProcessing(false);
+                    setConfirmModal(null);
+                  }
+                }}
+                className={`flex items-center gap-2 rounded-xl px-5 py-2.5 text-xs font-black text-white transition-all cursor-pointer disabled:opacity-50 ${
+                  confirmModal.danger !== false
+                    ? 'bg-red-600 hover:bg-red-700 shadow-lg shadow-red-600/20'
+                    : 'bg-brand-cyan hover:bg-brand-cyan-light dark:text-slate-950'
+                }`}
+              >
+                {confirmProcessing ? (
+                  <>
+                    <RefreshCw className="h-3.5 w-3.5 animate-spin" />
+                    <span>{t('جاري التنفيذ...', 'Processing...')}</span>
+                  </>
+                ) : (
+                  <span>{confirmModal.confirmLabel || t('تأكيد الحذف', 'Confirm Delete')}</span>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
     </div>
   );

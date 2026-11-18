@@ -70,9 +70,9 @@ const defaultArticles: Article[] = [];
 
 const defaultReviews: UserReview[] = [];
 
-// One-time migration to clear out all demo/sample data and pre-seeded courses
+// One-time migration to clear out all demo/sample data and previously added courses
 try {
-  const clearedKey = 'purge_demo_and_courses_v2';
+  const clearedKey = 'purge_all_courses_v3';
   if (typeof window !== 'undefined' && window.localStorage && localStorage.getItem(clearedKey) !== 'true') {
     const keysToRemove = [
       'academy_courses',
@@ -98,13 +98,15 @@ try {
       'academy_quizzes',
       'academy_assignment_tasks',
       'academy_lessonAccess',
-      'academy_orders'
+      'academy_orders',
+      'academy_courseRequests'
     ];
     keysToRemove.forEach((k) => localStorage.removeItem(k));
+    localStorage.setItem('academy_courses', JSON.stringify([]));
     localStorage.setItem(clearedKey, 'true');
   }
 } catch (e) {
-  console.error("Failed to execute one-time local storage demo & courses purge:", e);
+  console.error("Failed to execute one-time local storage courses purge:", e);
 }
 
 const defaultMessages: Message[] = [];
@@ -950,112 +952,161 @@ export const dbService = {
   deleteCourse: async (id: string): Promise<void> => {
     checkAdminWrite('delete_course', { id });
     if (isFirebaseConfigured) {
+      await waitForFirebaseAuth();
+      const courseDocRef = doc(firestoreDb, 'courses', id);
+      let courseSnap: any = null;
       try {
-        const courseDocRef = doc(firestoreDb, 'courses', id);
-        const courseSnap = await getDoc(courseDocRef);
-        
-        if (courseSnap.exists()) {
-          const courseData = courseSnap.data() as Course;
-          const urlsToDelete: string[] = [];
+        courseSnap = await getDoc(courseDocRef);
+      } catch (readErr: any) {
+        console.warn("Firestore getDoc before delete notice:", readErr);
+      }
 
-          const addUrl = (url?: string) => {
-            if (url && typeof url === 'string' && url.includes('firebasestorage.googleapis.com')) {
-              urlsToDelete.push(url);
+      const existsInCloud = Boolean(courseSnap && courseSnap.exists());
+
+      if (existsInCloud) {
+        if (!isFirebaseSignedInAdmin()) {
+          throw new Error('يلزم ربط المزامنة السحابية (Google) لحذف المقررات المحفوظة على السحابة. اضغط على زر «تفعيل المزامنة السحابية (Google)» بالأعلى ثم أعد المحاولة.');
+        }
+
+        const courseData = courseSnap.data() as Course;
+        const urlsToDelete: string[] = [];
+        const addUrl = (url?: string) => {
+          if (url && typeof url === 'string' && url.includes('firebasestorage.googleapis.com')) {
+            urlsToDelete.push(url);
+          }
+        };
+
+        // 1. Course top-level media fields (Images, Videos, PDFs)
+        addUrl(courseData.thumbnailUrl);
+        addUrl(courseData.bannerUrl);
+        addUrl(courseData.videoUrl);
+        addUrl(courseData.pdfUrl);
+        if (Array.isArray(courseData.imageUrls)) {
+          courseData.imageUrls.forEach(url => addUrl(url));
+        }
+        if (Array.isArray(courseData.attachments)) {
+          courseData.attachments.forEach(url => addUrl(url));
+        }
+
+        // 2. Lesson/Unit-level media fields (Images, Videos, PDFs)
+        if (Array.isArray(courseData.lessons)) {
+          courseData.lessons.forEach(lesson => {
+            addUrl(lesson.videoUrl);
+            addUrl(lesson.pdfUrl);
+            addUrl((lesson as any).wordUrl);
+            if (Array.isArray(lesson.attachments)) {
+              lesson.attachments.forEach(url => addUrl(url));
             }
-          };
-
-          // 1. Course top-level media fields (Images, Videos, PDFs)
-          addUrl(courseData.thumbnailUrl);
-          addUrl(courseData.bannerUrl);
-          addUrl(courseData.videoUrl);
-          addUrl(courseData.pdfUrl);
-
-          if (Array.isArray(courseData.imageUrls)) {
-            courseData.imageUrls.forEach(url => addUrl(url));
-          }
-          if (Array.isArray(courseData.attachments)) {
-            courseData.attachments.forEach(url => addUrl(url));
-          }
-
-          // 2. Lesson-level media fields (Images, Videos, PDFs)
-          if (Array.isArray(courseData.lessons)) {
-            courseData.lessons.forEach(lesson => {
-              addUrl(lesson.videoUrl);
-              addUrl(lesson.pdfUrl);
-              if (Array.isArray(lesson.attachments)) {
-                lesson.attachments.forEach(url => addUrl(url));
-              }
-            });
-          }
-
-          // Delete all collected storage files
-          if (urlsToDelete.length > 0) {
-            try {
-              const { getStorage, ref, deleteObject } = await import('firebase/storage');
-              const storageInstance = getStorage(app);
-              await Promise.all(
-                urlsToDelete.map(async (url) => {
-                  try {
-                    const fileRef = ref(storageInstance, url);
-                    await deleteObject(fileRef);
-                  } catch (storageErr) {
-                    console.error(`Error deleting storage file (${url}):`, storageErr);
-                  }
-                })
-              );
-            } catch (storageImportErr) {
-              console.error("Failed to import or access firebase/storage:", storageImportErr);
+          });
+        }
+        if (Array.isArray(courseData.units)) {
+          courseData.units.forEach(unit => {
+            if (Array.isArray(unit.lessons)) {
+              unit.lessons.forEach(lesson => {
+                addUrl(lesson.videoUrl);
+                addUrl(lesson.pdfUrl);
+                addUrl(lesson.wordUrl);
+              });
             }
+          });
+        }
+
+        // Delete collected storage files (best-effort)
+        if (urlsToDelete.length > 0) {
+          try {
+            const { getStorage, ref, deleteObject } = await import('firebase/storage');
+            const storageInstance = getStorage(app);
+            await Promise.all(
+              urlsToDelete.map(async (url) => {
+                try {
+                  const fileRef = ref(storageInstance, url);
+                  await deleteObject(fileRef);
+                } catch (storageErr) {
+                  console.warn(`Storage file cleanup notice (${url}):`, storageErr);
+                }
+              })
+            );
+          } catch (storageImportErr) {
+            console.warn("Storage cleanup import notice:", storageImportErr);
           }
         }
 
-        // 3. Delete linked quizzes and assignments in Firestore
+        // 3. Delete linked quizzes, assignments, and course requests in Firestore (best-effort)
         try {
           const qQuizzes = query(collection(firestoreDb, 'quizzes'), where('courseId', '==', id));
           const quizSnap = await getDocs(qQuizzes);
-          await Promise.all(quizSnap.docs.map(qDoc => deleteDoc(qDoc.ref)));
+          await Promise.all(quizSnap.docs.map(qDoc => deleteDoc(qDoc.ref).catch(() => {})));
 
           const qAssign = query(collection(firestoreDb, 'assignments'), where('courseId', '==', id));
           const assignSnap = await getDocs(qAssign);
-          await Promise.all(assignSnap.docs.map(aDoc => deleteDoc(aDoc.ref)));
+          await Promise.all(assignSnap.docs.map(aDoc => deleteDoc(aDoc.ref).catch(() => {})));
+
+          const qReqs = query(collection(firestoreDb, 'courseRequests'), where('courseId', '==', id));
+          const reqSnap = await getDocs(qReqs);
+          await Promise.all(reqSnap.docs.map(rDoc => deleteDoc(rDoc.ref).catch(() => {})));
         } catch (linkedErr) {
-          console.error("Error deleting linked quizzes/assignments:", linkedErr);
+          console.warn("Linked records cleanup notice:", linkedErr);
         }
 
-        // Delete the course document from Cloud Firestore
-        await deleteDoc(courseDocRef);
-      } catch (err: any) {
-        console.error("Firebase course delete error:", err);
-        handleFirestoreError(err, OperationType.DELETE, 'courses/' + id);
+        // 4. Delete the course document from Cloud Firestore
+        try {
+          await deleteDoc(courseDocRef);
+        } catch (err: any) {
+          console.error("Firebase course delete error:", err);
+          handleFirestoreError(err, OperationType.DELETE, 'courses/' + id);
+        }
       }
     }
-    const current = getStorageItem<Course[]>('courses', defaultCourses);
-    const updated = current.filter(item => item.id !== id);
-    setStorageItem('courses', updated);
 
-    // Clean local storage fallbacks for linked items
+    // Always clean localStorage caches regardless of whether it was cloud or local-only
+    const current = getStorageItem<Course[]>('courses', defaultCourses);
+    setStorageItem('courses', current.filter(item => item.id !== id));
+
     const currentQuizzes = getStorageItem<Quiz[]>('quizzes', defaultQuizzes);
     setStorageItem('quizzes', currentQuizzes.filter(q => q.courseId !== id));
 
     const currentAssign = getStorageItem<AssignmentSubmission[]>('assignments', []);
     setStorageItem('assignments', currentAssign.filter(a => a.courseId !== id));
+
+    const currentOrders = getStorageItem<Order[]>('orders', []);
+    setStorageItem('orders', currentOrders.filter(o => o.courseId !== id));
+
+    const currentReqs = getStorageItem<any[]>('courseRequests', []);
+    setStorageItem('courseRequests', currentReqs.filter(r => r.courseId !== id));
   },
 
   deleteAllCourses: async (): Promise<void> => {
     checkAdminWrite('delete_all_courses', {});
     if (isFirebaseConfigured) {
-      try {
-        const snap = await getDocs(collection(firestoreDb, 'courses'));
-        for (const d of snap.docs) {
+      await waitForFirebaseAuth();
+      const snap = await getDocs(collection(firestoreDb, 'courses'));
+      if (!snap.empty) {
+        if (!isFirebaseSignedInAdmin()) {
+          throw new Error('يلزم ربط المزامنة السحابية (Google) لحذف المقررات المحفوظة على السحابة. اضغط على زر «تفعيل المزامنة السحابية (Google)» بالأعلى ثم أعد المحاولة.');
+        }
+        const courseIds = snap.docs.map(d => d.id);
+        await Promise.all(snap.docs.map(d => deleteDoc(d.ref)));
+
+        // Best-effort cleanup for linked quizzes, assignments, and requests
+        for (const cId of courseIds) {
           try {
-            await deleteDoc(d.ref);
+            const qQuizzes = query(collection(firestoreDb, 'quizzes'), where('courseId', '==', cId));
+            const quizSnap = await getDocs(qQuizzes);
+            await Promise.all(quizSnap.docs.map(qDoc => deleteDoc(qDoc.ref).catch(() => {})));
+
+            const qAssign = query(collection(firestoreDb, 'assignments'), where('courseId', '==', cId));
+            const assignSnap = await getDocs(qAssign);
+            await Promise.all(assignSnap.docs.map(aDoc => deleteDoc(aDoc.ref).catch(() => {})));
+
+            const qReqs = query(collection(firestoreDb, 'courseRequests'), where('courseId', '==', cId));
+            const reqSnap = await getDocs(qReqs);
+            await Promise.all(reqSnap.docs.map(rDoc => deleteDoc(rDoc.ref).catch(() => {})));
           } catch {}
         }
-      } catch (err: any) {
-        console.error("Firestore deleteAllCourses error:", err);
       }
     }
     setStorageItem('courses', []);
+    setStorageItem('courseRequests', []);
   },
 
   runOneTimeDemoAndCoursesPurge: async (): Promise<{ ran: boolean }> => {
@@ -1065,13 +1116,30 @@ export const dbService = {
     try {
       const settingsRef = doc(firestoreDb, 'settings', 'global');
       const settingsSnap = await getDoc(settingsRef);
-      if (settingsSnap.exists() && settingsSnap.data()?.demoAndCoursesClearedV2 === true) {
+      if (settingsSnap.exists() && settingsSnap.data()?.allCoursesClearedV3 === true) {
         return { ran: false };
       }
 
-      // 1. Delete all existing course documents
+      // 1. Delete ALL existing course documents & linked docs
       const courseSnap = await getDocs(collection(firestoreDb, 'courses'));
+      const courseIds = courseSnap.docs.map(d => d.id);
       await Promise.all(courseSnap.docs.map(d => deleteDoc(d.ref).catch(() => {})));
+
+      for (const cId of courseIds) {
+        try {
+          const qQuizzes = query(collection(firestoreDb, 'quizzes'), where('courseId', '==', cId));
+          const quizSnap = await getDocs(qQuizzes);
+          await Promise.all(quizSnap.docs.map(qDoc => deleteDoc(qDoc.ref).catch(() => {})));
+
+          const qAssign = query(collection(firestoreDb, 'assignments'), where('courseId', '==', cId));
+          const assignSnap = await getDocs(qAssign);
+          await Promise.all(assignSnap.docs.map(aDoc => deleteDoc(aDoc.ref).catch(() => {})));
+
+          const qReqs = query(collection(firestoreDb, 'courseRequests'), where('courseId', '==', cId));
+          const reqSnap = await getDocs(qReqs);
+          await Promise.all(reqSnap.docs.map(rDoc => deleteDoc(rDoc.ref).catch(() => {})));
+        } catch {}
+      }
 
       // 2. Delete known seeded demo documents & docs referencing placeholder URLs
       const demoIdsByCollection: Record<string, string[]> = {
@@ -1108,13 +1176,16 @@ export const dbService = {
         } catch {}
       }
 
-      // 3. Clear localStorage caches
-      ['courses', 'lectures', 'sections', 'exams', 'sheets', 'question_bank', 'schedule', 'inquiries', 'exam_submissions', 'activity_logs'].forEach(k => {
+      // 3. Clear localStorage course caches
+      ['courses', 'courseRequests', 'lessonAccess'].forEach(k => {
         setStorageItem(k, []);
       });
+      if (typeof window !== 'undefined' && window.localStorage) {
+        localStorage.setItem('purge_all_courses_v3', 'true');
+      }
 
       // 4. Persist one-time completion marker in Firestore
-      await setDoc(settingsRef, { demoAndCoursesClearedV2: true }, { merge: true });
+      await setDoc(settingsRef, { demoAndCoursesClearedV2: true, allCoursesClearedV3: true }, { merge: true });
       return { ran: true };
     } catch (err) {
       console.warn("runOneTimeDemoAndCoursesPurge notice:", err);

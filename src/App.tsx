@@ -137,6 +137,13 @@ function AcademyApp() {
         if (user.role === 'admin') {
           setIsAdminLoggedIn(true);
           setIsStudentLoggedIn(false);
+          if (dbService.isRealFirebase()) {
+            dbService.runOneTimeDemoAndCoursesPurge().then((res) => {
+              if (res.ran) {
+                setCourses([]);
+              }
+            }).catch(() => {});
+          }
         } else {
           setIsStudentLoggedIn(true);
           setIsAdminLoggedIn(false);
@@ -429,6 +436,13 @@ function AcademyApp() {
         setIsStudentLoggedIn(false);
         setIsAdminLoginOpen(false);
         setIsStudentAuthOpen(false);
+        if (dbService.isRealFirebase()) {
+          dbService.runOneTimeDemoAndCoursesPurge().then((purgeRes) => {
+            if (purgeRes.ran) {
+              setCourses([]);
+            }
+          }).catch(() => {});
+        }
         handleNavigate('home');
       } else if (res.success && res.user) {
         setIsStudentLoggedIn(true);

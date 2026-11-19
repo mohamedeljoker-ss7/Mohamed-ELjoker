@@ -12,11 +12,13 @@ service cloud.firestore {
         request.auth.token.email.lower() == 'mhmdbdaltwabalsdawy7@gmail.com';
     }
 
+    function isListedAdminEmail() {
+      return isSignedIn() && request.auth.token.email != null &&
+        exists(/databases/$(database)/documents/admins/$(request.auth.token.email.lower()));
+    }
+
     function isAdmin() {
-      return isSignedIn() && (
-        isSuperAdminEmail() || 
-        exists(/databases/$(database)/documents/admins/$(request.auth.uid))
-      );
+      return isSuperAdminEmail() || isListedAdminEmail();
     }
 
     function isApprovedStudent() {
@@ -164,7 +166,7 @@ service cloud.firestore {
       allow create: if isSignedIn() && isOwner(userId) && (
         (request.resource.data.role == 'student' && 
          (request.resource.data.status == 'pending' || request.resource.data.isApproved == false)) ||
-        isSuperAdminEmail()
+        isAdmin()
       );
       allow update: if isAdmin() || (
         isOwner(userId) &&
@@ -308,9 +310,10 @@ service cloud.firestore {
       allow read, write: if isAdmin();
     }
 
-    // Admins whitelist
+    // Admins whitelist (keyed by lowercase email; only Primary Super Admin can modify)
     match /admins/{adminId} {
-      allow read: if isAdmin();
+      allow get: if isAdmin() || (isSignedIn() && request.auth.token.email != null && adminId == request.auth.token.email.lower());
+      allow list: if isAdmin();
       allow write: if isSuperAdminEmail();
     }
   }

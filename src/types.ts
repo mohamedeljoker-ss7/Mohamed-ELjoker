@@ -446,6 +446,7 @@ export interface UserAuth {
   email: string;
   phone: string;
   role: 'student' | 'teacher' | 'admin';
+  adminLevel?: 'super' | 'editor';
   status: 'active' | 'suspended' | 'pending' | 'rejected';
   purchasedCourseIds?: string[];
   watchedLessonIds?: string[];

@@ -1,4 +1,4 @@
-import { initializeApp, getApps, getApp } from 'firebase/app';
+import { initializeApp, getApps, getApp, deleteApp } from 'firebase/app';
 import { initializeFirestore, getFirestore, collection, doc, getDocs, getDoc, getDocFromServer, setDoc, updateDoc, deleteDoc, addDoc, query, where, orderBy, onSnapshot, deleteField, increment } from 'firebase/firestore';
 import { getAuth, signInWithEmailAndPassword, createUserWithEmailAndPassword, sendPasswordResetEmail, signOut, onAuthStateChanged, GoogleAuthProvider, signInWithPopup, User } from 'firebase/auth';
 import firebaseAppletConfig from '../firebase-applet-config.json';
@@ -122,7 +122,7 @@ const defaultSettings: WebsiteSettings = {
   facebook: '',
   youtube: '',
   instagram: '',
-  email: 'mhmdbdaltwabalsdawy7@gmail.com',
+  email: 'info@eljoker-it.edu.eg',
   footerAr: 'جميع الحقوق محفوظة © ٢٠٢٦ منصة MOHAMED ELJOKER التعليمية - قسم تكنولوجيا المعلومات IT.',
   footerEn: 'All Rights Reserved © 2026 MOHAMED ELJOKER Educational Platform - IT Department.',
   seoDescription: 'منصة MOHAMED ELJOKER التعليمية المجانية بالكامل لتنظيم ونشر المحاضرات والسكاشن والامتحانات وشيتات قسم تكنولوجيا المعلومات IT.',
@@ -178,6 +178,48 @@ export let app: any = null;
 export let firestoreDb: any = null;
 export let firebaseAuth: any = null;
 
+function decodeFirestoreRestValue(val: any): any {
+  if (!val || typeof val !== 'object') return undefined;
+  if ('nullValue' in val) return null;
+  if ('booleanValue' in val) return Boolean(val.booleanValue);
+  if ('integerValue' in val) return Number(val.integerValue);
+  if ('doubleValue' in val) return Number(val.doubleValue);
+  if ('stringValue' in val) return String(val.stringValue);
+  if ('timestampValue' in val) return String(val.timestampValue);
+  if ('arrayValue' in val) {
+    const items = Array.isArray(val.arrayValue?.values) ? val.arrayValue.values : [];
+    return items.map((item: any) => decodeFirestoreRestValue(item));
+  }
+  if ('mapValue' in val) {
+    const fields = val.mapValue?.fields || {};
+    const out: Record<string, any> = {};
+    for (const [k, v] of Object.entries(fields)) {
+      out[k] = decodeFirestoreRestValue(v);
+    }
+    return out;
+  }
+  return undefined;
+}
+
+async function fetchPublicFirestoreDocViaRest(collectionName: string, docId: string): Promise<Record<string, any> | null> {
+  if (!firebaseConfig.projectId || !firebaseConfig.apiKey || typeof fetch === 'undefined') {
+    return null;
+  }
+  const dbName = appletCfg.firestoreDatabaseId && appletCfg.firestoreDatabaseId !== '(default)'
+    ? appletCfg.firestoreDatabaseId
+    : '(default)';
+  const url = `https://firestore.googleapis.com/v1/projects/${encodeURIComponent(firebaseConfig.projectId)}/databases/${encodeURIComponent(dbName)}/documents/${encodeURIComponent(collectionName)}/${encodeURIComponent(docId)}?key=${encodeURIComponent(firebaseConfig.apiKey)}`;
+  const res = await fetch(url, { method: 'GET', cache: 'no-store' });
+  if (!res.ok) return null;
+  const json = await res.json();
+  if (!json || typeof json !== 'object' || !json.fields) return null;
+  const parsed: Record<string, any> = {};
+  for (const [k, v] of Object.entries(json.fields)) {
+    parsed[k] = decodeFirestoreRestValue(v);
+  }
+  return parsed;
+}
+
 if (firebaseConfig.apiKey && firebaseConfig.projectId) {
   try {
     if (!getApps().length) {
@@ -187,7 +229,6 @@ if (firebaseConfig.apiKey && firebaseConfig.projectId) {
     }
     const dbId = appletCfg.firestoreDatabaseId;
     const firestoreSettings: any = {
-      experimentalAutoDetectLongPolling: true,
       experimentalForceLongPolling: true,
       ignoreUndefinedProperties: true
     };
@@ -197,7 +238,10 @@ if (firebaseConfig.apiKey && firebaseConfig.projectId) {
       } else {
         firestoreDb = initializeFirestore(app, firestoreSettings);
       }
-    } catch (initErr) {
+    } catch (initErr: any) {
+      if (initErr?.code !== 'failed-precondition') {
+        console.warn("initializeFirestore notice, falling back to getFirestore:", initErr);
+      }
       if (dbId && dbId !== '(default)') {
         firestoreDb = getFirestore(app, dbId);
       } else {
@@ -214,7 +258,12 @@ if (firebaseConfig.apiKey && firebaseConfig.projectId) {
         await getDocFromServer(doc(firestoreDb, 'settings', 'global'));
       } catch (err) {
         if (err instanceof Error && err.message.includes('the client is offline')) {
-          console.error("Please check your Firebase configuration.");
+          const restOk = await fetchPublicFirestoreDocViaRest('settings', 'global').catch(() => null);
+          if (!restOk) {
+            console.error("Please check your Firebase configuration.");
+          } else {
+            console.warn("Firestore WebChannel warm-up delayed; REST endpoint is reachable.");
+          }
         }
       }
     })();
@@ -244,7 +293,7 @@ const canReadApprovedContentFromFirestore = (): boolean => {
     const saved = typeof localStorage !== 'undefined' ? localStorage.getItem('academy_active_user') : null;
     if (saved) {
       const parsed = JSON.parse(saved);
-      if (parsed?.role === 'admin' || isAdminEmail(parsed?.email || '')) return true;
+      if (isAdminEmail(parsed?.email || '')) return true;
       if (parsed?.status && parsed.status !== 'active') return false;
       if (parsed?.isApproved === false) return false;
       return parsed?.status === 'active' && parsed?.isApproved === true;
@@ -598,24 +647,22 @@ export function recordLoginAttempt(email: string, success: boolean) {
 
 export function checkAdminWrite(action: string, details: any) {
   const admin = authService.getCurrentAdmin();
-  const activeUserStr = typeof localStorage !== 'undefined' ? localStorage.getItem('academy_active_user') : null;
-  const activeAdminStr = typeof localStorage !== 'undefined' ? localStorage.getItem('academy_admin') : null;
-  const isDirectAdmin = (activeUserStr && (activeUserStr.includes('admin') || activeUserStr.includes('mhmdbdaltwabalsdawy7@gmail.com'))) ||
-                        (activeAdminStr && activeAdminStr.includes('admin'));
+  const fbEmail = firebaseAuth?.currentUser?.email || '';
+  const isDirectAdmin = (admin && isAdminEmail(admin.email)) || isAdminEmail(fbEmail);
 
-  if (!admin && !isDirectAdmin) {
+  if (!isDirectAdmin) {
     secureLog('unauthorized_admin_attempt', { action, details });
-    console.warn("checkAdminWrite: Admin check fallback enabled for action:", action);
+    console.warn("checkAdminWrite: Unauthorized admin write attempt blocked:", action);
+    throw new Error("Access Denied: Only the primary platform administrator can perform this action.");
   }
-  secureLog(action, { admin: admin?.email || 'mhmdbdaltwabalsdawy7@gmail.com', ...details });
+  secureLog(action, { admin: admin?.email || 'super_admin', ...details });
 }
 
 export function requireAdmin() {
   const admin = authService.getCurrentAdmin();
-  const activeUserStr = typeof localStorage !== 'undefined' ? localStorage.getItem('academy_active_user') : null;
-  const isDirectAdmin = activeUserStr && (activeUserStr.includes('admin') || activeUserStr.includes('mhmdbdaltwabalsdawy7@gmail.com'));
-  if (!admin && !isDirectAdmin) {
-    console.warn("requireAdmin: Admin fallback check bypassed for authorized teacher session.");
+  const fbEmail = firebaseAuth?.currentUser?.email || '';
+  if (!admin && !isAdminEmail(fbEmail)) {
+    throw new Error("Access Denied: Administrator privileges are required.");
   }
 }
 
@@ -786,9 +833,7 @@ export const dbService = {
 
     if (folder !== 'homeworks') {
       const admin = authService.getCurrentAdmin();
-      const activeUserStr = typeof localStorage !== 'undefined' ? localStorage.getItem('academy_active_user') : null;
-      const activeUser = activeUserStr ? JSON.parse(activeUserStr) : null;
-      const isAdmin = admin !== null || (activeUser && (activeUser.role === 'admin' || activeUser.email === 'mhmdbdaltwabalsdawy7@gmail.com'));
+      const isAdmin = (admin !== null && isAdminEmail(admin.email)) || isFirebaseSignedInAdmin();
 
       if (!isAdmin) {
         throw new Error("Access Denied: Administrator privileges are required to perform this action.");
@@ -826,9 +871,7 @@ export const dbService = {
     // Role Check: Only admin can upload, except homeworks folder
     if (folder !== 'homeworks') {
       const admin = authService.getCurrentAdmin();
-      const activeUserStr = typeof localStorage !== 'undefined' ? localStorage.getItem('academy_active_user') : null;
-      const activeUser = activeUserStr ? JSON.parse(activeUserStr) : null;
-      const isAdmin = admin !== null || (activeUser && (activeUser.role === 'admin' || activeUser.email === 'mhmdbdaltwabalsdawy7@gmail.com'));
+      const isAdmin = (admin !== null && isAdminEmail(admin.email)) || isFirebaseSignedInAdmin();
 
       if (!isAdmin) {
         throw new Error("Access Denied: Administrator privileges are required to perform this action.");
@@ -860,20 +903,25 @@ export const dbService = {
 
   // --- Website Settings ---
   getSettings: async (): Promise<WebsiteSettings> => {
-    let settings: WebsiteSettings;
+    let settings: WebsiteSettings | null = null;
     if (isFirebaseConfigured) {
       try {
         const snap = await getDoc(doc(firestoreDb, 'settings', 'global'));
         if (snap.exists()) {
           settings = snap.data() as WebsiteSettings;
-        } else {
-          settings = getStorageItem<WebsiteSettings>('settings', defaultSettings);
+          setStorageItem<WebsiteSettings>('settings', settings);
         }
-      } catch (err) {
-        console.error("Firebase settings read failed, using fallback:", err);
-        settings = getStorageItem<WebsiteSettings>('settings', defaultSettings);
+      } catch (err: any) {
+        const restData = await fetchPublicFirestoreDocViaRest('settings', 'global').catch(() => null);
+        if (restData) {
+          settings = restData as WebsiteSettings;
+          setStorageItem<WebsiteSettings>('settings', settings);
+        } else {
+          console.warn("Firebase settings read notice, using cached fallback:", err?.message || err);
+        }
       }
-    } else {
+    }
+    if (!settings) {
       settings = getStorageItem<WebsiteSettings>('settings', defaultSettings);
     }
 
@@ -920,12 +968,16 @@ export const dbService = {
       const ref = doc(firestoreDb, 'settings', 'global');
       return onSnapshot(ref, (snap) => {
         if (snap.exists()) {
-          onUpdate(snap.data() as WebsiteSettings);
+          const data = snap.data() as WebsiteSettings;
+          if (!snap.metadata?.fromCache) {
+            setStorageItem<WebsiteSettings>('settings', data);
+          }
+          onUpdate(data);
         } else {
           onUpdate(getStorageItem<WebsiteSettings>('settings', defaultSettings));
         }
       }, (err) => {
-        console.error("Settings listener failed:", err);
+        console.warn("Settings listener notice:", err?.message || err);
       });
     } else {
       const loadLocal = () => {
@@ -945,7 +997,12 @@ export const dbService = {
         const snap = await getDocs(collection(firestoreDb, 'categories'));
         snap.forEach(d => rawList.push({ id: d.id, ...d.data() } as Category));
       } catch (err: any) {
-        handleFirestoreError(err, OperationType.LIST, 'categories');
+        const msg = String(err?.message || err || '');
+        if (msg.includes('permission') || err?.code === 'permission-denied') {
+          handleFirestoreError(err, OperationType.LIST, 'categories');
+        } else {
+          console.warn("Categories read notice, using cached fallback:", msg);
+        }
       }
     }
     if (rawList.length === 0) {
@@ -1025,9 +1082,11 @@ export const dbService = {
         const snap = await getDocs(collection(firestoreDb, 'courses'));
         const list: Course[] = [];
         snap.forEach(d => list.push({ id: d.id, ...d.data() } as Course));
-        const normalized = list.map(c => normalizeCourseLessons(c));
-        setStorageItem('courses', normalized);
-        return normalized;
+        if (!(snap.metadata?.fromCache && list.length === 0)) {
+          const normalized = list.map(c => normalizeCourseLessons(c));
+          setStorageItem('courses', normalized);
+          return normalized;
+        }
       } catch (err: any) {
         console.warn("Firestore getCourses notice:", err);
       }
@@ -1049,6 +1108,9 @@ export const dbService = {
           coursesList.push(item);
         });
 
+        if (snap.metadata?.fromCache && coursesList.length === 0) {
+          return;
+        }
         const normalized = coursesList.map(c => normalizeCourseLessons(c));
         setStorageItem('courses', normalized);
         onUpdate(normalized);
@@ -3269,8 +3331,8 @@ export const dbService = {
         const list: NewsItem[] = [];
         snap.forEach(d => list.push({ id: d.id, ...d.data() } as NewsItem));
         return list;
-      } catch (err) {
-        console.error("Firebase news read failed, using fallback:", err);
+      } catch (err: any) {
+        console.warn("Firebase news read notice, using fallback:", err?.message || err);
       }
     }
     return getStorageItem<NewsItem[]>('news', defaultNews);
@@ -3332,8 +3394,8 @@ export const dbService = {
         const list: Article[] = [];
         snap.forEach(d => list.push({ id: d.id, ...d.data() } as Article));
         return list;
-      } catch (err) {
-        console.error("Firebase articles read failed, using fallback:", err);
+      } catch (err: any) {
+        console.warn("Firebase articles read notice, using fallback:", err?.message || err);
       }
     }
     return getStorageItem<Article[]>('articles', defaultArticles);
@@ -3395,8 +3457,8 @@ export const dbService = {
         const list: UserReview[] = [];
         snap.forEach(d => list.push({ id: d.id, ...d.data() } as UserReview));
         return list;
-      } catch (err) {
-        console.error("Firebase reviews read failed, using fallback:", err);
+      } catch (err: any) {
+        console.warn("Firebase reviews read notice, using fallback:", err?.message || err);
       }
     }
     return getStorageItem<UserReview[]>('reviews', defaultReviews);
@@ -3572,37 +3634,59 @@ export const dbService = {
       try {
         const snap = await getDocs(collection(firestoreDb, 'admins'));
         const list: Admin[] = [];
-        snap.forEach(d => list.push({ id: d.id, ...d.data() } as Admin));
+        snap.forEach(d => {
+          const data = d.data() as Omit<Admin, 'id'>;
+          list.push({ id: d.id, ...data, email: (data.email || d.id).trim().toLowerCase() });
+        });
+        syncWhitelistedAdminEmails(list.map(a => a.email));
+        setStorageItem('admins', list);
         return list;
       } catch (err) {
         console.warn("Firebase admins read fallback:", err);
       }
     }
-    return getStorageItem<Admin[]>('admins', defaultAdmins);
+    const localList = getStorageItem<Admin[]>('admins', defaultAdmins);
+    syncWhitelistedAdminEmails(localList.map(a => a.email));
+    return localList;
   },
 
   addAdmin: async (admin: Omit<Admin, 'id'>): Promise<Admin> => {
-    const newId = 'adm_' + Date.now();
-    const newAdmin: Admin = { id: newId, ...admin };
-    if (isFirebaseConfigured) {
-      try {
-        await setDoc(doc(firestoreDb, 'admins', newId), admin);
-        return newAdmin;
-      } catch (err) {
-        console.error("Firebase admin add failed:", err);
-      }
+    const cleanEmail = (admin.email || '').trim().toLowerCase();
+    if (!cleanEmail) {
+      throw new Error('يرجى إدخال البريد الإلكتروني للمسؤول.');
     }
+    const resolvedRole: 'super' | 'editor' = isSuperAdminEmail(cleanEmail) ? 'super' : (admin.role || 'editor');
+    const cleanName = (admin.name || '').trim() || cleanEmail.split('@')[0];
+    const newAdmin: Admin = {
+      id: cleanEmail,
+      name: cleanName,
+      email: cleanEmail,
+      role: resolvedRole
+    };
+    if (isFirebaseConfigured) {
+      await setDoc(doc(firestoreDb, 'admins', cleanEmail), {
+        name: cleanName,
+        email: cleanEmail,
+        role: resolvedRole,
+        createdAt: new Date().toISOString()
+      }, { merge: true });
+    }
+    addWhitelistedAdminEmail(cleanEmail);
     const current = getStorageItem<Admin[]>('admins', defaultAdmins);
-    current.push(newAdmin);
-    setStorageItem('admins', current);
+    const filtered = current.filter(item => item.email.trim().toLowerCase() !== cleanEmail && item.id !== cleanEmail);
+    filtered.push(newAdmin);
+    setStorageItem('admins', filtered);
     return newAdmin;
   },
 
   updateAdmin: async (id: string, admin: Partial<Admin>): Promise<void> => {
+    const cleanId = id.trim().toLowerCase();
     if (isFirebaseConfigured) {
       try {
-        await updateDoc(doc(firestoreDb, 'admins', id), admin as any);
-        return;
+        await setDoc(doc(firestoreDb, 'admins', id), admin as any, { merge: true });
+        if (cleanId !== id) {
+          await setDoc(doc(firestoreDb, 'admins', cleanId), admin as any, { merge: true }).catch(() => {});
+        }
       } catch (err) {
         console.error("Firebase admin update failed:", err);
       }
@@ -3612,16 +3696,27 @@ export const dbService = {
     setStorageItem('admins', updated);
   },
 
-  deleteAdmin: async (id: string): Promise<void> => {
+  deleteAdmin: async (id: string, email?: string): Promise<void> => {
+    const cleanEmail = (email || (id.includes('@') ? id : '')).trim().toLowerCase();
+    if (isSuperAdminEmail(cleanEmail) || isSuperAdminEmail(id)) {
+      throw new Error('لا يمكن حذف حساب المدير العام الرئيسي.');
+    }
     if (isFirebaseConfigured) {
       try {
         await deleteDoc(doc(firestoreDb, 'admins', id));
+        if (cleanEmail && cleanEmail !== id) {
+          await deleteDoc(doc(firestoreDb, 'admins', cleanEmail)).catch(() => {});
+        }
       } catch (err) {
         console.error("Firebase admin delete failed:", err);
+        throw err;
       }
     }
+    if (cleanEmail) {
+      removeWhitelistedAdminEmail(cleanEmail);
+    }
     const current = getStorageItem<Admin[]>('admins', defaultAdmins);
-    const updated = current.filter(item => item.id !== id);
+    const updated = current.filter(item => item.id !== id && (!cleanEmail || item.email.trim().toLowerCase() !== cleanEmail));
     setStorageItem('admins', updated);
   },
 
@@ -4939,15 +5034,89 @@ const getAdminEmail = (): string => {
   return (metaEnv.VITE_ADMIN_EMAIL || '').toLowerCase();
 };
 
-const DEFAULT_ADMIN_EMAILS = [
-  'mhmdbdaltwabalsdawy7@gmail.com'
-];
+const SUPER_ADMIN_EMAIL = 'mhmdbdaltwabalsdawy7@gmail.com';
+const WHITELISTED_ADMINS_CACHE_KEY = 'academy_whitelisted_admins';
+
+export function isSuperAdminEmail(email?: string | null): boolean {
+  if (!email) return false;
+  return email.trim().toLowerCase() === SUPER_ADMIN_EMAIL;
+}
+
+function getWhitelistedAdminEmails(): string[] {
+  try {
+    const raw = typeof localStorage !== 'undefined' ? localStorage.getItem(WHITELISTED_ADMINS_CACHE_KEY) : null;
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) {
+        return parsed.map((e: any) => String(e || '').trim().toLowerCase()).filter(Boolean);
+      }
+    }
+    const localAdmins = getStorageItem<Admin[]>('admins', defaultAdmins);
+    if (Array.isArray(localAdmins) && localAdmins.length > 0) {
+      return localAdmins.map(a => (a.email || '').trim().toLowerCase()).filter(Boolean);
+    }
+  } catch {}
+  return [];
+}
+
+function syncWhitelistedAdminEmails(emails: string[]): void {
+  try {
+    if (typeof localStorage === 'undefined') return;
+    const cleanList = Array.from(new Set(emails.map(e => (e || '').trim().toLowerCase()).filter(Boolean)));
+    localStorage.setItem(WHITELISTED_ADMINS_CACHE_KEY, JSON.stringify(cleanList));
+  } catch {}
+}
+
+function addWhitelistedAdminEmail(email: string): void {
+  const clean = email.trim().toLowerCase();
+  if (!clean) return;
+  const list = getWhitelistedAdminEmails();
+  if (!list.includes(clean)) {
+    syncWhitelistedAdminEmails([...list, clean]);
+  }
+}
+
+function removeWhitelistedAdminEmail(email: string): void {
+  const clean = email.trim().toLowerCase();
+  if (!clean || clean === SUPER_ADMIN_EMAIL) return;
+  const list = getWhitelistedAdminEmails().filter(e => e !== clean);
+  syncWhitelistedAdminEmails(list);
+}
 
 export function isAdminEmail(email: string): boolean {
   if (!email) return false;
   const clean = email.trim().toLowerCase();
-  if (clean === 'mhmdbdaltwabalsdawy7@gmail.com') return true;
-  return false;
+  if (clean === SUPER_ADMIN_EMAIL) return true;
+  return getWhitelistedAdminEmails().includes(clean);
+}
+
+async function resolveAdminAccessLevel(email: string): Promise<'super' | 'editor' | null> {
+  const clean = email.trim().toLowerCase();
+  if (!clean) return null;
+  if (isSuperAdminEmail(clean)) return 'super';
+
+  if (isFirebaseConfigured) {
+    try {
+      const snap = await getDoc(doc(firestoreDb, 'admins', clean));
+      if (snap.exists()) {
+        const data = snap.data() as Partial<Admin>;
+        addWhitelistedAdminEmail(clean);
+        return data.role === 'super' ? 'super' : 'editor';
+      }
+      removeWhitelistedAdminEmail(clean);
+      return null;
+    } catch {
+      return null;
+    }
+  }
+
+  const localAdmins = getStorageItem<Admin[]>('admins', defaultAdmins);
+  const found = localAdmins.find(a => (a.email || '').trim().toLowerCase() === clean);
+  if (found) {
+    addWhitelistedAdminEmail(clean);
+    return found.role === 'super' ? 'super' : 'editor';
+  }
+  return null;
 }
 
 function saveActiveUserSession(user: UserAuth): void {
@@ -4967,6 +5136,46 @@ function saveActiveUserSession(user: UserAuth): void {
 export const authService = {
   isRealFirebase: () => isFirebaseConfigured,
 
+  // Pick a Google account in an isolated temporary Firebase app so the active Super Admin stays logged in
+  pickGoogleAccountForAdmin: async (): Promise<{ success: boolean; name?: string; email?: string; error?: string }> => {
+    if (!isFirebaseConfigured) {
+      return { success: false, error: 'ميزة اختيار حساب Google متاحة عند الاتصال بـ Firebase.' };
+    }
+    const appName = 'admin_picker_' + Date.now();
+    let pickerApp: ReturnType<typeof initializeApp> | null = null;
+    try {
+      pickerApp = initializeApp(firebaseAppletConfig, appName);
+      const pickerAuth = getAuth(pickerApp);
+      const provider = new GoogleAuthProvider();
+      provider.setCustomParameters({ prompt: 'select_account' });
+      const cred = await signInWithPopup(pickerAuth, provider);
+      const cleanEmail = (cred.user.email || '').trim().toLowerCase();
+      const displayName = (cred.user.displayName || cleanEmail.split('@')[0] || 'مسؤول أكاديمي').trim();
+      await signOut(pickerAuth).catch(() => {});
+      if (!cleanEmail) {
+        return { success: false, error: 'لم يتم العثور على بريد إلكتروني لهذا الحساب.' };
+      }
+      return { success: true, name: displayName, email: cleanEmail };
+    } catch (err: any) {
+      const code = String(err?.code || '');
+      if (code === 'auth/popup-closed-by-user') {
+        return { success: false, error: 'تم إغلاق نافذة اختيار حساب Google قبل الاختيار.' };
+      }
+      if (code === 'auth/popup-blocked') {
+        return { success: false, error: 'قام المتصفح بحظر النافذة المنبثقة. اسمح بالنوافذ المنبثقة أو اكتب البريد يدوياً.' };
+      }
+      if (code === 'auth/unauthorized-domain') {
+        const host = typeof window !== 'undefined' ? window.location.hostname : '';
+        return { success: false, error: `النطاق الحالي (${host}) غير مضاف في Authorized domains داخل Firebase Console.` };
+      }
+      return { success: false, error: err?.message || 'تعذر قراءة بيانات الحساب من Google.' };
+    } finally {
+      if (pickerApp) {
+        await deleteApp(pickerApp).catch(() => {});
+      }
+    }
+  },
+
   // Authenticate manager/admin user with real Firebase Email/Password or local fallback
   loginAdmin: async (email: string, password: string): Promise<{ success: boolean; admin?: Admin; error?: string }> => {
     const cleanEmail = email.trim().toLowerCase();
@@ -4981,10 +5190,11 @@ export const authService = {
 
     const defaultAdminUser: UserAuth = {
       id: 'admin_' + Date.now(),
-      name: 'Eng/Mohamed abdal tawab',
+      name: isSuperAdminEmail(cleanEmail) ? 'Eng/Mohamed abdal tawab' : cleanEmail.split('@')[0],
       email: cleanEmail,
-      phone: '201010298878',
+      phone: isSuperAdminEmail(cleanEmail) ? '201010298878' : '',
       role: 'admin',
+      adminLevel: isSuperAdminEmail(cleanEmail) ? 'super' : 'editor',
       status: 'active',
       purchasedCourseIds: [],
       watchedLessonIds: [],
@@ -4996,16 +5206,18 @@ export const authService = {
       try {
         let firebaseUid: string | null = null;
         let authErrCode = '';
+        let newlyCreatedUser: User | null = null;
 
         try {
           const userCredential = await signInWithEmailAndPassword(firebaseAuth, cleanEmail, cleanPassword);
           firebaseUid = userCredential.user.uid;
         } catch (signInErr: any) {
           authErrCode = signInErr?.code || '';
-          if (authErrCode === 'auth/user-not-found' && isAdminEmail(cleanEmail)) {
+          if (authErrCode === 'auth/user-not-found') {
             try {
               const newCredential = await createUserWithEmailAndPassword(firebaseAuth, cleanEmail, cleanPassword);
               firebaseUid = newCredential.user.uid;
+              newlyCreatedUser = newCredential.user;
               authErrCode = '';
             } catch (createErr: any) {
               authErrCode = createErr?.code || authErrCode;
@@ -5034,59 +5246,57 @@ export const authService = {
           }
           return {
             success: false,
-            error: isAdminEmail(cleanEmail)
-              ? 'كلمة المرور غير صحيحة، أو لم يتم ربط كلمة مرور بهذا البريد بعد (إذا كنت تدخل بـ Google يمكنك الضغط على «تعيين / نسيت كلمة المرور» لإرسال رابط تعيين كلمة المرور لبريدك).'
-              : 'بيانات تسجيل دخول المدير غير صحيحة.'
+            error: 'كلمة المرور غير صحيحة، أو لم يتم ربط كلمة مرور بهذا البريد بعد (إذا كنت تدخل بـ Google يمكنك الضغط على «تعيين / نسيت كلمة المرور» لإرسال رابط تعيين كلمة المرور لبريدك).'
           };
         }
 
-        // Verify admin role authorization
-        let isAuthorizedAdmin = isAdminEmail(cleanEmail);
-        let userData: UserAuth = { ...defaultAdminUser, id: firebaseUid, uid: firebaseUid };
+        // Verify authorization against Super Admin email OR Firestore /admins/{email} whitelist
+        const verifiedEmail = (firebaseAuth.currentUser?.email || cleanEmail).trim().toLowerCase();
+        const adminLevel = await resolveAdminAccessLevel(verifiedEmail);
+        if (!adminLevel) {
+          if (newlyCreatedUser) {
+            await newlyCreatedUser.delete().catch(() => signOut(firebaseAuth));
+          } else {
+            await signOut(firebaseAuth).catch(() => {});
+          }
+          recordLoginAttempt(cleanEmail, false);
+          return { success: false, error: 'هذا البريد الإلكتروني غير مصرح له بصلاحيات المدير.' };
+        }
+
+        let userData: UserAuth = { ...defaultAdminUser, id: firebaseUid, uid: firebaseUid, adminLevel };
         try {
           const userRef = doc(firestoreDb, 'users', firebaseUid);
           const snap = await getDoc(userRef);
           if (snap.exists()) {
             const existing = snap.data() as UserAuth;
-            if (existing.role === 'admin') isAuthorizedAdmin = true;
-            userData = { id: firebaseUid, uid: firebaseUid, ...existing };
-          }
-          if (!isAuthorizedAdmin) {
-            try {
-              const adminSnap = await getDoc(doc(firestoreDb, 'admins', firebaseUid));
-              if (adminSnap.exists()) isAuthorizedAdmin = true;
-            } catch {}
+            userData = { id: firebaseUid, uid: firebaseUid, ...existing, adminLevel };
           }
         } catch (dbErr) {
           console.warn("Firestore role verification notice during manager login:", dbErr);
         }
 
-        if (!isAuthorizedAdmin) {
-          await signOut(firebaseAuth).catch(() => {});
-          recordLoginAttempt(cleanEmail, false);
-          return { success: false, error: 'هذا البريد الإلكتروني غير مصرح له بصلاحيات المدير.' };
-        }
-
         userData.role = 'admin';
+        userData.adminLevel = adminLevel;
         userData.status = 'active';
         userData.isApproved = true;
         try {
-          await setDoc(doc(firestoreDb, 'users', firebaseUid), { ...userData, role: 'admin', email: cleanEmail, status: 'active', isApproved: true }, { merge: true });
+          await setDoc(doc(firestoreDb, 'users', firebaseUid), { ...userData, role: 'admin', adminLevel, email: verifiedEmail, status: 'active', isApproved: true }, { merge: true });
         } catch (syncErr) {
           console.warn("Firestore user sync warning during manager login:", syncErr);
         }
 
-        recordLoginAttempt(cleanEmail, true);
-        secureLog('auth_success_admin', { email: cleanEmail });
+        recordLoginAttempt(verifiedEmail, true);
+        secureLog('auth_success_admin', { email: verifiedEmail, adminLevel });
         saveActiveUserSession(userData);
-        return { success: true, admin: { id: userData.id, name: userData.name || 'Eng/Mohamed abdal tawab', email: userData.email, role: 'super' } };
+        return { success: true, admin: { id: userData.id, name: userData.name || (isSuperAdminEmail(verifiedEmail) ? 'Eng/Mohamed abdal tawab' : verifiedEmail.split('@')[0]), email: userData.email, role: adminLevel } };
       } catch (err: any) {
         console.error("Manager login error:", err);
         return { success: false, error: err?.message || 'تعذر تسجيل الدخول كمدير.' };
       }
     } else {
       // Local Simulation DB Fallback
-      if (!isAdminEmail(cleanEmail)) {
+      const adminLevel = await resolveAdminAccessLevel(cleanEmail);
+      if (!adminLevel) {
         return { success: false, error: 'هذا البريد الإلكتروني غير مصرح له بصلاحيات المدير.' };
       }
       const savedLocalPass = typeof localStorage !== 'undefined' ? localStorage.getItem('academy_admin_local_pass') : null;
@@ -5099,18 +5309,19 @@ export const authService = {
       const users = getStorageItem<UserAuth[]>('users', defaultUsers);
       let found = users.find(u => u.email.toLowerCase() === cleanEmail);
       if (!found) {
-        found = { ...defaultAdminUser };
+        found = { ...defaultAdminUser, adminLevel };
         users.push(found);
         setStorageItem('users', users);
       } else {
         found.role = 'admin';
+        found.adminLevel = adminLevel;
         found.status = 'active';
         setStorageItem('users', users);
       }
       recordLoginAttempt(cleanEmail, true);
       secureLog('auth_success_admin_simulation', { email: cleanEmail });
       saveActiveUserSession(found);
-      return { success: true, admin: { id: found.id, name: found.name || 'Eng/Mohamed abdal tawab', email: found.email, role: 'super' } };
+      return { success: true, admin: { id: found.id, name: found.name || 'Eng/Mohamed abdal tawab', email: found.email, role: adminLevel } };
     }
   },
 
@@ -5118,9 +5329,6 @@ export const authService = {
     const cleanEmail = email.trim().toLowerCase();
     if (!cleanEmail) {
       return { success: false, error: 'يرجى إدخال البريد الإلكتروني للمدير أولاً.' };
-    }
-    if (!isAdminEmail(cleanEmail)) {
-      return { success: false, error: 'هذا البريد غير مسجل كبريد المدير المصرح له.' };
     }
     if (!isFirebaseConfigured || !firebaseAuth) {
       return { success: false, error: 'خدمة إعادة تعيين كلمة المرور متاحة عند الاتصال بـ Firebase.' };
@@ -5141,15 +5349,17 @@ export const authService = {
 
   getCurrentAdmin: (): Admin | null => {
     const u = authService.getCurrentUser();
-    if (u && (u.role === 'admin' || u.email === 'mhmdbdaltwabalsdawy7@gmail.com')) {
-      return { id: u.id, name: u.name || 'Eng/Mohamed abdal tawab', email: u.email, role: 'super' };
+    if (u && isAdminEmail(u.email || '')) {
+      const resolvedRole: 'super' | 'editor' = isSuperAdminEmail(u.email) ? 'super' : (u.adminLevel || 'super');
+      return { id: u.id, name: u.name || 'Eng/Mohamed abdal tawab', email: u.email, role: resolvedRole };
     }
     const activeUserStr = typeof localStorage !== 'undefined' ? localStorage.getItem('academy_active_user') : null;
     if (activeUserStr) {
       try {
         const activeUser = JSON.parse(activeUserStr);
-        if (activeUser && (activeUser.role === 'admin' || activeUser.email === 'mhmdbdaltwabalsdawy7@gmail.com')) {
-          return { id: activeUser.id || 'admin_1', name: activeUser.name || 'Eng/Mohamed abdal tawab', email: activeUser.email, role: 'super' };
+        if (activeUser && isAdminEmail(activeUser.email || '')) {
+          const resolvedRole: 'super' | 'editor' = isSuperAdminEmail(activeUser.email) ? 'super' : (activeUser.adminLevel || 'super');
+          return { id: activeUser.id || 'admin_1', name: activeUser.name || 'Eng/Mohamed abdal tawab', email: activeUser.email, role: resolvedRole };
         }
       } catch (e) {}
     }
@@ -5244,6 +5454,8 @@ export const authService = {
 
         if (isAdminEmail(normalizedEmail)) {
           finalUser.role = 'admin';
+        } else if (finalUser.role === 'admin') {
+          finalUser.role = 'student';
         }
 
         recordLoginAttempt(normalizedEmail, true);
@@ -5272,7 +5484,7 @@ export const authService = {
                 recordLoginAttempt(normalizedEmail, false);
                 return { success: false, accountStatus: 'rejected', error: 'تم رفض طلب تسجيل حسابك (Rejected) من قبل إدارة المنصة الجامعية.' };
               }
-              const finalUser: UserAuth = { id: docSnap.id, uid: docSnap.id, ...userData };
+              const finalUser: UserAuth = { id: docSnap.id, uid: docSnap.id, ...userData, role: userData.role === 'admin' ? 'student' : userData.role };
               recordLoginAttempt(normalizedEmail, true);
               saveActiveUserSession(finalUser);
               return { success: true, user: finalUser };
@@ -5590,7 +5802,8 @@ export const authService = {
       const fbUser = credential.user;
       const cleanEmail = (fbUser.email || '').trim().toLowerCase();
       const uid = fbUser.uid;
-      const isAdm = isAdminEmail(cleanEmail);
+      const adminLevel = await resolveAdminAccessLevel(cleanEmail);
+      const isAdm = adminLevel !== null;
 
       if (targetMode === 'admin' && !isAdm) {
         await signOut(firebaseAuth);
@@ -5604,15 +5817,24 @@ export const authService = {
 
       if (snap.exists()) {
         userData = { id: uid, uid, ...(snap.data() as UserAuth) };
-        if (isAdm) userData.role = 'admin';
+        if (isAdm && adminLevel) {
+          userData.role = 'admin';
+          userData.adminLevel = adminLevel;
+          userData.status = 'active';
+          userData.isApproved = true;
+          await setDoc(userRef, { role: 'admin', adminLevel, status: 'active', isApproved: true }, { merge: true }).catch(() => {});
+        } else if (userData.role === 'admin') {
+          userData.role = 'student';
+        }
       } else {
         userData = {
           id: uid,
           uid,
-          name: fbUser.displayName || (isAdm ? 'Eng/Mohamed abdal tawab' : 'طالب تكنولوجيا المعلومات'),
+          name: fbUser.displayName || (isAdm ? (isSuperAdminEmail(cleanEmail) ? 'Eng/Mohamed abdal tawab' : cleanEmail.split('@')[0]) : 'طالب تكنولوجيا المعلومات'),
           email: cleanEmail,
           phone: fbUser.phoneNumber || '',
           role: isAdm ? 'admin' : 'student',
+          adminLevel: isAdm && adminLevel ? adminLevel : undefined,
           department: 'IT',
           grade: 'year1',
           semester: 'term1',
@@ -5649,18 +5871,29 @@ export const authService = {
 
       recordLoginAttempt(cleanEmail, true);
       saveActiveUserSession(userData);
-      if (isAdm) {
+      if (isAdm && adminLevel) {
         return {
           success: true,
           user: userData,
-          admin: { id: uid, name: userData.name || 'Eng/Mohamed abdal tawab', email: cleanEmail, role: 'super' }
+          admin: { id: uid, name: userData.name || (isSuperAdminEmail(cleanEmail) ? 'Eng/Mohamed abdal tawab' : cleanEmail.split('@')[0]), email: cleanEmail, role: adminLevel }
         };
       }
       return { success: true, user: userData };
     } catch (err: any) {
       console.warn("Google sign-in notice:", err);
-      if (err?.code === 'auth/popup-closed-by-user') {
+      const code = String(err?.code || '');
+      if (code === 'auth/popup-closed-by-user') {
         return { success: false, error: 'تم إغلاق نافذة تسجيل الدخول قبل إتمام العملية.' };
+      }
+      if (code === 'auth/popup-blocked') {
+        return { success: false, error: 'قام المتصفح بحظر نافذة تسجيل الدخول. يرجى السماح بالنوافذ المنبثقة لهذا الموقع أو تسجيل الدخول بالبريد وكلمة المرور.' };
+      }
+      if (code === 'auth/unauthorized-domain') {
+        const host = typeof window !== 'undefined' ? window.location.hostname : '';
+        return {
+          success: false,
+          error: `النطاق الحالي (${host}) غير مضاف بعد في قائمة Authorized domains داخل Firebase Console > Authentication > Settings. أضف النطاق أو استخدم الدخول بالبريد الإلكتروني وكلمة المرور.`
+        };
       }
       return { success: false, error: err?.message || 'تعذر تسجيل الدخول عبر Google.' };
     }
@@ -5750,20 +5983,22 @@ export const authService = {
           const uid = fbUser.uid;
           let userData: UserAuth | null = null;
           try {
+            const adminLevel = await resolveAdminAccessLevel(cleanEmail);
             const userRef = doc(firestoreDb, 'users', uid);
             const snap = await getDoc(userRef);
             if (snap.exists()) {
               userData = { id: uid, uid, ...(snap.data() as UserAuth) };
             } else {
-              const role = isAdminEmail(cleanEmail) ? 'admin' : 'student';
-              const isAdm = role === 'admin';
+              const isAdm = adminLevel !== null;
+              const role = isAdm ? 'admin' : 'student';
               userData = {
                 id: uid,
                 uid,
-                name: fbUser.displayName || (isAdm ? 'Eng/Mohamed abdal tawab' : 'طالب تكنولوجيا المعلومات'),
+                name: fbUser.displayName || (isAdm ? (isSuperAdminEmail(cleanEmail) ? 'Eng/Mohamed abdal tawab' : cleanEmail.split('@')[0]) : 'طالب تكنولوجيا المعلومات'),
                 email: cleanEmail,
                 phone: '',
                 role,
+                adminLevel: isAdm && adminLevel ? adminLevel : undefined,
                 department: 'IT',
                 grade: 'year1',
                 createdAt: new Date().toISOString(),
@@ -5772,8 +6007,13 @@ export const authService = {
               };
               await setDoc(userRef, userData, { merge: true });
             }
-            if (isAdminEmail(cleanEmail)) {
+            if (adminLevel) {
               userData.role = 'admin';
+              userData.adminLevel = adminLevel;
+              userData.status = 'active';
+              userData.isApproved = true;
+            } else if (userData.role === 'admin') {
+              userData.role = 'student';
             }
             const savedLocal = localStorage.getItem('academy_active_user');
             let localTime = Date.now();

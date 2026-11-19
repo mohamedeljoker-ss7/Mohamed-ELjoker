@@ -11,20 +11,36 @@ interface FooterProps {
 export const Footer: React.FC<FooterProps> = ({ settings, onNavigate }) => {
   const { t } = useLanguage();
 
+  const openExternalSafe = (url: string) => {
+    const a = document.createElement('a');
+    a.href = url;
+    a.target = '_blank';
+    a.rel = 'noopener noreferrer';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+  };
+
   const handleWhatsappClick = () => {
-    if (settings.whatsapp.startsWith('http')) {
-      window.open(settings.whatsapp, '_blank');
+    const raw = (settings.whatsapp || '').trim();
+    if (!raw) return;
+    if (raw.startsWith('http://') || raw.startsWith('https://')) {
+      openExternalSafe(raw);
     } else {
-      window.open(`https://wa.me/${settings.whatsapp}`, '_blank');
+      let num = raw.replace(/\D/g, '');
+      if (num.startsWith('0')) num = '2' + num;
+      openExternalSafe(`https://wa.me/${num}`);
     }
   };
 
   const handleTelegramClick = () => {
-    if (settings.telegram.startsWith('http')) {
-      window.open(settings.telegram, '_blank');
+    const raw = (settings.telegram || '').trim();
+    if (!raw) return;
+    if (raw.startsWith('http://') || raw.startsWith('https://')) {
+      openExternalSafe(raw);
     } else {
-      const rawTele = settings.telegram.replace('t.me/', '').replace('@', '');
-      window.open(`https://t.me/${rawTele}`, '_blank');
+      const rawTele = raw.replace('t.me/', '').replace('@', '');
+      openExternalSafe(`https://t.me/${rawTele}`);
     }
   };
 

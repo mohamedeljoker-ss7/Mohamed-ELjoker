@@ -6,7 +6,7 @@ import {
   LectureItem, SectionItem, ExamItem, SheetItem,
   QuestionBankItem, ScheduleItem, StudentInquiry, ExamSubmission, ActivityLogItem, OnlineExamQuestion
 } from '../types';
-import { dbService, authService, firebaseAuth, waitForFirebaseAuth, isAdminEmail } from '../firebase';
+import { dbService, authService, firebaseAuth, waitForFirebaseAuth, isAdminEmail, isSuperAdminEmail } from '../firebase';
 import { onAuthStateChanged } from 'firebase/auth';
 import { uploadLargeVideo } from '../utils/largeVideoUploader';
 import { VideoHostingUploader } from './VideoHostingUploader';
@@ -1651,37 +1651,71 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
   };
 
   // 9. Admins Management
+  const handlePickGoogleAdmin = async () => {
+    setGoogleSyncing(true);
+    try {
+      const res = await authService.pickGoogleAccountForAdmin();
+      if (res.success && res.email) {
+        setAdminForm(prev => ({
+          ...prev,
+          name: prev.name.trim() || res.name || prev.name,
+          email: res.email || prev.email
+        }));
+        triggerNotification(t(`تم جلب حساب Google بنجاح: ${res.email}. اختر الصلاحية واضغط "تفعيل الحساب".`, `Google account selected: ${res.email}. Choose role and click Enable Admin.`));
+      } else if (res.error) {
+        triggerNotification(res.error, true);
+      }
+    } finally {
+      setGoogleSyncing(false);
+    }
+  };
+
   const handleAdminSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    const cleanEmail = (adminForm.email || '').trim().toLowerCase();
+    if (!cleanEmail || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanEmail)) {
+      triggerNotification(t('يرجى إدخال بريد إلكتروني صحيح.', 'Please enter a valid email address.'), true);
+      return;
+    }
     setActionLoading(true);
     try {
-      const added = await dbService.addAdmin(adminForm);
-      setAdmins(prev => [...prev, added]);
-      triggerNotification(t('تم إضافة المسؤول بنجاح.', 'Admin account added successfully.'));
+      const added = await dbService.addAdmin({
+        ...adminForm,
+        email: cleanEmail
+      });
+      setAdmins(prev => [
+        ...prev.filter(a => a.email.trim().toLowerCase() !== cleanEmail && a.id !== added.id),
+        added
+      ]);
+      triggerNotification(
+        isSuperAdminEmail(cleanEmail)
+          ? t('حسابك الرئيسي مسجل ومفعل بالفعل كمدير عام للمنصة.', 'Primary Super Admin account verified and active.')
+          : t('تم تفعيل المسؤول بنجاح! يمكنه الآن تسجيل الدخول من بوابة المدير عبر Google أو البريد الإلكتروني.', 'Administrator enabled! They can now sign in via Google or Email/Password.')
+      );
       setAdminForm({ name: '', email: '', role: 'editor' });
       setIsModalOpen(false);
-    } catch {
-      triggerNotification('Failed to add admin', true);
+    } catch (err: any) {
+      triggerNotification(err?.message || t('تعذر حفظ بيانات المسؤول. تأكد من اتصالك بحساب المدير العام الرئيسي.', 'Failed to add admin'), true);
     } finally {
       setActionLoading(false);
     }
   };
 
-  const handleDeleteAdmin = (id: string) => {
-    if (admins.length <= 1) {
-      triggerNotification(t('لا يمكن حذف المسؤول الأخير!', 'Cannot delete the last administrator!'), true);
+  const handleDeleteAdmin = (adm: Admin) => {
+    if (isSuperAdminEmail(adm.email) || isSuperAdminEmail(adm.id)) {
+      triggerNotification(t('لا يمكن حذف حساب المدير العام الرئيسي!', 'Cannot delete the Primary Super Admin account!'), true);
       return;
     }
     requestConfirmation(
       t('إزالة مسؤول', 'Remove Administrator'),
-      t('هل تريد إزالة صلاحيات هذا المسؤول؟', 'Are you sure you want to remove this administrator?'),
+      t(`هل تريد إزالة صلاحيات الإدارة عن ${adm.email}؟`, `Are you sure you want to remove admin permissions from ${adm.email}?`),
       async () => {
         try {
-          await dbService.deleteAdmin(id);
-          setAdmins(prev => prev.filter(a => a.id !== id));
-          triggerNotification(t('تم إزالة المسؤول.', 'Administrator removed.'));
-        } catch {
-          triggerNotification('Error removing admin', true);
+          await dbService.deleteAdmin(adm.id, adm.email);
+          setAdmins(prev => prev.filter(a => a.id !== adm.id && a.email.trim().toLowerCase() !== adm.email.trim().toLowerCase()));
+          triggerNotification(t('تم إزالة صلاحيات المسؤول بنجاح.', 'Administrator removed.'));
+        } catch (err: any) {
+          triggerNotification(err?.message || 'Error removing admin', true);
         }
       }
     );
@@ -2819,6 +2853,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
               </button>
             )}
             <button
+              type="button"
               onClick={loadData}
               className="rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900/60 p-2.5 text-slate-600 dark:text-slate-300 hover:text-brand-cyan hover:bg-slate-100 dark:hover:bg-slate-800 transition-all cursor-pointer shadow-xs"
               title={t('تحديث البيانات', 'Refresh Data')}
@@ -2826,6 +2861,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
               <RefreshCw className="h-5 w-5" />
             </button>
             <button
+              type="button"
               onClick={onLogout}
               className="rounded-xl bg-red-500/10 border border-red-500/20 px-4 py-2 text-xs font-bold text-red-600 dark:text-red-400 hover:bg-red-500 hover:text-white transition-all cursor-pointer"
             >
@@ -6540,13 +6576,19 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
                 {/* 10. PLATFORM ADMINS */}
                 {activeTab === 'admins' && (
                   <div>
-                    <div className="flex items-center justify-between mb-6">
-                      <h2 className="text-xl font-bold text-slate-900 dark:text-white flex items-center gap-2">
-                        <Shield className="h-5 w-5 text-brand-cyan" />
-                        {t('إدارة حسابات المسؤولين والصلاحيات', 'Platform Administrators & Permissions')}
-                      </h2>
-                      {currentAdmin?.role === 'super' ? (
+                    <div className="flex flex-wrap items-center justify-between gap-3 mb-6">
+                      <div>
+                        <h2 className="text-xl font-bold text-slate-900 dark:text-white flex items-center gap-2">
+                          <Shield className="h-5 w-5 text-brand-cyan" />
+                          {t('إدارة حسابات المسؤولين والصلاحيات', 'Platform Administrators & Permissions')}
+                        </h2>
+                        <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
+                          {t('حسابك الأساسي هو المدير العام الرئيسي الدائم، ويمكنك إضافة مسؤولين آخرين يدوياً أو عبر اختيار حساب Google.', 'Your primary account is the permanent Super Admin; you can add more admins manually or via Google.')}
+                        </p>
+                      </div>
+                      {isSuperAdminEmail(fbAuthUser?.email || currentAdmin?.email) ? (
                         <button
+                          type="button"
                           onClick={openAddModal}
                           className="flex items-center gap-1.5 rounded-xl bg-brand-cyan text-white dark:text-slate-950 hover:bg-brand-cyan-light px-4 py-2 text-xs font-bold transition-all cursor-pointer"
                         >
@@ -6554,20 +6596,41 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
                           {t('إضافة مسؤول جديد', 'Add Administrator')}
                         </button>
                       ) : (
-                        <span className="text-xs text-amber-600 dark:text-amber-400">{t('الصلاحية المتاحة: عرض فقط', 'View-only authorization')}</span>
+                        <span className="text-xs text-amber-600 dark:text-amber-400">{t('إضافة/حذف المسؤولين متاح للمدير العام الرئيسي فقط', 'Only the Primary Super Admin can manage admins')}</span>
                       )}
                     </div>
 
-                    <div className="space-y-4">
-                      {admins.map(adm => (
-                        <div key={adm.id} className="rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950/40 shadow-xs dark:shadow-none p-4 flex items-center justify-between text-xs text-slate-900 dark:text-white">
-                          <div className="flex items-center gap-3">
+                    <div className="space-y-3">
+                      {/* Primary Super Admin Account Card (Always Active & Protected) */}
+                      <div className="rounded-xl border border-brand-cyan/40 bg-brand-cyan/5 dark:bg-brand-cyan/10 p-4 flex flex-wrap items-center justify-between gap-3 text-xs text-slate-900 dark:text-white">
+                        <div className="flex items-center gap-3 min-w-0">
+                          <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-brand-cyan/15 border border-brand-cyan/30 text-brand-cyan">
+                            <ShieldCheck className="h-5 w-5" />
+                          </span>
+                          <div className="min-w-0">
+                            <p className="font-black text-sm">Eng/Mohamed abdal tawab</p>
+                            <p className="text-[11px] text-slate-600 dark:text-slate-300 font-mono mt-0.5 truncate">mhmdbdaltwabalsdawy7@gmail.com</p>
+                          </div>
+                        </div>
+
+                        <div className="flex items-center gap-2.5">
+                          <span className="rounded-full px-3 py-1 text-[10px] font-bold bg-brand-cyan/20 text-brand-cyan dark:text-brand-cyan-light border border-brand-cyan/30">
+                            {t('المدير العام الرئيسي · الحساب الأساسي', 'Primary Super Admin')}
+                          </span>
+                          <Lock className="h-4 w-4 text-slate-400" title={t('حساب محمي لا يمكن حذفه', 'Protected primary account')} />
+                        </div>
+                      </div>
+
+                      {/* Additional Added Administrators */}
+                      {admins.filter(adm => !isSuperAdminEmail(adm.email)).map(adm => (
+                        <div key={adm.id} className="rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950/40 shadow-xs dark:shadow-none p-4 flex flex-wrap items-center justify-between gap-3 text-xs text-slate-900 dark:text-white">
+                          <div className="flex items-center gap-3 min-w-0">
                             <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-lg">
                               <Shield className="h-5 w-5 text-brand-cyan" />
                             </span>
-                            <div>
+                            <div className="min-w-0">
                               <p className="font-bold text-sm">{adm.name}</p>
-                              <p className="text-[11px] text-slate-600 dark:text-slate-400 font-mono mt-0.5">{adm.email}</p>
+                              <p className="text-[11px] text-slate-600 dark:text-slate-400 font-mono mt-0.5 truncate">{adm.email}</p>
                             </div>
                           </div>
 
@@ -6575,13 +6638,15 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
                             <span className={`rounded-full px-2.5 py-0.5 text-[10px] font-bold ${
                               adm.role === 'super' ? 'bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 border border-indigo-500/20' : 'bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300'
                             }`}>
-                              {adm.role === 'super' ? t('مدير عام', 'Super Admin') : t('محرر', 'Editor')}
+                              {adm.role === 'super' ? t('مدير عام', 'Super Admin') : t('محرر أكاديمي', 'Editor')}
                             </span>
                             
-                            {currentAdmin?.role === 'super' && adm.email !== currentAdmin.email && (
+                            {isSuperAdminEmail(fbAuthUser?.email || currentAdmin?.email) && (
                               <button
-                                onClick={() => handleDeleteAdmin(adm.id)}
-                                className="p-1.5 text-red-600 dark:text-red-400 hover:text-red-300 transition-all cursor-pointer"
+                                type="button"
+                                onClick={() => handleDeleteAdmin(adm)}
+                                className="p-1.5 text-red-600 dark:text-red-400 hover:text-red-500 transition-all cursor-pointer"
+                                title={t('إزالة المسؤول', 'Remove Administrator')}
                               >
                                 <Trash2 className="h-4.5 w-4.5" />
                               </button>
@@ -6589,6 +6654,12 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
                           </div>
                         </div>
                       ))}
+
+                      {admins.filter(adm => !isSuperAdminEmail(adm.email)).length === 0 && (
+                        <div className="rounded-xl border border-dashed border-slate-300 dark:border-slate-800 p-6 text-center text-xs text-slate-500 dark:text-slate-400">
+                          {t('لا يوجد مسؤولون إضافيون حالياً. اضغط «إضافة مسؤول جديد» لإضافة حساب يدوياً أو من Google.', 'No additional admins yet. Click "Add Administrator" to add one manually or via Google.')}
+                        </div>
+                      )}
                     </div>
                   </div>
                 )}
@@ -8449,22 +8520,43 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
             {/* Admins Form modal */}
             {activeTab === 'admins' && (
               <form onSubmit={handleAdminSubmit} className="space-y-5 text-xs text-slate-700 dark:text-slate-300">
+                {dbService.isRealFirebase() && (
+                  <div className="rounded-xl border border-brand-cyan/30 bg-brand-cyan/5 p-3.5 space-y-2.5">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <div>
+                        <p className="font-bold text-slate-900 dark:text-white">{t('الطريقة ١: اختيار حساب من Google مباشرة', 'Option 1: Pick Google Account Directly')}</p>
+                        <p className="text-[11px] text-slate-500 dark:text-slate-400">{t('يجلب الاسم والبريد الإلكتروني تلقائياً دون تسجيل خروجك من حسابك الحالي.', 'Pulls name and email automatically without signing you out.')}</p>
+                      </div>
+                      <button
+                        type="button"
+                        disabled={googleSyncing}
+                        onClick={handlePickGoogleAdmin}
+                        className="rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 hover:border-brand-cyan px-4 py-2 font-bold text-slate-800 dark:text-white transition-all cursor-pointer disabled:opacity-50"
+                      >
+                        {googleSyncing ? t('جاري فتح Google...', 'Opening Google...') : t('🔐 اختيار حساب من Google', '🔐 Pick Google Account')}
+                      </button>
+                    </div>
+                  </div>
+                )}
+
                 <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                   <div>
                     <label className="block mb-1.5 font-semibold text-slate-900 dark:text-white">{t('الاسم بالكامل', 'Admin Full Name')}</label>
                     <input
                       type="text"
                       required
+                      placeholder={t('مثال: م. أحمد علي', 'e.g. Eng. Ahmed Ali')}
                       value={adminForm.name}
                       onChange={e => setAdminForm({ ...adminForm, name: e.target.value })}
                       className="w-full rounded-xl bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-3 text-slate-900 dark:text-white"
                     />
                   </div>
                   <div>
-                    <label className="block mb-1.5 font-semibold text-slate-900 dark:text-white">{t('البريد الإلكتروني للولوج المباشر', 'Admin Email')}</label>
+                    <label className="block mb-1.5 font-semibold text-slate-900 dark:text-white">{t('البريد الإلكتروني (أو أدخله بنفسك)', 'Admin Email (Manual Entry)')}</label>
                     <input
                       type="email"
                       required
+                      placeholder="admin@university.edu.eg"
                       value={adminForm.email}
                       onChange={e => setAdminForm({ ...adminForm, email: e.target.value })}
                       className="w-full rounded-xl bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-3 text-slate-900 dark:text-white font-mono"
@@ -8477,11 +8569,15 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
                       onChange={e => setAdminForm({ ...adminForm, role: e.target.value as 'super' | 'editor' })}
                       className="w-full rounded-xl bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-3 text-slate-900 dark:text-white"
                     >
-                      <option value="editor">{t('محرر أكاديمي (محدود)', 'Academic Editor')}</option>
+                      <option value="editor">{t('محرر أكاديمي (إدارة المحتوى)', 'Academic Editor')}</option>
                       <option value="super">{t('مدير المنصة الجامعية (صلاحية كاملة)', 'Platform Administrator (Full)')}</option>
                     </select>
                   </div>
                 </div>
+
+                <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                  {t('بعد حفظ المسؤول هنا، سيتمكن من تسجيل الدخول من تبويب «المدير» سواء بحساب Google أو بالبريد الإلكتروني وكلمة المرور.', 'Once saved, this administrator can sign in from the Manager login tab using Google or Email/Password.')}
+                </p>
 
                 <div className="flex justify-end gap-3 pt-5 border-t border-slate-200 dark:border-slate-900">
                   <button type="button" onClick={() => setIsModalOpen(false)} className="rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900 px-5 py-3 font-bold text-slate-700 dark:text-slate-300">{t('إلغاء', 'Cancel')}</button>

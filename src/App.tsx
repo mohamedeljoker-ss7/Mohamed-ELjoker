@@ -12,7 +12,7 @@ import { SubscriptionRequiredView } from './components/SubscriptionRequiredView'
 import { CustomVideoPlayer } from './components/CustomVideoPlayer';
 import { verifyCourseAccess, formatVideoEmbedUrl } from './utils/authAccess';
 import { triggerFileDownload, emitAppToast } from './utils/videoStorage';
-import { doesCourseMatchStudent, doesCourseMatchStudentGrade, ACADEMIC_GRADES, ACADEMIC_SEMESTERS, ACADEMIC_SUBJECTS, getGradeName, getCourseDisplayTitle, normalizeGradeCode, getGradeFromCourseOrCategory } from './utils/gradeMatching';
+import { doesCourseMatchStudent, doesCourseMatchStudentGrade, doesSubjectMatch, ACADEMIC_GRADES, ACADEMIC_SEMESTERS, ACADEMIC_SUBJECTS, getGradeName, getCourseDisplayTitle, normalizeGradeCode, getGradeFromCourseOrCategory } from './utils/gradeMatching';
 import { 
   Star, Phone, Send, Info, Award, Calendar, BookOpen, Clock, FileText, CheckCircle2, 
   MapPin, HelpCircle, ShieldAlert, ArrowLeft, Loader, Play, Download, Check, X, Video, Plus, Sparkles,
@@ -241,8 +241,7 @@ function AcademyApp() {
         handleNavigate('student-panel');
       } else {
         handleNavigate('home');
-        setAuthTab('teacher');
-        setIsAdminLoginOpen(true);
+        openAdminAuthModal();
       }
     }
   }, [currentView, isAdminLoggedIn, isStudentLoggedIn]);
@@ -319,8 +318,7 @@ function AcademyApp() {
         setCurrentView('course-details');
       } else if (!access.allowed && (currentView === 'course-details' || currentView === 'player')) {
         if (access.reason === 'not_logged_in') {
-          setStudentAuthMode('login');
-          setIsStudentAuthOpen(true);
+          openStudentAuthModal('login');
           setCurrentView('courses');
         } else {
           setCurrentView('subscription-required');
@@ -329,23 +327,64 @@ function AcademyApp() {
     }
   }, [currentView, selectedCourse, isStudentLoggedIn, orders]);
 
+  const openExternalSafe = (url: string) => {
+    if (!url) return;
+    const a = document.createElement('a');
+    a.href = url;
+    a.target = '_blank';
+    a.rel = 'noopener noreferrer';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+  };
+
+  const openStudentAuthModal = (mode: 'login' | 'register' = 'login') => {
+    setAuthTab('student');
+    setStudentAuthMode(mode);
+    setIsAdminLoginOpen(false);
+    setLoginError('');
+    setAdminResetSuccess('');
+    setStudentAuthError('');
+    setStudentAuthSuccess('');
+    setStudentAccountStatus('');
+    setIsStudentAuthOpen(true);
+  };
+
+  const openAdminAuthModal = () => {
+    setAuthTab('teacher');
+    setIsStudentAuthOpen(false);
+    setLoginError('');
+    setAdminResetSuccess('');
+    setStudentAuthError('');
+    setStudentAuthSuccess('');
+    setStudentAccountStatus('');
+    setIsAdminLoginOpen(true);
+  };
+
   // Social handles trigger
   const handleWhatsappTrigger = () => {
-    if (!settings) return;
-    let num = settings.whatsapp.replace(/\D/g, '');
+    if (!settings || !settings.whatsapp) return;
+    const raw = settings.whatsapp.trim();
+    if (raw.startsWith('http://') || raw.startsWith('https://')) {
+      openExternalSafe(raw);
+      return;
+    }
+    let num = raw.replace(/\D/g, '');
     if (num.startsWith('0')) {
       num = '2' + num;
     }
-    window.open(`https://wa.me/${num}`, '_blank');
+    openExternalSafe(`https://wa.me/${num}`);
   };
 
   const handleTelegramTrigger = () => {
-    if (!settings) return;
-    let username = settings.telegram.trim();
-    username = username.replace('https://t.me/', '');
-    username = username.replace('t.me/', '');
-    username = username.replace('@', '');
-    window.open(`https://t.me/${username}`, '_blank');
+    if (!settings || !settings.telegram) return;
+    const raw = settings.telegram.trim();
+    if (raw.startsWith('http://') || raw.startsWith('https://')) {
+      openExternalSafe(raw);
+      return;
+    }
+    let username = raw.replace('t.me/', '').replace('@', '');
+    openExternalSafe(`https://t.me/${username}`);
   };
 
   // Nav actions
@@ -380,8 +419,7 @@ function AcademyApp() {
 
     if (!access.allowed) {
       if (access.reason === 'not_logged_in') {
-        setStudentAuthMode('login');
-        setIsStudentAuthOpen(true);
+        openStudentAuthModal('login');
       } else {
         setCurrentView('subscription-required');
         try {
@@ -462,8 +500,15 @@ function AcademyApp() {
   const handleAdminPasswordReset = async () => {
     setLoginError('');
     setAdminResetSuccess('');
-    const targetEmail = (adminEmail.trim() || 'mhmdbdaltwabalsdawy7@gmail.com').toLowerCase();
-    setAdminEmail(targetEmail);
+    const targetEmail = adminEmail.trim().toLowerCase();
+    if (!targetEmail || !validateEmail(targetEmail)) {
+      setLoginError(
+        language === 'ar'
+          ? 'يرجى كتابة البريد الإلكتروني للمدير في الخانة أعلاه أولاً ثم الضغط على «تعيين / نسيت كلمة المرور؟».'
+          : 'Please enter the manager email address above first, then click Set / Forgot Password.'
+      );
+      return;
+    }
     setAdminLoginLoading(true);
     try {
       const res = await authService.sendAdminPasswordReset(targetEmail);
@@ -527,7 +572,7 @@ function AcademyApp() {
     setIsAdminLoggedIn(false);
     setIsStudentLoggedIn(false);
     handleNavigate('home');
-    setIsStudentAuthOpen(true);
+    openStudentAuthModal('login');
   };
 
   // Student auth process handlers
@@ -536,7 +581,7 @@ function AcademyApp() {
     setIsAdminLoggedIn(false);
     setIsStudentLoggedIn(false);
     handleNavigate('home');
-    setIsStudentAuthOpen(true);
+    openStudentAuthModal('login');
   };
 
   const handleStudentAuthSubmit = async (e: React.FormEvent) => {
@@ -769,7 +814,7 @@ function AcademyApp() {
       }
     }
 
-    const matchesSubject = selectedSubjectFilter === 'all' || (course.subject === selectedSubjectFilter || course.subjectAr === selectedSubjectFilter);
+    const matchesSubject = selectedSubjectFilter === 'all' || doesSubjectMatch({ subject: course.subject || course.subjectEn || course.subjectAr, courseTitle: course.titleEn + ' ' + course.titleAr }, selectedSubjectFilter, courses);
 
     return matchesSearch && matchesCategory && matchesSubject;
   });
@@ -838,10 +883,10 @@ function AcademyApp() {
         currentView={currentView}
         onSearch={(q) => { setSearchQuery(q); if(currentView !== 'courses' && q) handleNavigate('courses'); }}
         isAdminLoggedIn={isAdminLoggedIn}
-        onOpenAdminLogin={() => setIsAdminLoginOpen(true)}
+        onOpenAdminLogin={openAdminAuthModal}
         onGoToAdminPanel={() => handleNavigate('admin-panel')}
         isStudentLoggedIn={isStudentLoggedIn}
-        onOpenStudentAuth={() => { setStudentAuthMode('login'); setIsStudentAuthOpen(true); }}
+        onOpenStudentAuth={() => openStudentAuthModal('login')}
         onGoToStudentDashboard={() => handleNavigate('student-panel')}
       />
 
@@ -931,7 +976,7 @@ function AcademyApp() {
                           ) : (
                             <button
                               type="button"
-                              onClick={() => { setAuthTab('student'); setStudentAuthMode('register'); setIsStudentAuthOpen(true); }}
+                              onClick={() => openStudentAuthModal('register')}
                               className="rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900/70 hover:border-brand-cyan/50 px-6 py-3.5 text-xs font-bold text-slate-800 dark:text-slate-200 transition-all cursor-pointer flex items-center gap-2"
                             >
                               <GraduationCap className="h-4 w-4 text-brand-cyan" />
@@ -1190,7 +1235,7 @@ function AcademyApp() {
                       >
                         <option value="all">{t('جميع المواد', 'All Subjects')}</option>
                         {ACADEMIC_SUBJECTS.map(s => (
-                          <option key={s.id} value={s.nameAr}>
+                          <option key={s.id} value={s.id}>
                             {t(s.nameAr, s.nameEn)}
                           </option>
                         ))}
@@ -1234,7 +1279,7 @@ function AcademyApp() {
                     course={selectedCourse}
                     onNavigateBack={() => handleNavigate('courses')}
                     onEnroll={(c, e) => triggerEnroll(c, e)}
-                    onLogin={() => { setStudentAuthMode('login'); setIsStudentAuthOpen(true); }}
+                    onLogin={() => openStudentAuthModal('login')}
                     language={language}
                     reason={access.reason}
                   />
@@ -1252,6 +1297,7 @@ function AcademyApp() {
                   
                   {/* Back button */}
                   <button
+                    type="button"
                     onClick={() => handleNavigate('courses')}
                     className="mb-6 flex items-center gap-1 text-xs font-bold text-brand-cyan hover:text-brand-cyan-light transition-all cursor-pointer"
                   >
@@ -1279,8 +1325,7 @@ function AcademyApp() {
                               const access = verifyCourseAccess(activeUser, selectedCourse, orders);
                               if (!access.allowed) {
                                 if (access.reason === 'not_logged_in') {
-                                  setStudentAuthMode('login');
-                                  setIsStudentAuthOpen(true);
+                                  openStudentAuthModal('login');
                                 } else {
                                   setCurrentView('subscription-required');
                                 }
@@ -1373,8 +1418,7 @@ function AcademyApp() {
                                   const access = verifyCourseAccess(activeUser, selectedCourse, orders);
                                   if (!access.allowed) {
                                     if (access.reason === 'not_logged_in') {
-                                      setStudentAuthMode('login');
-                                      setIsStudentAuthOpen(true);
+                                      openStudentAuthModal('login');
                                     } else {
                                       setCurrentView('subscription-required');
                                     }
@@ -1398,8 +1442,7 @@ function AcademyApp() {
                                   const access = verifyCourseAccess(activeUser, selectedCourse, orders);
                                   if (!access.allowed) {
                                     if (access.reason === 'not_logged_in') {
-                                      setStudentAuthMode('login');
-                                      setIsStudentAuthOpen(true);
+                                      openStudentAuthModal('login');
                                     } else {
                                       setCurrentView('subscription-required');
                                     }
@@ -1517,7 +1560,7 @@ function AcademyApp() {
                   course={selectedCourse}
                   onNavigateBack={() => handleNavigate('courses')}
                   onEnroll={(c, e) => triggerEnroll(c, e)}
-                  onLogin={() => { setStudentAuthMode('login'); setIsStudentAuthOpen(true); }}
+                  onLogin={() => openStudentAuthModal('login')}
                   language={language}
                   reason={access.reason}
                 />
@@ -1821,14 +1864,14 @@ function AcademyApp() {
                     <div className="space-y-4">
                       <button
                         type="button"
-                        onClick={() => { setStudentAuthMode('login'); setIsStudentAuthOpen(true); }}
+                        onClick={() => openStudentAuthModal('login')}
                         className="w-full flex items-center justify-center gap-2 rounded-xl bg-brand-cyan text-white dark:text-slate-950 hover:bg-brand-cyan-light py-3.5 font-bold transition-all cursor-pointer shadow-md text-xs sm:text-sm"
                       >
                         {t('تسجيل الدخول كطالب', 'Login to Student Account')}
                       </button>
                       <button
                         type="button"
-                        onClick={() => { setStudentAuthMode('register'); setIsStudentAuthOpen(true); }}
+                        onClick={() => openStudentAuthModal('register')}
                         className="w-full flex items-center justify-center gap-2 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-100 dark:bg-slate-900/60 hover:bg-slate-200 dark:hover:bg-slate-800/80 text-slate-800 dark:text-white py-3.5 font-bold transition-all cursor-pointer text-xs sm:text-sm"
                       >
                         {t('إنشاء حساب طالب جديد', 'Register New Student Account')}
@@ -1877,7 +1920,7 @@ function AcademyApp() {
                         <input
                           type="email"
                           required
-                          placeholder="mhmdbdaltwabalsdawy7@gmail.com"
+                          placeholder="admin@university.edu.eg"
                           value={adminEmail}
                           onChange={e => setAdminEmail(e.target.value)}
                           className="w-full rounded-xl bg-slate-50 dark:bg-slate-900 border border-slate-300 dark:border-slate-800 p-3 text-slate-900 dark:text-white focus:outline-none focus:border-brand-cyan font-mono"
@@ -2127,7 +2170,7 @@ function AcademyApp() {
                     <input
                       type="email"
                       required
-                      placeholder="mhmdbdaltwabalsdawy7@gmail.com"
+                      placeholder="admin@university.edu.eg"
                       value={adminEmail}
                       onChange={e => setAdminEmail(e.target.value)}
                       className="w-full rounded-xl bg-slate-50 dark:bg-slate-900 border border-slate-300 dark:border-slate-800 p-3 text-slate-900 dark:text-white focus:outline-none focus:border-brand-cyan font-mono"

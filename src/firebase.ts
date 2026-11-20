@@ -278,6 +278,64 @@ async function fetchPublicFirestoreDocViaRest(collectionName: string, docId: str
   return result.status === 'ok' ? result.data : null;
 }
 
+async function runPublicCollectionQueryViaRest<T = Record<string, any>>(collectionName: string): Promise<(T & { id: string })[] | null> {
+  if (!firebaseConfig.projectId || !firebaseConfig.apiKey || typeof fetch === 'undefined') {
+    return null;
+  }
+  const dbName = resolvedDatabaseId && resolvedDatabaseId !== '(default)'
+    ? resolvedDatabaseId
+    : '(default)';
+  const url = `https://firestore.googleapis.com/v1/projects/${encodeURIComponent(firebaseConfig.projectId)}/databases/${encodeURIComponent(dbName)}/documents:runQuery?key=${encodeURIComponent(firebaseConfig.apiKey)}`;
+  const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
+  const timer = controller ? setTimeout(() => controller.abort(), 7000) : null;
+  try {
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        structuredQuery: {
+          from: [{ collectionId: collectionName }]
+        }
+      }),
+      ...(controller ? { signal: controller.signal } : {})
+    });
+    if (!res.ok) return null;
+    const rows = await res.json();
+    if (!Array.isArray(rows)) return null;
+    const out: (T & { id: string })[] = [];
+    for (const row of rows) {
+      const docObj = row?.document;
+      if (!docObj?.name) continue;
+      const docId = String(docObj.name).split('/').pop() || '';
+      const fields = docObj.fields || {};
+      const parsed: Record<string, any> = {};
+      for (const [k, v] of Object.entries(fields)) {
+        parsed[k] = decodeFirestoreRestValue(v);
+      }
+      out.push({ id: docId, ...parsed } as T & { id: string });
+    }
+    return out;
+  } catch {
+    return null;
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
+async function withFirestoreReadTimeout<T>(promise: Promise<T>, timeoutMs = 4500, label = 'firestore_read'): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  const timeoutPromise = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => {
+      reject(new Error(`${label} timed out after ${timeoutMs}ms (client is offline or WebChannel delayed)`));
+    }, timeoutMs);
+  });
+  try {
+    return await Promise.race([promise, timeoutPromise]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
 if (firebaseConfig.apiKey && firebaseConfig.projectId) {
   try {
     if (!getApps().length) {
@@ -287,7 +345,8 @@ if (firebaseConfig.apiKey && firebaseConfig.projectId) {
     }
     const dbId = resolvedDatabaseId;
     const firestoreSettings: any = {
-      experimentalForceLongPolling: true,
+      experimentalAutoDetectLongPolling: true,
+      experimentalLongPollingOptions: { timeoutSeconds: 8 },
       ignoreUndefinedProperties: true
     };
     try {
@@ -311,26 +370,28 @@ if (firebaseConfig.apiKey && firebaseConfig.projectId) {
     console.log("Firebase initialized successfully inside MOHAMED ELJOKER IT University Platform with database ID:", dbId || "(default)");
 
     // Validate Firestore connection on boot (non-blocking)
-    (async () => {
-      if (typeof navigator !== 'undefined' && navigator.onLine === false) {
-        console.warn("Browser reports offline status; skipping live Firestore boot probe and using cached fallback.");
-        return;
-      }
-      try {
-        await getDocFromServer(doc(firestoreDb, 'settings', 'global'));
-      } catch (err) {
-        if (err instanceof Error && err.message.includes('the client is offline')) {
-          const restDiag = await fetchPublicFirestoreDocViaRestWithStatus('settings', 'global');
-          if (restDiag.status === 'config_error') {
-            console.error("Please check your Firebase configuration.");
-          } else if (restDiag.status === 'ok' || restDiag.status === 'not_found') {
-            console.warn("Firestore WebChannel warm-up delayed; REST endpoint is reachable.");
-          } else {
-            console.warn("Unable to reach firestore.googleapis.com from this network; running with local fallback until connectivity resumes.", restDiag.detail);
+    setTimeout(() => {
+      (async () => {
+        if (typeof navigator !== 'undefined' && navigator.onLine === false) {
+          console.warn("Browser reports offline status; skipping live Firestore boot probe and using cached fallback.");
+          return;
+        }
+        try {
+          await getDocFromServer(doc(firestoreDb, 'settings', 'global'));
+        } catch (err) {
+          if (err instanceof Error && err.message.includes('the client is offline')) {
+            const restDiag = await fetchPublicFirestoreDocViaRestWithStatus('settings', 'global');
+            if (restDiag.status === 'config_error') {
+              console.error("Please check your Firebase configuration.");
+            } else if (restDiag.status === 'ok' || restDiag.status === 'not_found') {
+              console.warn("Firestore WebChannel warm-up delayed; REST endpoint is reachable.");
+            } else {
+              console.warn("Unable to reach firestore.googleapis.com from this network; running with local fallback until connectivity resumes.", restDiag.detail);
+            }
           }
         }
-      }
-    })();
+      })();
+    }, 250);
   } catch (error) {
     console.warn("Firebase initialization failed, falling back to local simulation:", error);
   }
@@ -999,7 +1060,7 @@ export const dbService = {
     let settings: WebsiteSettings | null = null;
     if (isFirebaseConfigured) {
       try {
-        const snap = await getDoc(doc(firestoreDb, 'settings', 'global'));
+        const snap = await withFirestoreReadTimeout(getDoc(doc(firestoreDb, 'settings', 'global')), 4500, 'getSettings');
         if (snap.exists()) {
           settings = snap.data() as WebsiteSettings;
           setStorageItem<WebsiteSettings>('settings', settings);
@@ -1087,14 +1148,20 @@ export const dbService = {
     let rawList: Category[] = [];
     if (isFirebaseConfigured) {
       try {
-        const snap = await getDocs(collection(firestoreDb, 'categories'));
+        const snap = await withFirestoreReadTimeout(getDocs(collection(firestoreDb, 'categories')), 4500, 'getCategories');
         snap.forEach(d => rawList.push({ id: d.id, ...d.data() } as Category));
       } catch (err: any) {
         const msg = String(err?.message || err || '');
         if (msg.includes('permission') || err?.code === 'permission-denied') {
           handleFirestoreError(err, OperationType.LIST, 'categories');
         } else {
-          console.warn("Categories read notice, using cached fallback:", msg);
+          const restCats = await runPublicCollectionQueryViaRest<Category>('categories').catch(() => null);
+          if (restCats && restCats.length > 0) {
+            rawList = restCats;
+            setStorageItem('categories', rawList);
+          } else {
+            console.warn("Categories read notice, using cached fallback:", msg);
+          }
         }
       }
     }
@@ -1172,7 +1239,7 @@ export const dbService = {
   getCourses: async (): Promise<Course[]> => {
     if (isFirebaseConfigured) {
       try {
-        const snap = await getDocs(collection(firestoreDb, 'courses'));
+        const snap = await withFirestoreReadTimeout(getDocs(collection(firestoreDb, 'courses')), 4500, 'getCourses');
         const list: Course[] = [];
         snap.forEach(d => list.push({ id: d.id, ...d.data() } as Course));
         if (!(snap.metadata?.fromCache && list.length === 0)) {
@@ -1181,7 +1248,13 @@ export const dbService = {
           return normalized;
         }
       } catch (err: any) {
-        console.warn("Firestore getCourses notice:", err);
+        const restCourses = await runPublicCollectionQueryViaRest<Course>('courses').catch(() => null);
+        if (restCourses !== null) {
+          const normalized = restCourses.map(c => normalizeCourseLessons(c));
+          setStorageItem('courses', normalized);
+          return normalized;
+        }
+        console.warn("Firestore getCourses notice:", err?.message || err);
       }
     }
     const localCourses = getStorageItem<Course[]>('courses', defaultCourses).map(c => normalizeCourseLessons(c));
@@ -3420,11 +3493,17 @@ export const dbService = {
   getNews: async (): Promise<NewsItem[]> => {
     if (isFirebaseConfigured) {
       try {
-        const snap = await getDocs(collection(firestoreDb, 'news'));
+        const snap = await withFirestoreReadTimeout(getDocs(collection(firestoreDb, 'news')), 4500, 'getNews');
         const list: NewsItem[] = [];
         snap.forEach(d => list.push({ id: d.id, ...d.data() } as NewsItem));
+        setStorageItem('news', list);
         return list;
       } catch (err: any) {
+        const restNews = await runPublicCollectionQueryViaRest<NewsItem>('news').catch(() => null);
+        if (restNews !== null) {
+          setStorageItem('news', restNews);
+          return restNews;
+        }
         console.warn("Firebase news read notice, using fallback:", err?.message || err);
       }
     }
@@ -3483,11 +3562,17 @@ export const dbService = {
   getArticles: async (): Promise<Article[]> => {
     if (isFirebaseConfigured) {
       try {
-        const snap = await getDocs(collection(firestoreDb, 'articles'));
+        const snap = await withFirestoreReadTimeout(getDocs(collection(firestoreDb, 'articles')), 4500, 'getArticles');
         const list: Article[] = [];
         snap.forEach(d => list.push({ id: d.id, ...d.data() } as Article));
+        setStorageItem('articles', list);
         return list;
       } catch (err: any) {
+        const restArticles = await runPublicCollectionQueryViaRest<Article>('articles').catch(() => null);
+        if (restArticles !== null) {
+          setStorageItem('articles', restArticles);
+          return restArticles;
+        }
         console.warn("Firebase articles read notice, using fallback:", err?.message || err);
       }
     }
@@ -3546,11 +3631,17 @@ export const dbService = {
   getReviews: async (): Promise<UserReview[]> => {
     if (isFirebaseConfigured) {
       try {
-        const snap = await getDocs(collection(firestoreDb, 'reviews'));
+        const snap = await withFirestoreReadTimeout(getDocs(collection(firestoreDb, 'reviews')), 4500, 'getReviews');
         const list: UserReview[] = [];
         snap.forEach(d => list.push({ id: d.id, ...d.data() } as UserReview));
+        setStorageItem('reviews', list);
         return list;
       } catch (err: any) {
+        const restReviews = await runPublicCollectionQueryViaRest<UserReview>('reviews').catch(() => null);
+        if (restReviews !== null) {
+          setStorageItem('reviews', restReviews);
+          return restReviews;
+        }
         console.warn("Firebase reviews read notice, using fallback:", err?.message || err);
       }
     }

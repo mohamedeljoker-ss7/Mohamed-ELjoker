@@ -131,8 +131,35 @@ const EmbeddedPdfViewer: React.FC<{ url: string; title?: string }> = ({ url, tit
 export const StudentDashboard: React.FC<StudentDashboardProps> = ({ onLogout, onNavigateHome }) => {
   const { language, t, direction } = useLanguage();
   const [currentUser, setCurrentUser] = useState<UserAuth | null>(null);
-  const [activeTab, setActiveTab] = useState<StudentSubTab>('overview');
+  const [activeTab, setActiveTab] = useState<StudentSubTab>(() => {
+    try {
+      const target = sessionStorage.getItem('academy_student_target_tab') as StudentSubTab | null;
+      if (target) {
+        sessionStorage.removeItem('academy_student_target_tab');
+        return target;
+      }
+    } catch {
+      // Ignore storage errors
+    }
+    return 'overview';
+  });
   const [mobileDrawerOpen, setMobileDrawerOpen] = useState(false);
+
+  useEffect(() => {
+    const handleTargetTabEvent = (ev: Event) => {
+      const tab = (ev as CustomEvent<{ tab?: StudentSubTab }>).detail?.tab;
+      if (tab) {
+        setActiveTab(tab);
+        try {
+          sessionStorage.removeItem('academy_student_target_tab');
+        } catch {
+          // Ignore storage errors
+        }
+      }
+    };
+    window.addEventListener('student-dashboard-tab', handleTargetTabEvent);
+    return () => window.removeEventListener('student-dashboard-tab', handleTargetTabEvent);
+  }, []);
 
   // DB States
   const [categories, setCategories] = useState<Category[]>([]);
@@ -1245,8 +1272,10 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({ onLogout, on
 
   const handleNotificationRead = async (id: string) => {
     try {
-      await dbService.markNotificationAsRead(id);
+      const targetNotif = notifications.find(n => n.id === id);
+      const isGlobal = (targetNotif?.userId || '').trim().toLowerCase() === 'global';
       setNotifications(prev => prev.map(n => n.id === id ? { ...n, isRead: true } : n));
+      await dbService.markNotificationAsRead(id, isGlobal);
     } catch (err) {
       console.error(err);
     }

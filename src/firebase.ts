@@ -1,5 +1,5 @@
 import { initializeApp, getApps, getApp, deleteApp } from 'firebase/app';
-import { initializeFirestore, getFirestore, collection, doc, getDocs, getDoc, getDocFromServer, setDoc, updateDoc, deleteDoc, addDoc, query, where, orderBy, onSnapshot, deleteField, increment } from 'firebase/firestore';
+import { initializeFirestore, getFirestore, collection, doc, getDocs, getDoc, getDocFromServer, setDoc, updateDoc, deleteDoc, addDoc, query, where, orderBy, onSnapshot, deleteField, increment, arrayUnion } from 'firebase/firestore';
 import { getAuth, signInWithEmailAndPassword, createUserWithEmailAndPassword, sendPasswordResetEmail, signOut, onAuthStateChanged, GoogleAuthProvider, signInWithPopup, User } from 'firebase/auth';
 import firebaseAppletConfig from '../firebase-applet-config.json';
 import { Course, Category, Student, NewsItem, Article, UserReview, Message, Admin, WebsiteSettings, Teacher, Coupon, Order, Quiz, QuizSubmission, UserAuth, Assignment, AssignmentSubmission, Certificate, ChatMessage, ChatThread, LessonComment, Notification, LessonAccess, CourseAccess, CourseRequest, LectureItem, SectionItem, ExamItem, SheetItem, SheetSubmission, QuestionBankItem, OnlineExamQuestion, ExamSubmission, ScheduleItem, StudentInquiry, ActivityLogItem, SheetAnswerKeyDoc, ExamPrivateKeyDoc, ExamPrivateKeyEntry } from './types';
@@ -164,19 +164,50 @@ const defaultUsers: UserAuth[] = [];
 const metaEnv = (import.meta as any).env || {};
 const appletCfg: any = firebaseAppletConfig || {};
 
-const firebaseConfig = {
-  apiKey: appletCfg.apiKey || metaEnv.VITE_FIREBASE_API_KEY || "",
-  authDomain: appletCfg.authDomain || metaEnv.VITE_FIREBASE_AUTH_DOMAIN || "",
-  projectId: appletCfg.projectId || metaEnv.VITE_FIREBASE_PROJECT_ID || "",
-  storageBucket: appletCfg.storageBucket || metaEnv.VITE_FIREBASE_STORAGE_BUCKET || "",
-  messagingSenderId: appletCfg.messagingSenderId || metaEnv.VITE_FIREBASE_MESSAGING_SENDER_ID || "",
-  appId: appletCfg.appId || metaEnv.VITE_FIREBASE_APP_ID || ""
-};
+const hasCompleteEnvConfig = Boolean(
+  metaEnv.VITE_FIREBASE_API_KEY &&
+  metaEnv.VITE_FIREBASE_PROJECT_ID &&
+  metaEnv.VITE_FIREBASE_APP_ID
+);
+
+const firebaseConfig = hasCompleteEnvConfig
+  ? {
+      apiKey: String(metaEnv.VITE_FIREBASE_API_KEY).trim(),
+      authDomain: String(metaEnv.VITE_FIREBASE_AUTH_DOMAIN || `${metaEnv.VITE_FIREBASE_PROJECT_ID}.firebaseapp.com`).trim(),
+      projectId: String(metaEnv.VITE_FIREBASE_PROJECT_ID).trim(),
+      storageBucket: String(metaEnv.VITE_FIREBASE_STORAGE_BUCKET || `${metaEnv.VITE_FIREBASE_PROJECT_ID}.firebasestorage.app`).trim(),
+      messagingSenderId: String(metaEnv.VITE_FIREBASE_MESSAGING_SENDER_ID || '').trim(),
+      appId: String(metaEnv.VITE_FIREBASE_APP_ID).trim()
+    }
+  : {
+      apiKey: appletCfg.apiKey || "",
+      authDomain: appletCfg.authDomain || "",
+      projectId: appletCfg.projectId || "",
+      storageBucket: appletCfg.storageBucket || "",
+      messagingSenderId: appletCfg.messagingSenderId || "",
+      appId: appletCfg.appId || ""
+    };
+
+const resolvedDatabaseId: string = hasCompleteEnvConfig
+  ? String(
+      metaEnv.VITE_FIREBASE_DATABASE_ID ||
+      (metaEnv.VITE_FIREBASE_PROJECT_ID === appletCfg.projectId ? appletCfg.firestoreDatabaseId : '') ||
+      '(default)'
+    ).trim()
+  : String(appletCfg.firestoreDatabaseId || '(default)').trim();
 
 let isFirebaseConfigured = false;
 export let app: any = null;
 export let firestoreDb: any = null;
 export let firebaseAuth: any = null;
+
+function isEnglishUi(): boolean {
+  try {
+    return typeof localStorage !== 'undefined' && localStorage.getItem('academy_lang') === 'en';
+  } catch {
+    return false;
+  }
+}
 
 function decodeFirestoreRestValue(val: any): any {
   if (!val || typeof val !== 'object') return undefined;
@@ -201,23 +232,50 @@ function decodeFirestoreRestValue(val: any): any {
   return undefined;
 }
 
-async function fetchPublicFirestoreDocViaRest(collectionName: string, docId: string): Promise<Record<string, any> | null> {
+async function fetchPublicFirestoreDocViaRestWithStatus(
+  collectionName: string,
+  docId: string
+): Promise<{ status: 'ok'; data: Record<string, any> } | { status: 'not_found' } | { status: 'config_error'; httpStatus: number } | { status: 'network_error'; detail: string }> {
   if (!firebaseConfig.projectId || !firebaseConfig.apiKey || typeof fetch === 'undefined') {
-    return null;
+    return { status: 'config_error', httpStatus: 0 };
   }
-  const dbName = appletCfg.firestoreDatabaseId && appletCfg.firestoreDatabaseId !== '(default)'
-    ? appletCfg.firestoreDatabaseId
+  const dbName = resolvedDatabaseId && resolvedDatabaseId !== '(default)'
+    ? resolvedDatabaseId
     : '(default)';
   const url = `https://firestore.googleapis.com/v1/projects/${encodeURIComponent(firebaseConfig.projectId)}/databases/${encodeURIComponent(dbName)}/documents/${encodeURIComponent(collectionName)}/${encodeURIComponent(docId)}?key=${encodeURIComponent(firebaseConfig.apiKey)}`;
-  const res = await fetch(url, { method: 'GET', cache: 'no-store' });
-  if (!res.ok) return null;
-  const json = await res.json();
-  if (!json || typeof json !== 'object' || !json.fields) return null;
-  const parsed: Record<string, any> = {};
-  for (const [k, v] of Object.entries(json.fields)) {
-    parsed[k] = decodeFirestoreRestValue(v);
+  const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
+  const timer = controller ? setTimeout(() => controller.abort(), 8000) : null;
+  try {
+    const res = await fetch(url, {
+      method: 'GET',
+      cache: 'no-store',
+      ...(controller ? { signal: controller.signal } : {})
+    });
+    if (res.status === 404) {
+      return { status: 'not_found' };
+    }
+    if (!res.ok) {
+      return { status: 'config_error', httpStatus: res.status };
+    }
+    const json = await res.json();
+    if (!json || typeof json !== 'object' || !json.fields) {
+      return { status: 'not_found' };
+    }
+    const parsed: Record<string, any> = {};
+    for (const [k, v] of Object.entries(json.fields)) {
+      parsed[k] = decodeFirestoreRestValue(v);
+    }
+    return { status: 'ok', data: parsed };
+  } catch (err: any) {
+    return { status: 'network_error', detail: err?.message || String(err) };
+  } finally {
+    if (timer) clearTimeout(timer);
   }
-  return parsed;
+}
+
+async function fetchPublicFirestoreDocViaRest(collectionName: string, docId: string): Promise<Record<string, any> | null> {
+  const result = await fetchPublicFirestoreDocViaRestWithStatus(collectionName, docId);
+  return result.status === 'ok' ? result.data : null;
 }
 
 if (firebaseConfig.apiKey && firebaseConfig.projectId) {
@@ -227,7 +285,7 @@ if (firebaseConfig.apiKey && firebaseConfig.projectId) {
     } else {
       app = getApp();
     }
-    const dbId = appletCfg.firestoreDatabaseId;
+    const dbId = resolvedDatabaseId;
     const firestoreSettings: any = {
       experimentalForceLongPolling: true,
       ignoreUndefinedProperties: true
@@ -254,15 +312,21 @@ if (firebaseConfig.apiKey && firebaseConfig.projectId) {
 
     // Validate Firestore connection on boot (non-blocking)
     (async () => {
+      if (typeof navigator !== 'undefined' && navigator.onLine === false) {
+        console.warn("Browser reports offline status; skipping live Firestore boot probe and using cached fallback.");
+        return;
+      }
       try {
         await getDocFromServer(doc(firestoreDb, 'settings', 'global'));
       } catch (err) {
         if (err instanceof Error && err.message.includes('the client is offline')) {
-          const restOk = await fetchPublicFirestoreDocViaRest('settings', 'global').catch(() => null);
-          if (!restOk) {
+          const restDiag = await fetchPublicFirestoreDocViaRestWithStatus('settings', 'global');
+          if (restDiag.status === 'config_error') {
             console.error("Please check your Firebase configuration.");
-          } else {
+          } else if (restDiag.status === 'ok' || restDiag.status === 'not_found') {
             console.warn("Firestore WebChannel warm-up delayed; REST endpoint is reachable.");
+          } else {
+            console.warn("Unable to reach firestore.googleapis.com from this network; running with local fallback until connectivity resumes.", restDiag.detail);
           }
         }
       }
@@ -705,6 +769,35 @@ const getStorageItem = <T>(key: string, defaultValue: T): T => {
 
 const setStorageItem = <T>(key: string, value: T): void => {
   localStorage.setItem(`academy_${key}`, JSON.stringify(value));
+};
+
+// Track per-student read state locally for shared 'global' notifications and quick lookups
+const knownGlobalNotifIds = new Set<string>();
+
+const getLocalReadNotifIds = (uidKey: string): Set<string> => {
+  const safeKey = (uidKey || 'local_student').replace(/[^a-zA-Z0-9_@.-]/g, '_');
+  try {
+    const raw = localStorage.getItem(`academy_read_notifs_${safeKey}`);
+    const parsed = raw ? JSON.parse(raw) : [];
+    return new Set(Array.isArray(parsed) ? parsed : []);
+  } catch {
+    return new Set();
+  }
+};
+
+const addLocalReadNotifIds = (ids: string[], uidKey: string): void => {
+  if (!ids.length) return;
+  const safeKey = (uidKey || 'local_student').replace(/[^a-zA-Z0-9_@.-]/g, '_');
+  try {
+    const existing = getLocalReadNotifIds(safeKey);
+    ids.forEach(id => {
+      if (id) existing.add(id);
+    });
+    const trimmed = Array.from(existing).slice(-500);
+    localStorage.setItem(`academy_read_notifs_${safeKey}`, JSON.stringify(trimmed));
+  } catch {
+    // Ignore storage quota errors
+  }
 };
 
 // Helper to compress image files client-side before uploading or storing
@@ -4895,30 +4988,48 @@ export const dbService = {
     const cleanUser = (userId || '').trim().toLowerCase();
     const cleanEmail = (userEmail || '').trim().toLowerCase();
 
-    const matchesTarget = (item: Notification) => {
+    const matchesTarget = (item: Notification, firebaseUid?: string) => {
       const target = (item.userId || '').trim().toLowerCase();
       if (!target || target === 'global') return true;
+      if (firebaseUid && target === firebaseUid.toLowerCase()) return true;
       if (cleanUser && target === cleanUser) return true;
-      if (cleanEmail && (target === cleanEmail || (item as any).studentEmail?.toLowerCase() === cleanEmail)) return true;
+      if (cleanEmail && (target === cleanEmail || item.studentEmail?.toLowerCase() === cleanEmail)) return true;
       return false;
     };
 
     if (isFirebaseConfigured) {
       if (!firebaseAuth?.currentUser) {
-        const list = getStorageItem<Notification[]>('notifications', []);
-        onUpdate(list.filter(matchesTarget));
+        const localReadIds = getLocalReadNotifIds(cleanUser || cleanEmail);
+        const list = getStorageItem<Notification[]>('notifications', [])
+          .filter(item => matchesTarget(item))
+          .map(item => ({
+            ...item,
+            isRead: Boolean(item.isRead || localReadIds.has(item.id))
+          }));
+        onUpdate(list);
         return () => {};
       }
+      const fbUid = firebaseAuth.currentUser.uid;
       const isAdm = isAdminEmail(firebaseAuth.currentUser.email || '') || isAdminEmail(cleanEmail);
       const colRef = collection(firestoreDb, 'notifications');
-      const targetIds = Array.from(new Set(['global', firebaseAuth.currentUser.uid, userId].filter(Boolean) as string[])).slice(0, 10);
+      // Strictly limit non-admin `in` query to ['global', fbUid] to satisfy Firestore security rules
+      const targetIds = Array.from(new Set(['global', fbUid]));
       const q = isAdm ? colRef : query(colRef, where('userId', 'in', targetIds));
       return onSnapshot(q, (snap) => {
+        const localReadIds = getLocalReadNotifIds(fbUid || cleanUser || cleanEmail);
         const list: Notification[] = [];
         snap.forEach(d => {
-          const item = { id: d.id, ...d.data() } as Notification;
-          if (isAdm || matchesTarget(item)) {
-            list.push(item);
+          const raw = { id: d.id, ...d.data() } as Notification;
+          if ((raw.userId || '').trim().toLowerCase() === 'global') {
+            knownGlobalNotifIds.add(d.id);
+          }
+          if (isAdm || matchesTarget(raw, fbUid)) {
+            const isReadByStudent = Boolean(
+              raw.isRead ||
+              (fbUid && Array.isArray(raw.readBy) && raw.readBy.includes(fbUid)) ||
+              localReadIds.has(d.id)
+            );
+            list.push({ ...raw, isRead: isReadByStudent });
           }
         });
         list.sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime());
@@ -4928,6 +5039,8 @@ export const dbService = {
       });
     } else {
       const loadLocal = () => {
+        const uidKey = cleanUser || cleanEmail || 'local_student';
+        const localReadIds = getLocalReadNotifIds(uidKey);
         const list = getStorageItem<Notification[]>('notifications', [
           {
             id: 'notif_welcome',
@@ -4940,8 +5053,14 @@ export const dbService = {
             type: 'general',
             createdAt: new Date().toISOString()
           }
-        ]);
-        onUpdate(list.filter(matchesTarget));
+        ])
+          .filter(item => matchesTarget(item))
+          .map(item => ({
+            ...item,
+            isRead: Boolean(item.isRead || localReadIds.has(item.id))
+          }));
+        list.sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime());
+        onUpdate(list);
       };
       loadLocal();
       const interval = setInterval(loadLocal, 3000);
@@ -4952,6 +5071,9 @@ export const dbService = {
   addNotification: async (notif: Omit<Notification, 'id'>): Promise<Notification> => {
     const newId = 'notif_' + Date.now() + '_' + Math.random().toString(36).substring(2, 6);
     const newNotif: Notification = { id: newId, ...notif };
+    if ((newNotif.userId || '').trim().toLowerCase() === 'global') {
+      knownGlobalNotifIds.add(newId);
+    }
     if (isFirebaseConfigured) {
       try {
         await setDoc(doc(firestoreDb, 'notifications', newId), newNotif);
@@ -4966,28 +5088,54 @@ export const dbService = {
     return newNotif;
   },
 
-  markNotificationAsRead: async (id: string): Promise<void> => {
-    if (isFirebaseConfigured) {
+  markNotificationAsRead: async (id: string, isGlobalHint?: boolean): Promise<void> => {
+    const fbUid = firebaseAuth?.currentUser?.uid || '';
+    const activeAuth = getStorageItem<UserAuth | null>('active_user', null);
+    const uidKey = fbUid || activeAuth?.id || activeAuth?.email || 'local_student';
+    addLocalReadNotifIds([id], uidKey);
+
+    if (isFirebaseConfigured && firebaseAuth?.currentUser) {
       try {
-        await updateDoc(doc(firestoreDb, 'notifications', id), { isRead: true });
+        const isAdm = isAdminEmail(firebaseAuth.currentUser.email || '');
+        const notifRef = doc(firestoreDb, 'notifications', id);
+        let isGlobal = isGlobalHint ?? knownGlobalNotifIds.has(id);
+        if (!isAdm && isGlobalHint === undefined && !knownGlobalNotifIds.has(id)) {
+          const snap = await getDoc(notifRef);
+          if (snap.exists() && (snap.data()?.userId || '').toString().trim().toLowerCase() === 'global') {
+            isGlobal = true;
+            knownGlobalNotifIds.add(id);
+          }
+        }
+        if (!isAdm && isGlobal && fbUid) {
+          await updateDoc(notifRef, { readBy: arrayUnion(fbUid) });
+        } else {
+          await updateDoc(notifRef, { isRead: true });
+        }
       } catch (err) {
         console.error("Firebase notification mark read failed:", err);
       }
     }
     const current = getStorageItem<Notification[]>('notifications', []);
-    const updated = current.map(item => item.id === id ? { ...item, isRead: true } : item);
+    const updated = current.map(item =>
+      item.id === id && (item.userId || '').trim().toLowerCase() !== 'global'
+        ? { ...item, isRead: true }
+        : item
+    );
     setStorageItem('notifications', updated);
   },
 
   markAllNotificationsAsRead: async (userId: string, userEmail: string = ''): Promise<void> => {
     const cleanUser = (userId || '').trim().toLowerCase();
     const cleanEmail = (userEmail || '').trim().toLowerCase();
+    const fbUid = firebaseAuth?.currentUser?.uid || '';
+    const uidKey = fbUid || cleanUser || cleanEmail || 'local_student';
 
-    const matchesTarget = (item: Notification) => {
+    const matchesTarget = (item: Notification, uid?: string) => {
       const target = (item.userId || '').trim().toLowerCase();
       if (!target || target === 'global') return true;
+      if (uid && target === uid.toLowerCase()) return true;
       if (cleanUser && target === cleanUser) return true;
-      if (cleanEmail && (target === cleanEmail || (item as any).studentEmail?.toLowerCase() === cleanEmail)) return true;
+      if (cleanEmail && (target === cleanEmail || item.studentEmail?.toLowerCase() === cleanEmail)) return true;
       return false;
     };
 
@@ -4995,23 +5143,43 @@ export const dbService = {
       try {
         const isAdm = isAdminEmail(firebaseAuth.currentUser.email || '') || isAdminEmail(cleanEmail);
         const colRef = collection(firestoreDb, 'notifications');
-        const targetIds = Array.from(new Set(['global', firebaseAuth.currentUser.uid, userId].filter(Boolean) as string[])).slice(0, 10);
+        const targetIds = Array.from(new Set(['global', fbUid]));
         const q = isAdm ? colRef : query(colRef, where('userId', 'in', targetIds));
         const snap = await getDocs(q);
         const batchUpdates: Promise<void>[] = [];
+        const markedIds: string[] = [];
         snap.forEach(d => {
           const item = { id: d.id, ...d.data() } as Notification;
-          if ((isAdm || matchesTarget(item)) && !item.isRead) {
-            batchUpdates.push(updateDoc(doc(firestoreDb, 'notifications', d.id), { isRead: true }));
+          const isGlobal = (item.userId || '').trim().toLowerCase() === 'global';
+          if (isGlobal) knownGlobalNotifIds.add(d.id);
+          const alreadyRead = Boolean(item.isRead || (fbUid && Array.isArray(item.readBy) && item.readBy.includes(fbUid)));
+          if ((isAdm || matchesTarget(item, fbUid)) && !alreadyRead) {
+            markedIds.push(d.id);
+            if (!isAdm && isGlobal && fbUid) {
+              batchUpdates.push(updateDoc(doc(firestoreDb, 'notifications', d.id), { readBy: arrayUnion(fbUid) }));
+            } else {
+              batchUpdates.push(updateDoc(doc(firestoreDb, 'notifications', d.id), { isRead: true }));
+            }
           }
         });
+        if (markedIds.length > 0) {
+          addLocalReadNotifIds(markedIds, uidKey);
+        }
         await Promise.all(batchUpdates);
       } catch (err) {
         console.error("Firebase markAllNotificationsAsRead failed:", err);
       }
     }
     const current = getStorageItem<Notification[]>('notifications', []);
-    const updated = current.map(item => matchesTarget(item) ? { ...item, isRead: true } : item);
+    const localIdsToMark = current.filter(item => matchesTarget(item, fbUid)).map(item => item.id);
+    if (localIdsToMark.length > 0) {
+      addLocalReadNotifIds(localIdsToMark, uidKey);
+    }
+    const updated = current.map(item =>
+      matchesTarget(item, fbUid) && (item.userId || '').trim().toLowerCase() !== 'global'
+        ? { ...item, isRead: true }
+        : item
+    );
     setStorageItem('notifications', updated);
   },
 
@@ -5144,7 +5312,7 @@ export const authService = {
     const appName = 'admin_picker_' + Date.now();
     let pickerApp: ReturnType<typeof initializeApp> | null = null;
     try {
-      pickerApp = initializeApp(firebaseAppletConfig, appName);
+      pickerApp = initializeApp(firebaseConfig, appName);
       const pickerAuth = getAuth(pickerApp);
       const provider = new GoogleAuthProvider();
       provider.setCustomParameters({ prompt: 'select_account' });
@@ -5177,15 +5345,16 @@ export const authService = {
   },
 
   // Authenticate manager/admin user with real Firebase Email/Password or local fallback
-  loginAdmin: async (email: string, password: string): Promise<{ success: boolean; admin?: Admin; error?: string }> => {
+  loginAdmin: async (email: string, password: string): Promise<{ success: boolean; admin?: Admin; error?: string; errorCode?: string }> => {
     const cleanEmail = email.trim().toLowerCase();
     const cleanPassword = password;
+    const isEn = isEnglishUi();
 
     if (!cleanEmail) {
-      return { success: false, error: 'يرجى إدخال البريد الإلكتروني للمدير.' };
+      return { success: false, error: isEn ? 'Please enter the administrator email address.' : 'يرجى إدخال البريد الإلكتروني للمدير.' };
     }
-    if (!cleanPassword || cleanPassword.length < 6) {
-      return { success: false, error: 'كلمة المرور يجب أن لا تقل عن 6 أحرف.' };
+    if (!cleanPassword) {
+      return { success: false, error: isEn ? 'Please enter your password.' : 'يرجى إدخال كلمة المرور.' };
     }
 
     const defaultAdminUser: UserAuth = {
@@ -5206,47 +5375,56 @@ export const authService = {
       try {
         let firebaseUid: string | null = null;
         let authErrCode = '';
-        let newlyCreatedUser: User | null = null;
 
         try {
           const userCredential = await signInWithEmailAndPassword(firebaseAuth, cleanEmail, cleanPassword);
           firebaseUid = userCredential.user.uid;
         } catch (signInErr: any) {
-          authErrCode = signInErr?.code || '';
-          if (authErrCode === 'auth/user-not-found') {
-            try {
-              const newCredential = await createUserWithEmailAndPassword(firebaseAuth, cleanEmail, cleanPassword);
-              firebaseUid = newCredential.user.uid;
-              newlyCreatedUser = newCredential.user;
-              authErrCode = '';
-            } catch (createErr: any) {
-              authErrCode = createErr?.code || authErrCode;
-            }
-          }
+          authErrCode = String(signInErr?.code || '');
         }
 
         if (!firebaseUid) {
+          recordLoginAttempt(cleanEmail, false);
           if (authErrCode === 'auth/operation-not-allowed') {
             return {
               success: false,
-              error: 'مزود الدخول بالبريد الإلكتروني وكلمة المرور (Email/Password) غير مفعّل في Firebase Console. قم بتفعيله من Authentication > Sign-in method، أو اضغط على «الدخول بحساب Google (المدير)» بالأسفل.'
+              errorCode: authErrCode,
+              error: isEn
+                ? 'Email/Password sign-in is not yet enabled in Firebase Console (Authentication > Sign-in method). Sign in with Google (Manager) above or enable Email/Password in Firebase Console.'
+                : 'مزود الدخول بالبريد الإلكتروني وكلمة المرور غير مفعّل بعد في Firebase Console (Authentication > Sign-in method). استخدم «الدخول بحساب Google (المدير)» بالأعلى أو فعّله من إعدادات Firebase.'
+            };
+          }
+          if (authErrCode === 'auth/unauthorized-domain') {
+            const host = typeof window !== 'undefined' ? window.location.hostname : '';
+            return {
+              success: false,
+              error: isEn
+                ? `Current domain (${host}) is not listed in Firebase Authentication Authorized domains.`
+                : `النطاق الحالي (${host}) غير مضاف في Authorized domains داخل Firebase Console.`
             };
           }
           if (authErrCode === 'auth/too-many-requests') {
             return {
               success: false,
-              error: 'تم إيقاف المحاولات مؤقتاً لكثرة المحاولات الخاطئة. حاول بعد قليل أو استخدم «تعيين / نسيت كلمة المرور».'
+              error: isEn
+                ? 'Too many failed attempts. Please wait a moment or use "Set / Forgot Password?".'
+                : 'تم إيقاف المحاولات مؤقتاً لكثرة المحاولات الخاطئة. انتظر قليلاً أو استخدم «تعيين / نسيت كلمة المرور؟».'
             };
           }
           if (authErrCode === 'auth/invalid-email') {
-            return { success: false, error: 'صيغة البريد الإلكتروني غير صحيحة.' };
+            return { success: false, error: isEn ? 'Invalid email address format.' : 'صيغة البريد الإلكتروني غير صحيحة.' };
           }
-          if (authErrCode === 'auth/weak-password') {
-            return { success: false, error: 'كلمة المرور ضعيفة، يجب أن لا تقل عن 6 أحرف.' };
+          if (authErrCode === 'auth/user-disabled') {
+            return { success: false, error: isEn ? 'This Firebase account is disabled.' : 'تم تعطيل هذا الحساب في Firebase Authentication.' };
+          }
+          if (authErrCode === 'auth/network-request-failed') {
+            return { success: false, error: isEn ? 'Network error while contacting Firebase Authentication.' : 'تعذر الاتصال بخادم المصادقة. تحقق من اتصال الإنترنت.' };
           }
           return {
             success: false,
-            error: 'كلمة المرور غير صحيحة، أو لم يتم ربط كلمة مرور بهذا البريد بعد (إذا كنت تدخل بـ Google يمكنك الضغط على «تعيين / نسيت كلمة المرور» لإرسال رابط تعيين كلمة المرور لبريدك).'
+            error: isEn
+              ? 'Invalid email or password, or no password is linked to this Google account yet (you can sign in with Google or use "Set / Forgot Password?").'
+              : 'البريد الإلكتروني أو كلمة المرور غير صحيحة، أو لم يتم ربط كلمة مرور بهذا الحساب بعد (يمكنك الدخول بحساب Google أو استخدام «تعيين / نسيت كلمة المرور؟»).'
           };
         }
 
@@ -5254,13 +5432,15 @@ export const authService = {
         const verifiedEmail = (firebaseAuth.currentUser?.email || cleanEmail).trim().toLowerCase();
         const adminLevel = await resolveAdminAccessLevel(verifiedEmail);
         if (!adminLevel) {
-          if (newlyCreatedUser) {
-            await newlyCreatedUser.delete().catch(() => signOut(firebaseAuth));
-          } else {
-            await signOut(firebaseAuth).catch(() => {});
-          }
+          await signOut(firebaseAuth).catch(() => {});
+          localStorage.removeItem('academy_active_user');
           recordLoginAttempt(cleanEmail, false);
-          return { success: false, error: 'هذا البريد الإلكتروني غير مصرح له بصلاحيات المدير.' };
+          return {
+            success: false,
+            error: isEn
+              ? 'This account is not authorized with administrator privileges.'
+              : 'هذا الحساب غير مصرح له بصلاحيات المدير.'
+          };
         }
 
         let userData: UserAuth = { ...defaultAdminUser, id: firebaseUid, uid: firebaseUid, adminLevel };
@@ -5290,18 +5470,18 @@ export const authService = {
         saveActiveUserSession(userData);
         return { success: true, admin: { id: userData.id, name: userData.name || (isSuperAdminEmail(verifiedEmail) ? 'Eng/Mohamed abdal tawab' : verifiedEmail.split('@')[0]), email: userData.email, role: adminLevel } };
       } catch (err: any) {
-        console.error("Manager login error:", err);
-        return { success: false, error: err?.message || 'تعذر تسجيل الدخول كمدير.' };
+        console.error("Manager login error:", err?.code || err?.message || err);
+        return { success: false, error: isEn ? 'Unable to sign in as administrator.' : 'تعذر تسجيل الدخول كمدير.' };
       }
     } else {
-      // Local Simulation DB Fallback
+      // Local Simulation DB Fallback (only when Firebase config is absent)
       const adminLevel = await resolveAdminAccessLevel(cleanEmail);
       if (!adminLevel) {
-        return { success: false, error: 'هذا البريد الإلكتروني غير مصرح له بصلاحيات المدير.' };
+        return { success: false, error: isEn ? 'This email is not authorized as administrator.' : 'هذا البريد الإلكتروني غير مصرح له بصلاحيات المدير.' };
       }
       const savedLocalPass = typeof localStorage !== 'undefined' ? localStorage.getItem('academy_admin_local_pass') : null;
       if (savedLocalPass && savedLocalPass !== cleanPassword) {
-        return { success: false, error: 'كلمة المرور غير صحيحة.' };
+        return { success: false, error: isEn ? 'Incorrect password.' : 'كلمة المرور غير صحيحة.' };
       }
       if (!savedLocalPass && typeof localStorage !== 'undefined') {
         localStorage.setItem('academy_admin_local_pass', cleanPassword);
@@ -5327,41 +5507,74 @@ export const authService = {
 
   sendAdminPasswordReset: async (email: string): Promise<{ success: boolean; error?: string }> => {
     const cleanEmail = email.trim().toLowerCase();
+    const isEn = isEnglishUi();
     if (!cleanEmail) {
-      return { success: false, error: 'يرجى إدخال البريد الإلكتروني للمدير أولاً.' };
+      return { success: false, error: isEn ? 'Please enter the administrator email first.' : 'يرجى إدخال البريد الإلكتروني للمدير أولاً.' };
     }
     if (!isFirebaseConfigured || !firebaseAuth) {
-      return { success: false, error: 'خدمة إعادة تعيين كلمة المرور متاحة عند الاتصال بـ Firebase.' };
+      return { success: false, error: isEn ? 'Password reset is only available when Firebase is configured.' : 'خدمة إعادة تعيين كلمة المرور متاحة عند الاتصال بـ Firebase.' };
     }
     try {
       await sendPasswordResetEmail(firebaseAuth, cleanEmail);
       return { success: true };
     } catch (err: any) {
-      if (err?.code === 'auth/operation-not-allowed') {
+      const code = String(err?.code || '');
+      if (code === 'auth/operation-not-allowed') {
         return {
           success: false,
-          error: 'مزود Email/Password غير مفعّل في Firebase Console. يرجى تفعيله من Authentication > Sign-in method أولاً.'
+          error: isEn
+            ? 'Email/Password provider is not enabled in Firebase Authentication Console. Enable it under Authentication > Sign-in method first.'
+            : 'مزود Email/Password غير مفعّل في Firebase Console. يرجى تفعيله من Authentication > Sign-in method أولاً.'
         };
       }
-      return { success: false, error: err?.message || 'تعذر إرسال رابط تعيين كلمة المرور.' };
+      if (code === 'auth/unauthorized-domain') {
+        const host = typeof window !== 'undefined' ? window.location.hostname : '';
+        return {
+          success: false,
+          error: isEn
+            ? `Domain (${host}) is not in Firebase Authorized domains.`
+            : `النطاق (${host}) غير مضاف في Authorized domains داخل Firebase Console.`
+        };
+      }
+      if (code === 'auth/invalid-email') {
+        return { success: false, error: isEn ? 'Invalid email address.' : 'صيغة البريد الإلكتروني غير صحيحة.' };
+      }
+      if (code === 'auth/too-many-requests') {
+        return { success: false, error: isEn ? 'Too many requests. Please wait before trying again.' : 'طلبات كثيرة جداً. يرجى الانتظار قليلاً ثم المحاولة مرة أخرى.' };
+      }
+      return { success: false, error: err?.message || (isEn ? 'Could not send password reset email.' : 'تعذر إرسال رابط تعيين كلمة المرور.') };
     }
   },
 
   getCurrentAdmin: (): Admin | null => {
+    if (isFirebaseConfigured && firebaseAuth) {
+      const fbUser = firebaseAuth.currentUser;
+      const fbEmail = (fbUser?.email || '').trim().toLowerCase();
+      if (!fbUser || !fbEmail || !isAdminEmail(fbEmail)) {
+        return null;
+      }
+      const resolvedRole: 'super' | 'editor' = isSuperAdminEmail(fbEmail) ? 'super' : 'editor';
+      const u = authService.getCurrentUser();
+      if (u && (u.email || '').trim().toLowerCase() === fbEmail) {
+        return {
+          id: u.id || fbUser.uid,
+          name: u.name || fbUser.displayName || (resolvedRole === 'super' ? 'Eng/Mohamed abdal tawab' : fbEmail.split('@')[0]),
+          email: fbEmail,
+          role: isSuperAdminEmail(fbEmail) ? 'super' : (u.adminLevel || 'editor')
+        };
+      }
+      return {
+        id: fbUser.uid,
+        name: fbUser.displayName || (resolvedRole === 'super' ? 'Eng/Mohamed abdal tawab' : fbEmail.split('@')[0]),
+        email: fbEmail,
+        role: resolvedRole
+      };
+    }
+
     const u = authService.getCurrentUser();
     if (u && isAdminEmail(u.email || '')) {
       const resolvedRole: 'super' | 'editor' = isSuperAdminEmail(u.email) ? 'super' : (u.adminLevel || 'super');
       return { id: u.id, name: u.name || 'Eng/Mohamed abdal tawab', email: u.email, role: resolvedRole };
-    }
-    const activeUserStr = typeof localStorage !== 'undefined' ? localStorage.getItem('academy_active_user') : null;
-    if (activeUserStr) {
-      try {
-        const activeUser = JSON.parse(activeUserStr);
-        if (activeUser && isAdminEmail(activeUser.email || '')) {
-          const resolvedRole: 'super' | 'editor' = isSuperAdminEmail(activeUser.email) ? 'super' : (activeUser.adminLevel || 'super');
-          return { id: activeUser.id || 'admin_1', name: activeUser.name || 'Eng/Mohamed abdal tawab', email: activeUser.email, role: resolvedRole };
-        }
-      } catch (e) {}
     }
     return null;
   },
@@ -5371,7 +5584,7 @@ export const authService = {
   },
 
   // Global login supporting all roles
-  loginUser: async (email: string, password: string): Promise<{ success: boolean; user?: UserAuth; accountStatus?: string; error?: string }> => {
+  loginUser: async (email: string, password: string): Promise<{ success: boolean; user?: UserAuth; accountStatus?: string; error?: string; errorCode?: string }> => {
     const normalizedEmail = email.trim().toLowerCase();
 
     if (!normalizedEmail) {
@@ -5462,74 +5675,32 @@ export const authService = {
         saveActiveUserSession(finalUser);
         return { success: true, user: finalUser };
       } catch (err: any) {
-        console.warn("Firebase Login Notice:", err);
+        console.warn("Firebase Login Notice:", err?.code || err?.message || err);
+        const isEn = isEnglishUi();
 
-        // Fallback only if Email/Password provider isn't enabled for students; never bypass wrong credentials for admins
-        if (!isAdminEmail(normalizedEmail) && err.code === 'auth/operation-not-allowed') {
-          try {
-            const q = query(collection(firestoreDb, 'users'), where('email', '==', normalizedEmail));
-            const querySnap = await getDocs(q);
-            if (!querySnap.empty) {
-              const docSnap = querySnap.docs[0];
-              const userData = docSnap.data() as UserAuth;
-              if (userData.status === 'suspended') {
-                recordLoginAttempt(normalizedEmail, false);
-                return { success: false, accountStatus: 'suspended', error: 'تم إيقاف هذا الحساب من قبل إدارة المنصة الجامعية.' };
-              }
-              if (userData.status === 'pending' || (userData.role !== 'admin' && userData.isApproved === false && userData.status !== 'active')) {
-                recordLoginAttempt(normalizedEmail, false);
-                return { success: false, accountStatus: 'pending', error: 'حسابك قيد المراجعة حالياً (Pending) من قبل إدارة المنصة الجامعية. يرجى الانتظار حتى يتم قبول الحساب.' };
-              }
-              if (userData.status === 'rejected') {
-                recordLoginAttempt(normalizedEmail, false);
-                return { success: false, accountStatus: 'rejected', error: 'تم رفض طلب تسجيل حسابك (Rejected) من قبل إدارة المنصة الجامعية.' };
-              }
-              const finalUser: UserAuth = { id: docSnap.id, uid: docSnap.id, ...userData, role: userData.role === 'admin' ? 'student' : userData.role };
-              recordLoginAttempt(normalizedEmail, true);
-              saveActiveUserSession(finalUser);
-              return { success: true, user: finalUser };
-            }
-          } catch (dbQueryErr) {
-            console.error("Firestore user search error on login fallback:", dbQueryErr);
-          }
-        }
-
-        let errorMsg = 'البريد الإلكتروني أو كلمة المرور غير صحيحة.';
+        let errorMsg = isEn ? 'Incorrect email or password.' : 'البريد الإلكتروني أو كلمة المرور غير صحيحة.';
         if (err.code === 'auth/operation-not-allowed') {
-          const newUid = 'usr_' + Date.now();
-          const nowIso = new Date().toISOString();
-          const fallbackUser: UserAuth = {
-            id: newUid,
-            uid: newUid,
-            name: 'طالب تكنولوجيا المعلومات',
-            email: normalizedEmail,
-            phone: '',
-            role: 'student',
-            status: 'pending',
-            isApproved: false,
-            grade: 'year1',
-            department: 'IT',
-            createdAt: nowIso,
-            purchasedCourseIds: [],
-            watchedLessonIds: [],
-            quizGrades: {}
-          };
-          try {
-            await setDoc(doc(firestoreDb, 'users', newUid), fallbackUser, { merge: true });
-            await setDoc(doc(firestoreDb, 'students', newUid), {
-              ...fallbackUser,
-              enrollmentDate: nowIso.split('T')[0]
-            }, { merge: true });
-          } catch (e) {}
-          return { success: false, accountStatus: 'pending', error: 'تم تسجيل طلب حسابك وهو في انتظار موافقة الإدارة (Pending).' };
+          errorMsg = isEn
+            ? 'Email/Password sign-in is not yet enabled in Firebase Authentication. Please sign in with Google or enable Email/Password in Firebase Console.'
+            : 'مزود الدخول بالبريد الإلكتروني وكلمة المرور غير مفعّل بعد في Firebase Authentication. يمكنك المتابعة بحساب Google بالأعلى أو تفعيله من Firebase Console.';
+        } else if (err.code === 'auth/unauthorized-domain') {
+          const host = typeof window !== 'undefined' ? window.location.hostname : '';
+          errorMsg = isEn
+            ? `Domain (${host}) is not in Firebase Authorized domains.`
+            : `النطاق (${host}) غير مضاف في قائمة Authorized domains داخل Firebase Console.`;
         } else if (err.code === 'auth/user-not-found' || err.code === 'auth/wrong-password' || err.code === 'auth/invalid-credential') {
-          errorMsg = 'بيانات الدخول غير صحيحة. يرجى التأكد من البريد الإلكتروني وكلمة المرور.';
+          errorMsg = isEn
+            ? 'Invalid email or password.'
+            : 'بيانات الدخول غير صحيحة. يرجى التأكد من البريد الإلكتروني وكلمة المرور.';
         } else if (err.code === 'auth/invalid-email') {
-          errorMsg = 'صيغة البريد الإلكتروني غير صحيحة.';
+          errorMsg = isEn ? 'Invalid email address format.' : 'صيغة البريد الإلكتروني غير صحيحة.';
         } else if (err.code === 'auth/user-disabled') {
-          errorMsg = 'تم إيقاف هذا الحساب من قبل إدارة المنصة الجامعية.';
+          errorMsg = isEn ? 'This account has been suspended.' : 'تم إيقاف هذا الحساب من قبل إدارة المنصة الجامعية.';
+        } else if (err.code === 'auth/too-many-requests') {
+          errorMsg = isEn ? 'Too many failed attempts. Please try again shortly.' : 'محاولات دخول خاطئة متكررة. حاول بعد قليل.';
         }
-        return { success: false, error: errorMsg };
+        recordLoginAttempt(normalizedEmail, false);
+        return { success: false, error: errorMsg, errorCode: String(err?.code || '') };
       }
     } else {
       const users = getStorageItem<UserAuth[]>('users', defaultUsers);
@@ -5646,9 +5817,17 @@ export const authService = {
           } else if (createErr.code === 'auth/invalid-email') {
             return { success: false, error: 'صيغة البريد الإلكتروني غير صحيحة.' };
           } else if (createErr.code === 'auth/operation-not-allowed') {
-            firebaseUid = 'usr_' + Date.now();
+            return {
+              success: false,
+              error: isEnglishUi()
+                ? 'Email/Password registration is disabled in Firebase Authentication. Please sign in with Google or enable Email/Password in Firebase Console.'
+                : 'التسجيل بالبريد الإلكتروني وكلمة المرور غير مفعّل في Firebase Authentication. يمكنك التسجيل بحساب Google أو تفعيله من Firebase Console.'
+            };
           } else {
-            firebaseUid = 'usr_' + Date.now();
+            return {
+              success: false,
+              error: createErr?.message || (isEnglishUi() ? 'Registration failed in Firebase Authentication.' : 'تعذر إنشاء الحساب في Firebase Authentication.')
+            };
           }
         }
 
@@ -5812,21 +5991,32 @@ export const authService = {
 
       const nowIso = new Date().toISOString();
       const userRef = doc(firestoreDb, 'users', uid);
-      let userData: UserAuth;
-      const snap = await getDoc(userRef);
+      let userData: UserAuth | null = null;
+      let snapExists = false;
 
-      if (snap.exists()) {
-        userData = { id: uid, uid, ...(snap.data() as UserAuth) };
-        if (isAdm && adminLevel) {
-          userData.role = 'admin';
-          userData.adminLevel = adminLevel;
-          userData.status = 'active';
-          userData.isApproved = true;
-          await setDoc(userRef, { role: 'admin', adminLevel, status: 'active', isApproved: true }, { merge: true }).catch(() => {});
-        } else if (userData.role === 'admin') {
-          userData.role = 'student';
+      try {
+        const snap = await getDoc(userRef);
+        if (snap.exists()) {
+          snapExists = true;
+          userData = { id: uid, uid, ...(snap.data() as UserAuth) };
+          if (isAdm && adminLevel) {
+            userData.role = 'admin';
+            userData.adminLevel = adminLevel;
+            userData.status = 'active';
+            userData.isApproved = true;
+            await setDoc(userRef, { role: 'admin', adminLevel, status: 'active', isApproved: true }, { merge: true }).catch(() => {});
+          } else if (userData.role === 'admin') {
+            userData.role = 'student';
+          }
         }
-      } else {
+      } catch (dbErr) {
+        if (!isAdm) {
+          throw dbErr;
+        }
+        console.warn("Firestore read warning during verified manager Google sign-in:", dbErr);
+      }
+
+      if (!snapExists || !userData) {
         userData = {
           id: uid,
           uid,
@@ -5845,12 +6035,14 @@ export const authService = {
           watchedLessonIds: [],
           quizGrades: {}
         };
-        await setDoc(userRef, userData, { merge: true });
-        if (!isAdm) {
+        if (isAdm) {
+          await setDoc(userRef, userData, { merge: true }).catch(() => {});
+        } else {
+          await setDoc(userRef, userData, { merge: true });
           await setDoc(doc(firestoreDb, 'students', uid), {
             ...userData,
             enrollmentDate: nowIso.split('T')[0]
-          }, { merge: true });
+          }, { merge: true }).catch(() => {});
         }
       }
 
@@ -5880,22 +6072,41 @@ export const authService = {
       }
       return { success: true, user: userData };
     } catch (err: any) {
-      console.warn("Google sign-in notice:", err);
+      console.warn("Google sign-in notice:", err?.code || err?.message || err);
       const code = String(err?.code || '');
-      if (code === 'auth/popup-closed-by-user') {
-        return { success: false, error: 'تم إغلاق نافذة تسجيل الدخول قبل إتمام العملية.' };
+      const isEn = isEnglishUi();
+      if (code === 'auth/popup-closed-by-user' || code === 'auth/cancelled-popup-request') {
+        return { success: false, error: isEn ? 'Google sign-in popup was closed before completion.' : 'تم إغلاق نافذة تسجيل الدخول قبل إتمام العملية.' };
       }
       if (code === 'auth/popup-blocked') {
-        return { success: false, error: 'قام المتصفح بحظر نافذة تسجيل الدخول. يرجى السماح بالنوافذ المنبثقة لهذا الموقع أو تسجيل الدخول بالبريد وكلمة المرور.' };
+        return { success: false, error: isEn ? 'Popup was blocked by the browser. Please allow popups for this site and try again.' : 'قام المتصفح بحظر نافذة تسجيل الدخول. يرجى السماح بالنوافذ المنبثقة لهذا الموقع ثم أعد المحاولة.' };
+      }
+      if (code === 'auth/operation-not-allowed') {
+        return {
+          success: false,
+          error: isEn
+            ? 'Google Sign-In provider is not enabled in Firebase Authentication Console.'
+            : 'مزود الدخول بحساب Google غير مفعّل في Firebase Console > Authentication > Sign-in method.'
+        };
       }
       if (code === 'auth/unauthorized-domain') {
         const host = typeof window !== 'undefined' ? window.location.hostname : '';
         return {
           success: false,
-          error: `النطاق الحالي (${host}) غير مضاف بعد في قائمة Authorized domains داخل Firebase Console > Authentication > Settings. أضف النطاق أو استخدم الدخول بالبريد الإلكتروني وكلمة المرور.`
+          error: isEn
+            ? `Current domain (${host}) is not authorized in Firebase Console > Authentication > Settings > Authorized domains.`
+            : `النطاق الحالي (${host}) غير مضاف بعد في قائمة Authorized domains داخل Firebase Console > Authentication > Settings.`
         };
       }
-      return { success: false, error: err?.message || 'تعذر تسجيل الدخول عبر Google.' };
+      if (code === 'auth/account-exists-with-different-credential') {
+        return {
+          success: false,
+          error: isEn
+            ? 'An account already exists with this email using a different sign-in method.'
+            : 'يوجد حساب مسجل بهذا البريد بطريقة دخول أخرى.'
+        };
+      }
+      return { success: false, error: err?.message || (isEn ? 'Unable to sign in with Google.' : 'تعذر تسجيل الدخول عبر Google.') };
     }
   },
 
@@ -6030,17 +6241,31 @@ export const authService = {
             callback(validUser);
           } catch (err) {
             console.error("Error fetching auth user from Firestore:", err);
+            if (isAdminEmail(cleanEmail)) {
+              const fallbackAdmin: UserAuth = {
+                id: uid,
+                uid,
+                name: fbUser.displayName || (isSuperAdminEmail(cleanEmail) ? 'Eng/Mohamed abdal tawab' : cleanEmail.split('@')[0]),
+                email: cleanEmail,
+                phone: '',
+                role: 'admin',
+                adminLevel: isSuperAdminEmail(cleanEmail) ? 'super' : 'editor',
+                department: 'IT',
+                grade: 'year1',
+                createdAt: new Date().toISOString(),
+                status: 'active',
+                isApproved: true
+              };
+              saveActiveUserSession(fallbackAdmin);
+              callback(fallbackAdmin);
+              return;
+            }
             const saved = authService.getCurrentUser();
             callback(saved);
           }
         } else {
-          const saved = authService.getCurrentUser();
-          if (saved) {
-            callback(saved);
-          } else {
-            localStorage.removeItem('academy_active_user');
-            callback(null);
-          }
+          localStorage.removeItem('academy_active_user');
+          callback(null);
         }
       });
     } else {

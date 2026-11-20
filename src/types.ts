@@ -676,11 +676,13 @@ export interface LessonComment {
 export interface Notification {
   id: string;
   userId: string; // userId or 'global'
+  studentEmail?: string;
   titleAr: string;
   titleEn: string;
   bodyAr: string;
   bodyEn: string;
   isRead: boolean;
+  readBy?: string[];
   createdAt: string;
   type?: 'lecture_added' | 'course_activated' | 'assignment' | 'exam' | 'general';
   courseId?: string;

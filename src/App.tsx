@@ -1,5 +1,5 @@
-import React, { useState, useEffect } from 'react';
-import { Course, Category, NewsItem, Article, UserReview, WebsiteSettings, Order } from './types';
+import React, { useState, useEffect, useRef } from 'react';
+import { Course, Category, NewsItem, Article, UserReview, WebsiteSettings, Order, Notification } from './types';
 import { dbService, authService, isAdminEmail, firebaseAuth, waitForFirebaseAuth } from './firebase';
 import { LanguageProvider, useLanguage } from './components/LanguageContext';
 import { useTheme } from './components/ThemeContext';
@@ -56,6 +56,7 @@ function AcademyApp() {
   const [adminEmail, setAdminEmail] = useState<string>('');
   const [adminPassword, setAdminPassword] = useState<string>('');
   const [loginError, setLoginError] = useState<string>('');
+  const [adminProviderDisabled, setAdminProviderDisabled] = useState<boolean>(false);
   const [adminResetSuccess, setAdminResetSuccess] = useState<string>('');
   const [adminLoginLoading, setAdminLoginLoading] = useState<boolean>(false);
 
@@ -66,6 +67,7 @@ function AcademyApp() {
   const [studentAuthMode, setStudentAuthMode] = useState<'login' | 'register'>('login');
   const [studentAuthForm, setStudentAuthForm] = useState({ name: '', email: '', password: '', phone: '', grade: 'year1', semester: 'term1', department: 'IT' });
   const [studentAuthError, setStudentAuthError] = useState<string>('');
+  const [studentProviderDisabled, setStudentProviderDisabled] = useState<boolean>(false);
   const [studentAuthSuccess, setStudentAuthSuccess] = useState<string>('');
   const [studentAccountStatus, setStudentAccountStatus] = useState<string>('');
 
@@ -82,6 +84,19 @@ function AcademyApp() {
   // FAQ Accordion Active state
   const [activeFaq, setActiveFaq] = useState<number | null>(null);
   const [appToast, setAppToast] = useState<{ message: string; type: 'error' | 'info' | 'success' } | null>(null);
+
+  // Real-time Student Notifications State (drives Header Notification Bell)
+  const [studentNotifications, setStudentNotifications] = useState<Notification[]>([]);
+  const headerNotifInitRef = useRef<boolean>(true);
+  const prevHeaderNotifIdsRef = useRef<Set<string>>(new Set());
+  const currentViewRef = useRef<string>(currentView);
+  const languageRef = useRef(language);
+  useEffect(() => {
+    currentViewRef.current = currentView;
+  }, [currentView]);
+  useEffect(() => {
+    languageRef.current = language;
+  }, [language]);
 
   useEffect(() => {
     let timer: ReturnType<typeof setTimeout> | null = null;
@@ -121,14 +136,17 @@ function AcademyApp() {
       setReviews(allReviews);
       setSettings(webSettings);
 
+      await waitForFirebaseAuth();
       // Verify active session
       const currentAdmin = authService.getCurrentAdmin();
       if (currentAdmin) {
         setIsAdminLoggedIn(true);
-      }
-      const currentUser = authService.getCurrentUser();
-      if (currentUser && currentUser.role === 'student') {
-        setIsStudentLoggedIn(true);
+      } else {
+        setIsAdminLoggedIn(false);
+        const currentUser = authService.getCurrentUser();
+        if (currentUser && currentUser.role === 'student') {
+          setIsStudentLoggedIn(true);
+        }
       }
     } catch (err) {
       console.error("Error synchronizing academy data:", err);
@@ -304,6 +322,57 @@ function AcademyApp() {
     };
   }, [isAdminLoggedIn, isStudentLoggedIn]);
 
+  // Real-time Firestore listener for logged-in student's notifications (Global Header Bell)
+  useEffect(() => {
+    if (!isStudentLoggedIn) {
+      setStudentNotifications([]);
+      headerNotifInitRef.current = true;
+      prevHeaderNotifIdsRef.current = new Set();
+      return;
+    }
+
+    let cancelled = false;
+    let unsubNotifs: (() => void) | undefined;
+
+    (async () => {
+      await waitForFirebaseAuth();
+      if (cancelled) return;
+      if (dbService.isRealFirebase() && !firebaseAuth?.currentUser) {
+        return;
+      }
+      const activeUser = authService.getCurrentUser();
+      const uid = firebaseAuth?.currentUser?.uid || activeUser?.id || '';
+      const email = firebaseAuth?.currentUser?.email || activeUser?.email || '';
+      if (!uid && !email) return;
+
+      unsubNotifs = dbService.listenToNotifications(uid, email, (notifs) => {
+        if (cancelled) return;
+        setStudentNotifications(notifs);
+
+        if (!headerNotifInitRef.current && currentViewRef.current !== 'student-panel') {
+          const brandNew = notifs.find(n => !prevHeaderNotifIdsRef.current.has(n.id) && !n.isRead);
+          if (brandNew) {
+            const msg = languageRef.current === 'ar'
+              ? (brandNew.titleAr || brandNew.titleEn)
+              : (brandNew.titleEn || brandNew.titleAr);
+            if (msg) {
+              emitAppToast(msg, 'info');
+            }
+          }
+        } else {
+          headerNotifInitRef.current = false;
+        }
+
+        prevHeaderNotifIdsRef.current = new Set(notifs.map(n => n.id));
+      });
+    })();
+
+    return () => {
+      cancelled = true;
+      if (typeof unsubNotifs === 'function') unsubNotifs();
+    };
+  }, [isStudentLoggedIn]);
+
   useEffect(() => {
     if (selectedCourse?.id) {
       sessionStorage.setItem('academy_selected_course_id', selectedCourse.id);
@@ -343,8 +412,10 @@ function AcademyApp() {
     setStudentAuthMode(mode);
     setIsAdminLoginOpen(false);
     setLoginError('');
+    setAdminProviderDisabled(false);
     setAdminResetSuccess('');
     setStudentAuthError('');
+    setStudentProviderDisabled(false);
     setStudentAuthSuccess('');
     setStudentAccountStatus('');
     setIsStudentAuthOpen(true);
@@ -354,8 +425,10 @@ function AcademyApp() {
     setAuthTab('teacher');
     setIsStudentAuthOpen(false);
     setLoginError('');
+    setAdminProviderDisabled(false);
     setAdminResetSuccess('');
     setStudentAuthError('');
+    setStudentProviderDisabled(false);
     setStudentAuthSuccess('');
     setStudentAccountStatus('');
     setIsAdminLoginOpen(true);
@@ -439,6 +512,58 @@ function AcademyApp() {
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
+  const handleHeaderNotificationRead = async (notif: Notification) => {
+    setStudentNotifications(prev => prev.map(n => n.id === notif.id ? { ...n, isRead: true } : n));
+    try {
+      await dbService.markNotificationAsRead(notif.id, (notif.userId || '').trim().toLowerCase() === 'global');
+    } catch (err) {
+      console.error("Failed to mark header notification read:", err);
+    }
+  };
+
+  const handleHeaderMarkAllNotificationsRead = async () => {
+    setStudentNotifications(prev => prev.map(n => ({ ...n, isRead: true })));
+    try {
+      const activeUser = authService.getCurrentUser();
+      const uid = firebaseAuth?.currentUser?.uid || activeUser?.id || '';
+      const email = firebaseAuth?.currentUser?.email || activeUser?.email || '';
+      await dbService.markAllNotificationsAsRead(uid, email);
+    } catch (err) {
+      console.error("Failed to mark all header notifications read:", err);
+    }
+  };
+
+  const handleHeaderNotificationClick = async (notif: Notification) => {
+    if (!notif.isRead) {
+      await handleHeaderNotificationRead(notif);
+    }
+
+    if (notif.courseId) {
+      const targetCourse = courses.find(c => c.id === notif.courseId);
+      if (targetCourse) {
+        handleCourseClick(targetCourse);
+        return;
+      }
+    }
+
+    let targetTab = 'notifications';
+    if (notif.type === 'lecture_added') {
+      targetTab = notif.titleAr?.includes('سكشن') ? 'sections' : 'lectures';
+    } else if (notif.type === 'assignment' || notif.titleAr?.includes('شيت') || notif.titleAr?.includes('واجب')) {
+      targetTab = 'sheets';
+    } else if (notif.type === 'exam' || notif.titleAr?.includes('امتحان') || notif.titleAr?.includes('اختبار')) {
+      targetTab = 'exams';
+    }
+
+    try {
+      sessionStorage.setItem('academy_student_target_tab', targetTab);
+      window.dispatchEvent(new CustomEvent('student-dashboard-tab', { detail: { tab: targetTab } }));
+    } catch {
+      // Ignore storage errors
+    }
+    handleNavigate('student-panel');
+  };
+
   const validateEmail = (emailStr: string): boolean => {
     const re = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     return re.test(emailStr);
@@ -452,6 +577,7 @@ function AcademyApp() {
   const handleAdminLoginSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoginError('');
+    setAdminProviderDisabled(false);
     setAdminResetSuccess('');
 
     const cleanEmail = adminEmail.trim().toLowerCase();
@@ -477,6 +603,7 @@ function AcademyApp() {
         setAdminEmail('');
         setAdminPassword('');
         setLoginError('');
+        setAdminProviderDisabled(false);
         setAdminResetSuccess('');
         setStudentAuthError('');
         if (dbService.isRealFirebase()) {
@@ -488,6 +615,7 @@ function AcademyApp() {
         }
         handleNavigate('home');
       } else {
+        setAdminProviderDisabled(res.errorCode === 'auth/operation-not-allowed');
         setLoginError(res.error || (language === 'ar' ? 'فشل تسجيل الدخول. يرجى التأكد من البريد الإلكتروني وكلمة المرور.' : 'Authentication Failed'));
       }
     } catch {
@@ -528,9 +656,13 @@ function AcademyApp() {
 
   const handleGoogleAuth = async (mode: 'admin' | 'student') => {
     setLoginError('');
+    setAdminResetSuccess('');
     setStudentAuthError('');
     setStudentAuthSuccess('');
     setStudentAccountStatus('');
+    if (mode === 'admin') {
+      setAdminLoginLoading(true);
+    }
     try {
       const res = await authService.loginWithGoogle(mode);
       if (res.success && (res.admin || res.user?.role === 'admin')) {
@@ -564,6 +696,10 @@ function AcademyApp() {
       const msg = err?.message || t('تعذر تسجيل الدخول عبر Google.', 'Google login failed.');
       if (mode === 'admin') setLoginError(msg);
       else setStudentAuthError(msg);
+    } finally {
+      if (mode === 'admin') {
+        setAdminLoginLoading(false);
+      }
     }
   };
 
@@ -616,6 +752,7 @@ function AcademyApp() {
     
     try {
       setStudentAccountStatus('');
+      setStudentProviderDisabled(false);
       if (studentAuthMode === 'login') {
         const res = await authService.loginUser(email, password);
         if (res.success && res.user) {
@@ -631,9 +768,10 @@ function AcademyApp() {
             handleNavigate('student-panel');
           }
         } else {
-          if ((res as any).accountStatus) {
-            setStudentAccountStatus((res as any).accountStatus);
+          if (res.accountStatus) {
+            setStudentAccountStatus(res.accountStatus);
           }
+          setStudentProviderDisabled(res.errorCode === 'auth/operation-not-allowed');
           setStudentAuthError(res.error || t('خطأ في تسجيل الدخول. تأكد من صحة البيانات.', 'Authentication failed. Please verify inputs.'));
         }
       } else {
@@ -888,6 +1026,10 @@ function AcademyApp() {
         isStudentLoggedIn={isStudentLoggedIn}
         onOpenStudentAuth={() => openStudentAuthModal('login')}
         onGoToStudentDashboard={() => handleNavigate('student-panel')}
+        notifications={studentNotifications}
+        onMarkNotificationRead={handleHeaderNotificationRead}
+        onMarkAllNotificationsRead={handleHeaderMarkAllNotificationsRead}
+        onNotificationClick={handleHeaderNotificationClick}
       />
 
       {/* Main Core Router View */}
@@ -1962,10 +2104,11 @@ function AcademyApp() {
                       {dbService.isRealFirebase() && (
                         <button
                           type="button"
+                          disabled={adminLoginLoading}
                           onClick={() => handleGoogleAuth('admin')}
-                          className="w-full rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-800 dark:text-white py-2.5 font-bold transition-all cursor-pointer text-xs"
+                          className="w-full rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-800 dark:text-white py-2.5 font-bold transition-all cursor-pointer text-xs disabled:opacity-60"
                         >
-                          🔐 {t('الدخول بحساب Google (المدير)', 'Sign in with Google (Manager)')}
+                          🔐 {adminLoginLoading ? t('جاري الاتصال بـ Google...', 'Connecting to Google...') : t('الدخول بحساب Google (المدير)', 'Sign in with Google (Manager)')}
                         </button>
                       )}
                     </form>
@@ -2082,7 +2225,7 @@ function AcademyApp() {
       {/* Unified Dual Login Modal (Student Login & Administrator Login) */}
       {(isStudentAuthOpen || isAdminLoginOpen) && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/75 dark:bg-[#090d16]/90 backdrop-blur-md p-3 sm:p-4 animate-fadeIn">
-          <div className="relative w-full max-w-sm rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950 p-5 sm:p-7 shadow-2xl animate-scaleUp max-h-[90vh] overflow-y-auto">
+          <div className="relative w-full max-w-sm rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950 p-5 sm:p-6 pt-12 sm:pt-7 shadow-2xl animate-scaleUp max-h-[90vh] overflow-y-auto">
             
             {/* Close Button - Always available so visitors can browse freely */}
             <button
@@ -2091,7 +2234,9 @@ function AcademyApp() {
                 setIsStudentAuthOpen(false);
                 setIsAdminLoginOpen(false);
                 setLoginError('');
+                setAdminProviderDisabled(false);
                 setStudentAuthError('');
+                setStudentProviderDisabled(false);
                 setStudentAuthSuccess('');
                 setStudentAccountStatus('');
               }}
@@ -2102,13 +2247,15 @@ function AcademyApp() {
             </button>
 
             {/* Dual Login Option Tabs */}
-            <div className="flex rounded-xl bg-slate-100 dark:bg-slate-900 p-1 border border-slate-200 dark:border-slate-800 mb-6 font-bold text-xs mt-6 sm:mt-2">
+            <div className="flex rounded-xl bg-slate-100 dark:bg-slate-900 p-1 border border-slate-200 dark:border-slate-800 mb-5 font-bold text-xs">
               <button
                 type="button"
                 onClick={() => {
                   setAuthTab('student');
                   setStudentAuthError('');
+                  setStudentProviderDisabled(false);
                   setLoginError('');
+                  setAdminProviderDisabled(false);
                 }}
                 className={`flex-1 py-2 text-center rounded-lg transition-all cursor-pointer ${
                   authTab === 'student'
@@ -2123,7 +2270,9 @@ function AcademyApp() {
                 onClick={() => {
                   setAuthTab('teacher');
                   setStudentAuthError('');
+                  setStudentProviderDisabled(false);
                   setLoginError('');
+                  setAdminProviderDisabled(false);
                   setAdminResetSuccess('');
                 }}
                 className={`flex-1 py-2 text-center rounded-lg transition-all cursor-pointer ${
@@ -2139,8 +2288,8 @@ function AcademyApp() {
             {/* TAB 1: MANAGER LOGIN */}
             {authTab === 'teacher' && (
               <>
-                <div className="text-center mb-5">
-                  <span className="inline-flex h-11 w-11 items-center justify-center rounded-xl bg-brand-cyan/10 border border-brand-cyan/20 text-xl mx-auto mb-2">
+                <div className="text-center mb-4">
+                  <span className="inline-flex h-10 w-10 items-center justify-center rounded-xl bg-brand-cyan/10 border border-brand-cyan/20 text-lg mx-auto mb-1.5">
                     🔐
                   </span>
                   <h3 className="text-lg font-black text-slate-900 dark:text-white">
@@ -2151,11 +2300,44 @@ function AcademyApp() {
                   </p>
                 </div>
 
-                <form onSubmit={handleAdminLoginSubmit} className="space-y-4 text-xs text-slate-700 dark:text-slate-300">
+                {dbService.isRealFirebase() && (
+                  <div className="mb-4 space-y-2.5">
+                    <button
+                      type="button"
+                      disabled={adminLoginLoading}
+                      onClick={() => handleGoogleAuth('admin')}
+                      className="w-full rounded-xl bg-slate-900 dark:bg-white text-white dark:text-slate-950 hover:opacity-90 py-3 px-4 font-extrabold transition-all cursor-pointer shadow-md text-xs disabled:opacity-60 flex items-center justify-center gap-2"
+                    >
+                      <span>🔐</span>
+                      <span>{adminLoginLoading ? t('جاري الاتصال بـ Google...', 'Connecting to Google...') : t('الدخول بحساب Google (المدير)', 'Sign in with Google (Manager)')}</span>
+                    </button>
+                    <div className="relative flex items-center py-1">
+                      <div className="flex-grow border-t border-slate-200 dark:border-slate-800" />
+                      <span className="mx-3 shrink-0 text-[10px] font-bold text-slate-400">
+                        {t('أو بالبريد الإلكتروني وكلمة المرور', 'Or with Email & Password')}
+                      </span>
+                      <div className="flex-grow border-t border-slate-200 dark:border-slate-800" />
+                    </div>
+                  </div>
+                )}
+
+                <form onSubmit={handleAdminLoginSubmit} className="space-y-3.5 text-xs text-slate-700 dark:text-slate-300">
                   {loginError && (
-                    <div className="rounded-lg bg-red-500/10 border border-red-500/20 p-3 text-red-600 dark:text-red-400 font-bold flex items-start gap-1.5 text-[11px] leading-relaxed">
-                      <ShieldAlert className="h-4 w-4 shrink-0 mt-0.5" />
-                      <span>{loginError}</span>
+                    <div className="rounded-xl bg-red-500/10 border border-red-500/20 p-3 text-red-600 dark:text-red-400 font-bold space-y-2 text-[11px] leading-relaxed">
+                      <div className="flex items-start gap-1.5">
+                        <ShieldAlert className="h-4 w-4 shrink-0 mt-0.5" />
+                        <span>{loginError}</span>
+                      </div>
+                      {adminProviderDisabled && dbService.isRealFirebase() && (
+                        <button
+                          type="button"
+                          disabled={adminLoginLoading}
+                          onClick={() => handleGoogleAuth('admin')}
+                          className="w-full rounded-lg bg-brand-cyan text-white dark:text-slate-950 hover:bg-brand-cyan-light py-2 px-3 font-extrabold text-[11px] cursor-pointer transition-colors"
+                        >
+                          {t('تسجيل الدخول بحساب Google الآن ←', 'Sign in with Google Now →')}
+                        </button>
+                      )}
                     </div>
                   )}
 
@@ -2209,16 +2391,6 @@ function AcademyApp() {
                     {adminLoginLoading ? t('جاري تسجيل الدخول...', 'Signing in...') : t('تسجيل الدخول كمدير', 'Login as Manager')}
                   </button>
 
-                  {dbService.isRealFirebase() && (
-                    <button
-                      type="button"
-                      onClick={() => handleGoogleAuth('admin')}
-                      className="w-full rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-800 dark:text-white py-2.5 font-bold transition-all cursor-pointer text-xs"
-                    >
-                      🔐 {t('الدخول بحساب Google (المدير)', 'Sign in with Google (Manager)')}
-                    </button>
-                  )}
-
                   <div className="text-center pt-2 text-[10px] text-slate-500 border-t border-slate-200 dark:border-slate-900/60">
                     <p>{t('يتم التحقق من بريد المدير وصلاحياته في قاعدة البيانات فور تسجيل الدخول.', 'Manager email and permissions are strictly verified upon login.')}</p>
                   </div>
@@ -2229,8 +2401,8 @@ function AcademyApp() {
             {/* TAB 2: STUDENT LOGIN & REGISTRATION */}
             {authTab === 'student' && (
               <>
-                <div className="text-center mb-5">
-                  <span className="inline-flex h-11 w-11 items-center justify-center rounded-xl bg-brand-cyan/10 border border-brand-cyan/20 text-xl mx-auto mb-2">
+                <div className="text-center mb-4">
+                  <span className="inline-flex h-10 w-10 items-center justify-center rounded-xl bg-brand-cyan/10 border border-brand-cyan/20 text-lg mx-auto mb-1.5">
                     {studentAuthMode === 'login' ? '🔑' : '📝'}
                   </span>
                   <h3 className="text-lg font-black text-slate-900 dark:text-white">
@@ -2245,7 +2417,27 @@ function AcademyApp() {
                   </p>
                 </div>
 
-                <form onSubmit={handleStudentAuthSubmit} className="space-y-4 text-xs text-slate-700 dark:text-slate-300">
+                {dbService.isRealFirebase() && (
+                  <div className="mb-4 space-y-2.5">
+                    <button
+                      type="button"
+                      onClick={() => handleGoogleAuth('student')}
+                      className="w-full rounded-xl bg-slate-900 dark:bg-white text-white dark:text-slate-950 hover:opacity-90 py-2.5 px-4 font-extrabold transition-all cursor-pointer shadow-md text-xs flex items-center justify-center gap-2"
+                    >
+                      <span>🎓</span>
+                      <span>{t('المتابعة بحساب Google', 'Continue with Google')}</span>
+                    </button>
+                    <div className="relative flex items-center py-1">
+                      <div className="flex-grow border-t border-slate-200 dark:border-slate-800" />
+                      <span className="mx-3 shrink-0 text-[10px] font-bold text-slate-400">
+                        {t('أو بالبريد الإلكتروني وكلمة المرور', 'Or with Email & Password')}
+                      </span>
+                      <div className="flex-grow border-t border-slate-200 dark:border-slate-800" />
+                    </div>
+                  </div>
+                )}
+
+                <form onSubmit={handleStudentAuthSubmit} className="space-y-3.5 text-xs text-slate-700 dark:text-slate-300">
                   {studentAuthSuccess && (
                     <div className="rounded-xl bg-amber-500/10 border border-amber-500/30 p-3.5 text-amber-800 dark:text-amber-200 space-y-2 text-[11px]">
                       <div className="flex items-center gap-1.5 font-extrabold text-amber-700 dark:text-amber-300">
@@ -2271,10 +2463,19 @@ function AcademyApp() {
                         ? 'bg-amber-500/10 border-amber-500/30 text-amber-700 dark:text-amber-300'
                         : 'bg-red-500/10 border-red-500/20 text-red-600 dark:text-red-400'
                     }`}>
-                      <div className="flex items-center gap-1.5">
-                        <ShieldAlert className="h-4 w-4 shrink-0" />
+                      <div className="flex items-start gap-1.5">
+                        <ShieldAlert className="h-4 w-4 shrink-0 mt-0.5" />
                         <span>{studentAuthError}</span>
                       </div>
+                      {studentProviderDisabled && dbService.isRealFirebase() && (
+                        <button
+                          type="button"
+                          onClick={() => handleGoogleAuth('student')}
+                          className="w-full rounded-lg bg-brand-cyan text-white dark:text-slate-950 hover:bg-brand-cyan-light py-2 px-3 font-extrabold text-[11px] cursor-pointer transition-colors"
+                        >
+                          {t('المتابعة بحساب Google الآن ←', 'Continue with Google Now →')}
+                        </button>
+                      )}
                       {studentAccountStatus && (
                         <a
                           href={`https://wa.me/201010298878?text=${encodeURIComponent('مرحباً، أستفسر عن حالة حسابي في منصة MOHAMED ELJOKER.')}`}
@@ -2394,16 +2595,6 @@ function AcademyApp() {
                       ? t('الدخول إلى المنصة الجامعية', 'Login as Student') 
                       : t('تسجيل حساب طالب جديد', 'Register New Student')}
                   </button>
-
-                  {dbService.isRealFirebase() && (
-                    <button
-                      type="button"
-                      onClick={() => handleGoogleAuth('student')}
-                      className="w-full rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-800 dark:text-white py-2.5 font-bold transition-all cursor-pointer text-xs"
-                    >
-                      🎓 {t('المتابعة بحساب Google', 'Continue with Google')}
-                    </button>
-                  )}
 
                   <div className="text-center pt-3 border-t border-slate-200 dark:border-slate-800/60 flex justify-between text-[11px] text-slate-500 dark:text-slate-400">
                     {studentAuthMode === 'login' ? (

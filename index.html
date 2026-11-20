@@ -21,9 +21,10 @@
           if (p) {
             var q = params.get('q');
             var cleanSearch = q ? '?' + q.replace(/~and~/g, '&') : '';
-            var target = p.startsWith('/') ? p : '/' + p;
+            var rawTarget = p.startsWith('/') ? p : '/' + p;
+            var target = rawTarget.length > 1 ? rawTarget.replace(/\/+$/, '') : '';
             var basePath = l.pathname.endsWith('/') ? l.pathname.slice(0, -1) : l.pathname;
-            window.history.replaceState(null, null, basePath + target + cleanSearch + l.hash);
+            window.history.replaceState(null, null, (basePath + (target || '/')) + cleanSearch + l.hash);
           }
         }
       }(window.location));

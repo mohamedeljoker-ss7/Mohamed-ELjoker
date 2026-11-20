@@ -57,6 +57,8 @@ function AcademyApp() {
   const [adminPassword, setAdminPassword] = useState<string>('');
   const [loginError, setLoginError] = useState<string>('');
   const [adminProviderDisabled, setAdminProviderDisabled] = useState<boolean>(false);
+  const [adminUnauthorizedDomain, setAdminUnauthorizedDomain] = useState<string>('');
+  const [adminCanUseRedirect, setAdminCanUseRedirect] = useState<boolean>(false);
   const [adminResetSuccess, setAdminResetSuccess] = useState<string>('');
   const [adminLoginLoading, setAdminLoginLoading] = useState<boolean>(false);
 
@@ -68,6 +70,9 @@ function AcademyApp() {
   const [studentAuthForm, setStudentAuthForm] = useState({ name: '', email: '', password: '', phone: '', grade: 'year1', semester: 'term1', department: 'IT' });
   const [studentAuthError, setStudentAuthError] = useState<string>('');
   const [studentProviderDisabled, setStudentProviderDisabled] = useState<boolean>(false);
+  const [studentUnauthorizedDomain, setStudentUnauthorizedDomain] = useState<string>('');
+  const [studentCanUseRedirect, setStudentCanUseRedirect] = useState<boolean>(false);
+  const [studentAuthLoading, setStudentAuthLoading] = useState<boolean>(false);
   const [studentAuthSuccess, setStudentAuthSuccess] = useState<string>('');
   const [studentAccountStatus, setStudentAccountStatus] = useState<string>('');
 
@@ -169,6 +174,35 @@ function AcademyApp() {
 
   // Synchronize on mount and handle direct url access routing
   useEffect(() => {
+    authService.consumeGoogleRedirectResult().then((redirectOutcome) => {
+      if (!redirectOutcome.handled || !redirectOutcome.result) return;
+      const res = redirectOutcome.result;
+      if (res.success && (res.admin || res.user?.role === 'admin')) {
+        setIsAdminLoggedIn(true);
+        setIsStudentLoggedIn(false);
+        setIsAdminLoginOpen(false);
+        setIsStudentAuthOpen(false);
+        handleNavigate('home');
+      } else if (res.success && res.user) {
+        setIsStudentLoggedIn(true);
+        setIsAdminLoggedIn(false);
+        setIsStudentAuthOpen(false);
+        setIsAdminLoginOpen(false);
+        handleNavigate('student-panel');
+      } else if (redirectOutcome.mode === 'admin') {
+        setAuthTab('teacher');
+        setAdminUnauthorizedDomain(res.blockedDomain || '');
+        setLoginError(res.error || 'تعذر إتمام تسجيل الدخول عبر Google.');
+        setIsAdminLoginOpen(true);
+      } else {
+        setAuthTab('student');
+        if (res.accountStatus) setStudentAccountStatus(res.accountStatus);
+        setStudentUnauthorizedDomain(res.blockedDomain || '');
+        setStudentAuthError(res.error || 'تعذر إتمام تسجيل الدخول عبر Google.');
+        setIsStudentAuthOpen(true);
+      }
+    }).catch(() => {});
+
     const unsubAuth = authService.listenToAuthState((user) => {
       if (user) {
         if (user.role === 'admin') {
@@ -413,9 +447,13 @@ function AcademyApp() {
     setIsAdminLoginOpen(false);
     setLoginError('');
     setAdminProviderDisabled(false);
+    setAdminUnauthorizedDomain('');
+    setAdminCanUseRedirect(false);
     setAdminResetSuccess('');
     setStudentAuthError('');
     setStudentProviderDisabled(false);
+    setStudentUnauthorizedDomain('');
+    setStudentCanUseRedirect(false);
     setStudentAuthSuccess('');
     setStudentAccountStatus('');
     setIsStudentAuthOpen(true);
@@ -426,9 +464,13 @@ function AcademyApp() {
     setIsStudentAuthOpen(false);
     setLoginError('');
     setAdminProviderDisabled(false);
+    setAdminUnauthorizedDomain('');
+    setAdminCanUseRedirect(false);
     setAdminResetSuccess('');
     setStudentAuthError('');
     setStudentProviderDisabled(false);
+    setStudentUnauthorizedDomain('');
+    setStudentCanUseRedirect(false);
     setStudentAuthSuccess('');
     setStudentAccountStatus('');
     setIsAdminLoginOpen(true);
@@ -578,6 +620,8 @@ function AcademyApp() {
     e.preventDefault();
     setLoginError('');
     setAdminProviderDisabled(false);
+    setAdminUnauthorizedDomain('');
+    setAdminCanUseRedirect(false);
     setAdminResetSuccess('');
 
     const cleanEmail = adminEmail.trim().toLowerCase();
@@ -604,6 +648,8 @@ function AcademyApp() {
         setAdminPassword('');
         setLoginError('');
         setAdminProviderDisabled(false);
+        setAdminUnauthorizedDomain('');
+        setAdminCanUseRedirect(false);
         setAdminResetSuccess('');
         setStudentAuthError('');
         if (dbService.isRealFirebase()) {
@@ -616,6 +662,7 @@ function AcademyApp() {
         handleNavigate('home');
       } else {
         setAdminProviderDisabled(res.errorCode === 'auth/operation-not-allowed');
+        setAdminUnauthorizedDomain(res.blockedDomain || '');
         setLoginError(res.error || (language === 'ar' ? 'فشل تسجيل الدخول. يرجى التأكد من البريد الإلكتروني وكلمة المرور.' : 'Authentication Failed'));
       }
     } catch {
@@ -655,13 +702,22 @@ function AcademyApp() {
   };
 
   const handleGoogleAuth = async (mode: 'admin' | 'student') => {
+    if ((mode === 'admin' && adminLoginLoading) || (mode === 'student' && studentAuthLoading)) {
+      return;
+    }
     setLoginError('');
     setAdminResetSuccess('');
+    setAdminUnauthorizedDomain('');
+    setAdminCanUseRedirect(false);
     setStudentAuthError('');
     setStudentAuthSuccess('');
     setStudentAccountStatus('');
+    setStudentUnauthorizedDomain('');
+    setStudentCanUseRedirect(false);
     if (mode === 'admin') {
       setAdminLoginLoading(true);
+    } else {
+      setStudentAuthLoading(true);
     }
     try {
       const res = await authService.loginWithGoogle(mode);
@@ -686,9 +742,13 @@ function AcademyApp() {
         handleNavigate('student-panel');
       } else {
         if (mode === 'admin') {
+          setAdminUnauthorizedDomain(res.blockedDomain || '');
+          setAdminCanUseRedirect(Boolean(res.canUseRedirect));
           setLoginError(res.error || t('تعذر تسجيل الدخول عبر Google.', 'Google login failed.'));
         } else {
           if (res.accountStatus) setStudentAccountStatus(res.accountStatus);
+          setStudentUnauthorizedDomain(res.blockedDomain || '');
+          setStudentCanUseRedirect(Boolean(res.canUseRedirect));
           setStudentAuthError(res.error || t('تعذر تسجيل الدخول عبر Google.', 'Google login failed.'));
         }
       }
@@ -699,7 +759,24 @@ function AcademyApp() {
     } finally {
       if (mode === 'admin') {
         setAdminLoginLoading(false);
+      } else {
+        setStudentAuthLoading(false);
       }
+    }
+  };
+
+  const handleGoogleRedirectFallback = async (mode: 'admin' | 'student') => {
+    if (mode === 'admin') setAdminLoginLoading(true);
+    else setStudentAuthLoading(true);
+    try {
+      const res = await authService.loginWithGoogleRedirect(mode);
+      if (!res.success) {
+        if (mode === 'admin') setLoginError(res.error || t('تعذر فتح صفحة Google.', 'Failed to redirect to Google.'));
+        else setStudentAuthError(res.error || t('تعذر فتح صفحة Google.', 'Failed to redirect to Google.'));
+      }
+    } finally {
+      if (mode === 'admin') setAdminLoginLoading(false);
+      else setStudentAuthLoading(false);
     }
   };
 
@@ -722,8 +799,11 @@ function AcademyApp() {
 
   const handleStudentAuthSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (studentAuthLoading) return;
     setStudentAuthError('');
     setStudentAuthSuccess('');
+    setStudentUnauthorizedDomain('');
+    setStudentCanUseRedirect(false);
     
     const name = sanitizeInput(studentAuthForm.name);
     const email = studentAuthForm.email.trim().toLowerCase();
@@ -750,6 +830,7 @@ function AcademyApp() {
       return;
     }
     
+    setStudentAuthLoading(true);
     try {
       setStudentAccountStatus('');
       setStudentProviderDisabled(false);
@@ -772,6 +853,7 @@ function AcademyApp() {
             setStudentAccountStatus(res.accountStatus);
           }
           setStudentProviderDisabled(res.errorCode === 'auth/operation-not-allowed');
+          setStudentUnauthorizedDomain(res.blockedDomain || '');
           setStudentAuthError(res.error || t('خطأ في تسجيل الدخول. تأكد من صحة البيانات.', 'Authentication failed. Please verify inputs.'));
         }
       } else {
@@ -793,6 +875,8 @@ function AcademyApp() {
           handleNavigate('student-panel');
         } else {
           const msg = res.error || '';
+          setStudentProviderDisabled(res.errorCode === 'auth/operation-not-allowed');
+          setStudentUnauthorizedDomain(res.blockedDomain || '');
           if (msg.includes('Pending') || msg.includes('مراجعة') || msg.includes('قيد')) {
             setStudentAccountStatus('pending');
             setStudentAuthSuccess(msg);
@@ -803,6 +887,8 @@ function AcademyApp() {
       }
     } catch (err: any) {
       setStudentAuthError(err.message || 'Error executing action');
+    } finally {
+      setStudentAuthLoading(false);
     }
   };
 
@@ -2328,6 +2414,29 @@ function AcademyApp() {
                         <ShieldAlert className="h-4 w-4 shrink-0 mt-0.5" />
                         <span>{loginError}</span>
                       </div>
+                      {adminUnauthorizedDomain && (
+                        <div className="rounded-lg bg-slate-950/5 dark:bg-slate-900/80 border border-red-500/20 p-2.5 text-[10px] font-medium text-slate-700 dark:text-slate-200 space-y-1">
+                          <p className="font-bold">
+                            {t('خطوة مطلوبة لتشغيل الدخول بعد النشر:', 'Required setup for deployed domain:')}
+                          </p>
+                          <p>
+                            {t('افتح Firebase Console ← Authentication ← Settings ← Authorized domains وأضف النطاق:', 'Open Firebase Console → Authentication → Settings → Authorized domains and add:')}
+                          </p>
+                          <code className="block rounded bg-slate-200/80 dark:bg-slate-950 px-2 py-1 font-mono text-[10px] text-brand-cyan select-all">
+                            {adminUnauthorizedDomain}
+                          </code>
+                        </div>
+                      )}
+                      {adminCanUseRedirect && dbService.isRealFirebase() && (
+                        <button
+                          type="button"
+                          disabled={adminLoginLoading}
+                          onClick={() => handleGoogleRedirectFallback('admin')}
+                          className="w-full rounded-lg bg-slate-900 dark:bg-white text-white dark:text-slate-950 hover:opacity-90 py-2 px-3 font-extrabold text-[11px] cursor-pointer transition-colors disabled:opacity-60"
+                        >
+                          {t('المتابعة عبر إعادة التوجيه (Google Redirect) ←', 'Continue via Google Redirect →')}
+                        </button>
+                      )}
                       {adminProviderDisabled && dbService.isRealFirebase() && (
                         <button
                           type="button"
@@ -2421,11 +2530,12 @@ function AcademyApp() {
                   <div className="mb-4 space-y-2.5">
                     <button
                       type="button"
+                      disabled={studentAuthLoading}
                       onClick={() => handleGoogleAuth('student')}
-                      className="w-full rounded-xl bg-slate-900 dark:bg-white text-white dark:text-slate-950 hover:opacity-90 py-2.5 px-4 font-extrabold transition-all cursor-pointer shadow-md text-xs flex items-center justify-center gap-2"
+                      className="w-full rounded-xl bg-slate-900 dark:bg-white text-white dark:text-slate-950 hover:opacity-90 py-2.5 px-4 font-extrabold transition-all cursor-pointer shadow-md text-xs flex items-center justify-center gap-2 disabled:opacity-60"
                     >
                       <span>🎓</span>
-                      <span>{t('المتابعة بحساب Google', 'Continue with Google')}</span>
+                      <span>{studentAuthLoading ? t('جاري الاتصال بـ Google...', 'Connecting to Google...') : t('المتابعة بحساب Google', 'Continue with Google')}</span>
                     </button>
                     <div className="relative flex items-center py-1">
                       <div className="flex-grow border-t border-slate-200 dark:border-slate-800" />
@@ -2467,11 +2577,35 @@ function AcademyApp() {
                         <ShieldAlert className="h-4 w-4 shrink-0 mt-0.5" />
                         <span>{studentAuthError}</span>
                       </div>
+                      {studentUnauthorizedDomain && (
+                        <div className="rounded-lg bg-slate-950/5 dark:bg-slate-900/80 border border-red-500/20 p-2.5 text-[10px] font-medium text-slate-700 dark:text-slate-200 space-y-1">
+                          <p className="font-bold">
+                            {t('خطوة مطلوبة لتشغيل الدخول بعد النشر:', 'Required setup for deployed domain:')}
+                          </p>
+                          <p>
+                            {t('افتح Firebase Console ← Authentication ← Settings ← Authorized domains وأضف النطاق:', 'Open Firebase Console → Authentication → Settings → Authorized domains and add:')}
+                          </p>
+                          <code className="block rounded bg-slate-200/80 dark:bg-slate-950 px-2 py-1 font-mono text-[10px] text-brand-cyan select-all">
+                            {studentUnauthorizedDomain}
+                          </code>
+                        </div>
+                      )}
+                      {studentCanUseRedirect && dbService.isRealFirebase() && (
+                        <button
+                          type="button"
+                          disabled={studentAuthLoading}
+                          onClick={() => handleGoogleRedirectFallback('student')}
+                          className="w-full rounded-lg bg-slate-900 dark:bg-white text-white dark:text-slate-950 hover:opacity-90 py-2 px-3 font-extrabold text-[11px] cursor-pointer transition-colors disabled:opacity-60"
+                        >
+                          {t('المتابعة عبر إعادة التوجيه (Google Redirect) ←', 'Continue via Google Redirect →')}
+                        </button>
+                      )}
                       {studentProviderDisabled && dbService.isRealFirebase() && (
                         <button
                           type="button"
+                          disabled={studentAuthLoading}
                           onClick={() => handleGoogleAuth('student')}
-                          className="w-full rounded-lg bg-brand-cyan text-white dark:text-slate-950 hover:bg-brand-cyan-light py-2 px-3 font-extrabold text-[11px] cursor-pointer transition-colors"
+                          className="w-full rounded-lg bg-brand-cyan text-white dark:text-slate-950 hover:bg-brand-cyan-light py-2 px-3 font-extrabold text-[11px] cursor-pointer transition-colors disabled:opacity-60"
                         >
                           {t('المتابعة بحساب Google الآن ←', 'Continue with Google Now →')}
                         </button>
@@ -2589,11 +2723,14 @@ function AcademyApp() {
 
                   <button
                     type="submit"
-                    className="w-full rounded-xl bg-brand-cyan text-white dark:text-slate-950 hover:bg-brand-cyan-light py-3 font-bold transition-all cursor-pointer shadow-md text-xs"
+                    disabled={studentAuthLoading}
+                    className="w-full rounded-xl bg-brand-cyan text-white dark:text-slate-950 hover:bg-brand-cyan-light py-3 font-bold transition-all cursor-pointer shadow-md text-xs disabled:opacity-60"
                   >
-                    {studentAuthMode === 'login' 
-                      ? t('الدخول إلى المنصة الجامعية', 'Login as Student') 
-                      : t('تسجيل حساب طالب جديد', 'Register New Student')}
+                    {studentAuthLoading
+                      ? t('جاري التحقق...', 'Authenticating...')
+                      : (studentAuthMode === 'login'
+                        ? t('الدخول إلى المنصة الجامعية', 'Login as Student')
+                        : t('تسجيل حساب طالب جديد', 'Register New Student'))}
                   </button>
 
                   <div className="text-center pt-3 border-t border-slate-200 dark:border-slate-800/60 flex justify-between text-[11px] text-slate-500 dark:text-slate-400">

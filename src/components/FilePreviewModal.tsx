@@ -6,7 +6,7 @@ import { formatBytes } from '../utils/firebaseUploadService';
 import { getFileFromFirestoreChunks, getFirestoreMediaMeta } from '../utils/firestoreMediaStorage';
 import { getFileFromIndexedDB, triggerFileDownload } from '../utils/videoStorage';
 import {
-  X, Download, Copy, Check, Loader2, AlertCircle, FileText,
+  X, Download, Copy, Check, Loader2, AlertCircle, FileText, ExternalLink,
   Image as ImageIcon, Video as VideoIcon, FileSpreadsheet, Code2, Archive, File
 } from 'lucide-react';
 
@@ -25,15 +25,31 @@ interface FilePreviewModalProps {
   onCopied?: (message: string) => void;
 }
 
+function safeDecodeUrl(raw?: string): string {
+  if (!raw) return '';
+  try {
+    return decodeURIComponent(raw);
+  } catch {
+    return raw;
+  }
+}
+
+function extractDataUrlMime(rawUrl?: string): string {
+  if (!rawUrl || !rawUrl.startsWith('data:')) return '';
+  const match = rawUrl.match(/^data:([^;,]+)[;,]/i);
+  return match ? match[1].toLowerCase() : '';
+}
+
 function detectKindFromHintOrStrings(
   hint?: PreviewFileType,
   url?: string,
   fileName?: string,
   mimeType?: string
 ): PreviewFileType {
-  if (hint && hint !== 'other') return hint;
-  const combined = `${fileName || ''} ${url || ''}`.split('?')[0].toLowerCase();
-  const mime = (mimeType || '').toLowerCase();
+  const decodedUrl = safeDecodeUrl(url).split('?')[0].split('#')[0];
+  const combined = `${fileName || ''} ${decodedUrl}`.toLowerCase();
+  const dataMime = extractDataUrlMime(url);
+  const mime = (mimeType || dataMime || '').toLowerCase();
 
   if (
     mime.startsWith('video/') ||
@@ -41,12 +57,6 @@ function detectKindFromHintOrStrings(
     /\.(mp4|webm|mov|m3u8)$/i.test(combined)
   ) {
     return 'video';
-  }
-  if (mime === 'application/pdf' || /\.pdf$/i.test(combined)) {
-    return 'pdf';
-  }
-  if (mime.startsWith('image/') || /^data:image\//i.test(url || '') || /\.(jpg|jpeg|png|webp|gif|svg|bmp|ico)$/i.test(combined)) {
-    return 'image';
   }
   if (
     mime.includes('wordprocessingml') ||
@@ -61,6 +71,12 @@ function detectKindFromHintOrStrings(
     /\.pptx?$/i.test(combined)
   ) {
     return 'ppt';
+  }
+  if (mime === 'application/pdf' || /\.pdf$/i.test(combined)) {
+    return 'pdf';
+  }
+  if (mime.startsWith('image/') || /^data:image\//i.test(url || '') || /\.(jpg|jpeg|png|webp|gif|svg|bmp|ico)$/i.test(combined)) {
+    return 'image';
   }
   if (
     mime.includes('zip') ||
@@ -79,6 +95,7 @@ function detectKindFromHintOrStrings(
   ) {
     return 'code';
   }
+  if (hint && hint !== 'other') return hint;
   return 'other';
 }
 
@@ -235,12 +252,14 @@ export const FilePreviewModal: React.FC<FilePreviewModalProps> = ({ item, onClos
         }
       })();
     } else if (rawUrl.startsWith('blob:') || rawUrl.startsWith('data:')) {
-      if (initialKind === 'code') {
+      if (initialKind === 'code' || initialKind === 'other') {
         setLoading(true);
         fetch(rawUrl)
           .then(res => res.blob())
           .then(blob => resolveBlobContent(blob, item.fileName, blob.type, blob.size))
-          .catch(() => {})
+          .catch(() => {
+            if (active) setResolvedObjectUrl(rawUrl);
+          })
           .finally(() => { if (active) setLoading(false); });
       } else {
         setResolvedObjectUrl(rawUrl);
@@ -248,7 +267,14 @@ export const FilePreviewModal: React.FC<FilePreviewModalProps> = ({ item, onClos
       }
     } else {
       // Remote HTTP(S) URL
-      if (initialKind === 'code') {
+      const isExternalDocOrMedia =
+        rawUrl.includes('drive.google.com') ||
+        rawUrl.includes('docs.google.com') ||
+        rawUrl.includes('youtube.com') ||
+        rawUrl.includes('youtu.be') ||
+        rawUrl.includes('vimeo.com');
+
+      if (!isExternalDocOrMedia && (initialKind === 'code' || initialKind === 'other')) {
         setLoading(true);
         fetch(rawUrl)
           .then(res => {
@@ -424,30 +450,53 @@ export const FilePreviewModal: React.FC<FilePreviewModalProps> = ({ item, onClos
                 className="max-h-[66vh] max-w-full object-contain rounded-lg shadow-sm"
               />
             </div>
-          ) : resolvedKind === 'pdf' ? (
-            <div className="space-y-3">
-              <div className="rounded-xl overflow-hidden border border-slate-200 dark:border-slate-800 bg-white">
-                <iframe
-                  src={resolvedObjectUrl || formatPdfEmbedUrl(cleanUrl)}
-                  title={displayName}
-                  className="w-full h-[64vh] border-none bg-white"
-                />
+          ) : resolvedKind === 'pdf' ? (() => {
+            const pdfEmbedSrc = resolvedObjectUrl || formatPdfEmbedUrl(cleanUrl);
+            const openExternalHref = resolvedObjectUrl || (/^https?:\/\//i.test(cleanUrl) ? cleanUrl : '');
+            return (
+              <div className="space-y-3">
+                <div className="rounded-xl overflow-hidden border border-slate-200 dark:border-slate-800 bg-white">
+                  <object
+                    data={pdfEmbedSrc}
+                    type="application/pdf"
+                    className="w-full h-[64vh] bg-white"
+                  >
+                    <iframe
+                      src={pdfEmbedSrc}
+                      title={displayName}
+                      className="w-full h-[64vh] border-none bg-white"
+                    />
+                  </object>
+                </div>
+                <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 px-3.5 py-2.5 text-xs">
+                  <span className="text-slate-600 dark:text-slate-400">
+                    {t('إذا لم يظهر مستند PDF على متصفح الهاتف، استخدم زر الفتح في نافذة جديدة أو التحميل المباشر.', 'If inline PDF rendering is restricted on your browser, open in a new tab or download it directly.')}
+                  </span>
+                  <div className="flex flex-wrap items-center gap-2">
+                    {openExternalHref && (
+                      <a
+                        href={openExternalHref}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-200 dark:bg-slate-800 text-slate-800 dark:text-slate-200 font-bold hover:bg-slate-300 dark:hover:bg-slate-700"
+                      >
+                        <ExternalLink className="h-3.5 w-3.5" />
+                        <span>{t('فتح في نافذة جديدة', 'Open in New Tab')}</span>
+                      </a>
+                    )}
+                    <button
+                      type="button"
+                      onClick={handleDownload}
+                      className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-brand-cyan/15 text-brand-cyan font-bold hover:bg-brand-cyan/25 cursor-pointer"
+                    >
+                      <Download className="h-3.5 w-3.5" />
+                      <span>{t('تنزيل PDF', 'Download PDF')}</span>
+                    </button>
+                  </div>
+                </div>
               </div>
-              <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 px-3.5 py-2.5 text-xs">
-                <span className="text-slate-600 dark:text-slate-400">
-                  {t('إذا لم يظهر مستند PDF على متصفح الهاتف، استخدم زر التحميل لفتحه مباشرة.', 'If PDF inline rendering is blocked on your browser, click Download to open it directly.')}
-                </span>
-                <button
-                  type="button"
-                  onClick={handleDownload}
-                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-brand-cyan/15 text-brand-cyan font-bold hover:bg-brand-cyan/25 cursor-pointer"
-                >
-                  <Download className="h-3.5 w-3.5" />
-                  <span>{t('تنزيل PDF', 'Download PDF')}</span>
-                </button>
-              </div>
-            </div>
-          ) : resolvedKind === 'code' && resolvedText !== null ? (
+            );
+          })() : resolvedKind === 'code' && resolvedText !== null ? (
             <div className="rounded-xl border border-slate-200 dark:border-slate-800 overflow-hidden bg-slate-950">
               <div className="flex items-center justify-between px-4 py-2 bg-slate-900 border-b border-slate-800 text-xs text-slate-300">
                 <span className="font-mono">{displayName}</span>
@@ -472,6 +521,30 @@ export const FilePreviewModal: React.FC<FilePreviewModalProps> = ({ item, onClos
                   title={displayName}
                   className="w-full h-[64vh] border-none bg-white"
                 />
+              </div>
+              <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 px-3.5 py-2.5 text-xs">
+                <span className="text-slate-600 dark:text-slate-400">
+                  {t('في حال تعذر عرض المستند داخل العارض، يمكنك فتحه مباشرة أو تنزيله.', 'If the document viewer is blocked, open directly or download it.')}
+                </span>
+                <div className="flex flex-wrap items-center gap-2">
+                  <a
+                    href={cleanUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-200 dark:bg-slate-800 text-slate-800 dark:text-slate-200 font-bold hover:bg-slate-300 dark:hover:bg-slate-700"
+                  >
+                    <ExternalLink className="h-3.5 w-3.5" />
+                    <span>{t('فتح مباشر', 'Open Directly')}</span>
+                  </a>
+                  <button
+                    type="button"
+                    onClick={handleDownload}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-brand-cyan/15 text-brand-cyan font-bold hover:bg-brand-cyan/25 cursor-pointer"
+                  >
+                    <Download className="h-3.5 w-3.5" />
+                    <span>{t('تحميل الملف', 'Download')}</span>
+                  </button>
+                </div>
               </div>
             </div>
           ) : (

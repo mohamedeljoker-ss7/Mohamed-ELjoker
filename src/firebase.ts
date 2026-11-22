@@ -1,5 +1,5 @@
 import { initializeApp, getApps, getApp, deleteApp } from 'firebase/app';
-import { initializeFirestore, getFirestore, collection, doc, getDocs, getDoc, getDocFromServer, setDoc, updateDoc, deleteDoc, addDoc, query, where, orderBy, onSnapshot, deleteField, increment, arrayUnion } from 'firebase/firestore';
+import { initializeFirestore, getFirestore, collection, doc, getDocs, getDoc, getDocFromServer, setDoc, updateDoc, deleteDoc, addDoc, query, where, orderBy, onSnapshot, deleteField, increment, arrayUnion, writeBatch } from 'firebase/firestore';
 import { getAuth, signInWithEmailAndPassword, createUserWithEmailAndPassword, sendPasswordResetEmail, verifyPasswordResetCode, confirmPasswordReset, signOut, onAuthStateChanged, GoogleAuthProvider, signInWithPopup, signInWithRedirect, getRedirectResult, User } from 'firebase/auth';
 import firebaseAppletConfig from '../firebase-applet-config.json';
 import { Course, Category, Student, NewsItem, Article, UserReview, Message, Admin, WebsiteSettings, Teacher, Coupon, Order, Quiz, QuizSubmission, UserAuth, Assignment, AssignmentSubmission, Certificate, ChatMessage, ChatThread, LessonComment, Notification, LessonAccess, CourseAccess, CourseRequest, LectureItem, SectionItem, ExamItem, SheetItem, SheetSubmission, QuestionBankItem, OnlineExamQuestion, ExamSubmission, ScheduleItem, StudentInquiry, ActivityLogItem, SheetAnswerKeyDoc, ExamPrivateKeyDoc, ExamPrivateKeyEntry } from './types';
@@ -419,7 +419,6 @@ const markFirestoreStreamReady = () => {
 
 let cachedAuthorizedDomains: string[] | null = null;
 let cachedAuthorizedDomainsFetchedAt = 0;
-let authorizedDomainsInFlight: Promise<string[] | null> | null = null;
 
 function isHostMatchedInAuthorizedDomains(hostname: string, domains: string[]): boolean {
   const cleanHost = (hostname || '').trim().toLowerCase();
@@ -439,37 +438,30 @@ async function fetchFirebaseAuthorizedDomains(forceRefresh = false): Promise<str
   if (!forceRefresh && cachedAuthorizedDomains && (now - cachedAuthorizedDomainsFetchedAt) < 30000) {
     return cachedAuthorizedDomains;
   }
-  if (authorizedDomainsInFlight) {
-    return authorizedDomainsInFlight;
-  }
-  authorizedDomainsInFlight = (async () => {
-    const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
-    const timer = controller ? setTimeout(() => controller.abort(), 5000) : null;
-    try {
-      const res = await fetch(
-        `https://identitytoolkit.googleapis.com/v1/projects?key=${encodeURIComponent(firebaseConfig.apiKey)}`,
-        {
-          method: 'GET',
-          cache: 'no-store',
-          ...(controller ? { signal: controller.signal } : {})
-        }
-      );
-      if (!res.ok) return cachedAuthorizedDomains;
-      const json = await res.json();
-      if (Array.isArray(json?.authorizedDomains)) {
-        cachedAuthorizedDomains = json.authorizedDomains.map((d: any) => String(d || '').trim().toLowerCase()).filter(Boolean);
-        cachedAuthorizedDomainsFetchedAt = Date.now();
-        return cachedAuthorizedDomains;
+  const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
+  const timer = controller ? setTimeout(() => controller.abort(), 5000) : null;
+  try {
+    const res = await fetch(
+      `https://identitytoolkit.googleapis.com/v1/projects?key=${encodeURIComponent(firebaseConfig.apiKey)}`,
+      {
+        method: 'GET',
+        cache: 'no-store',
+        ...(controller ? { signal: controller.signal } : {})
       }
+    );
+    if (!res.ok) return cachedAuthorizedDomains;
+    const json = await res.json();
+    if (Array.isArray(json?.authorizedDomains)) {
+      cachedAuthorizedDomains = json.authorizedDomains.map((d: any) => String(d || '').trim().toLowerCase()).filter(Boolean);
+      cachedAuthorizedDomainsFetchedAt = Date.now();
       return cachedAuthorizedDomains;
-    } catch {
-      return cachedAuthorizedDomains;
-    } finally {
-      if (timer) clearTimeout(timer);
-      authorizedDomainsInFlight = null;
     }
-  })();
-  return authorizedDomainsInFlight;
+    return cachedAuthorizedDomains;
+  } catch {
+    return cachedAuthorizedDomains;
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
 }
 
 let cachedEmailPasswordEnabled: boolean | null = null;
@@ -531,84 +523,6 @@ function clearRejectedOriginValidationCache(authInstance: any): void {
   } catch {}
 }
 
-// Guard Firebase Auth 12.16.0 _PopupOperation against calling this.reject() after pendingPromise is already nulled
-const hardenedResolvers = new WeakSet<object>();
-const activePopupLifecycleByAuthKey = new Map<string, { settled: boolean }>();
-
-function getPopupLifecycleState(authInstance: any): { settled: boolean } {
-  const key = typeof authInstance?._key === 'function' ? String(authInstance._key()) : 'default';
-  let state = activePopupLifecycleByAuthKey.get(key);
-  if (!state) {
-    state = { settled: false };
-    activePopupLifecycleByAuthKey.set(key, state);
-  }
-  return state;
-}
-
-function markPopupLifecycleSettled(authInstance: any): void {
-  try {
-    const state = getPopupLifecycleState(authInstance);
-    state.settled = true;
-  } catch {}
-}
-
-function hardenAuthPopupResolver(authInstance: any): void {
-  try {
-    const resolver = authInstance?._popupRedirectResolver;
-    if (!resolver || typeof resolver !== 'object' || hardenedResolvers.has(resolver)) return;
-    hardenedResolvers.add(resolver);
-
-    if (typeof resolver._openPopup === 'function') {
-      const origOpenPopup = resolver._openPopup.bind(resolver);
-      resolver._openPopup = async function (...args: any[]) {
-        const authArg = args[0] || authInstance;
-        const state = getPopupLifecycleState(authArg);
-        state.settled = false;
-        const authWin = await origOpenPopup(...args);
-        if (authWin && typeof authWin.close === 'function') {
-          const origClose = authWin.close.bind(authWin);
-          authWin.close = () => {
-            state.settled = true;
-            return origClose();
-          };
-        }
-        return authWin;
-      };
-    }
-
-    if (typeof resolver._originValidation === 'function') {
-      const origOriginValidation = resolver._originValidation.bind(resolver);
-      resolver._originValidation = function (authArg: any) {
-        const host = typeof window !== 'undefined' ? window.location.hostname : '';
-        if (cachedAuthorizedDomains && isHostMatchedInAuthorizedDomains(host, cachedAuthorizedDomains)) {
-          return Promise.resolve();
-        }
-        const state = getPopupLifecycleState(authArg || authInstance);
-        return Promise.resolve(origOriginValidation(authArg)).catch((err: any) => {
-          clearRejectedOriginValidationCache(authArg || authInstance);
-          // If PopupOperation already resolved/rejected and closed its window, swallow late _originValidation rejection
-          // so Firebase 12.16.0 _PopupOperation.reject does not throw "INTERNAL ASSERTION FAILED: Pending promise was never set".
-          if (state.settled) {
-            return;
-          }
-          throw err;
-        });
-      };
-    }
-
-    if (typeof resolver._isIframeWebStorageSupported === 'function') {
-      const origStorageCheck = resolver._isIframeWebStorageSupported.bind(resolver);
-      resolver._isIframeWebStorageSupported = function (authArg: any, cb: (supported: boolean) => void) {
-        const state = getPopupLifecycleState(authArg || authInstance);
-        return origStorageCheck(authArg, (supported: boolean) => {
-          if (state.settled) return;
-          cb(supported);
-        });
-      };
-    }
-  } catch {}
-}
-
 if (firebaseConfig.apiKey && firebaseConfig.projectId) {
   try {
     if (!getApps().length) {
@@ -639,7 +553,6 @@ if (firebaseConfig.apiKey && firebaseConfig.projectId) {
       }
     }
     firebaseAuth = getAuth(app);
-    hardenAuthPopupResolver(firebaseAuth);
     isFirebaseConfigured = true;
     console.log("Firebase initialized successfully inside MOHAMED ELJOKER IT University Platform with database ID:", dbId || "(default)");
 
@@ -5650,9 +5563,40 @@ export const dbService = {
         throw new Error(formatCloudErrorMessage(err, 'تعذر حذف الإشعار من قاعدة البيانات السحابية.'));
       }
     }
+    knownGlobalNotifIds.delete(id);
     const current = getStorageItem<Notification[]>('notifications', []);
     const updated = current.filter(item => item.id !== id);
     setStorageItem('notifications', updated);
+  },
+
+  deleteAllNotifications: async (): Promise<number> => {
+    checkAdminWrite('delete_all_notifications', {});
+    await requireCloudWriteAuth(false);
+    let deletedCount = 0;
+
+    if (isFirebaseConfigured) {
+      try {
+        const snap = await getDocs(collection(firestoreDb, 'notifications'));
+        deletedCount = snap.size;
+        if (!snap.empty) {
+          const docs = snap.docs;
+          for (let i = 0; i < docs.length; i += 450) {
+            const chunk = docs.slice(i, i + 450);
+            const batch = writeBatch(firestoreDb);
+            chunk.forEach(d => batch.delete(d.ref));
+            await batch.commit();
+          }
+        }
+      } catch (err: any) {
+        throw new Error(formatCloudErrorMessage(err, 'تعذر حذف جميع التنبيهات من قاعدة البيانات السحابية.'));
+      }
+    } else {
+      deletedCount = getStorageItem<Notification[]>('notifications', []).length;
+    }
+
+    knownGlobalNotifIds.clear();
+    setStorageItem('notifications', []);
+    return deletedCount;
   }
 };
 
@@ -5788,24 +5732,18 @@ export const authService = {
       return { success: false, error: 'يوجد طلب تسجيل دخول مفتوح بالفعل. يرجى إتمامه أو إغلاقه أولاً.' };
     }
     const host = typeof window !== 'undefined' ? window.location.hostname : '';
-    const domains = cachedAuthorizedDomains ?? await fetchFirebaseAuthorizedDomains(true);
-    if (domains && !isHostMatchedInAuthorizedDomains(host, domains)) {
-      const refreshed = cachedAuthorizedDomains ? await fetchFirebaseAuthorizedDomains(true) : domains;
+    if (cachedAuthorizedDomains && !isHostMatchedInAuthorizedDomains(host, cachedAuthorizedDomains)) {
+      const refreshed = await fetchFirebaseAuthorizedDomains(true);
       if (refreshed && !isHostMatchedInAuthorizedDomains(host, refreshed)) {
         return { success: false, error: `النطاق الحالي (${host}) غير مضاف في Authorized domains داخل Firebase Console.` };
       }
     }
-    if (!domains && typeof navigator !== 'undefined' && navigator.onLine === false) {
-      return { success: false, error: 'لا يوجد اتصال بالإنترنت حالياً للتحقق من حساب Google.' };
-    }
     const appName = 'admin_picker_' + Date.now();
     let pickerApp: ReturnType<typeof initializeApp> | null = null;
-    let pickerAuth: any = null;
     activeGooglePopupInFlight = true;
     try {
       pickerApp = initializeApp(firebaseConfig, appName);
-      pickerAuth = getAuth(pickerApp);
-      hardenAuthPopupResolver(pickerAuth);
+      const pickerAuth = getAuth(pickerApp);
       const provider = new GoogleAuthProvider();
       provider.setCustomParameters({ prompt: 'select_account' });
       const cred = await signInWithPopup(pickerAuth, provider);
@@ -5817,7 +5755,6 @@ export const authService = {
       }
       return { success: true, name: displayName, email: cleanEmail };
     } catch (err: any) {
-      clearRejectedOriginValidationCache(pickerAuth);
       const code = String(err?.code || '');
       if (code === 'auth/popup-closed-by-user' || code === 'auth/cancelled-popup-request') {
         return { success: false, error: 'تم إغلاق نافذة اختيار حساب Google قبل الاختيار.' };
@@ -5826,12 +5763,10 @@ export const authService = {
         return { success: false, error: 'قام المتصفح بحظر النافذة المنبثقة. اسمح بالنوافذ المنبثقة أو اكتب البريد يدوياً.' };
       }
       if (code === 'auth/unauthorized-domain') {
-        cachedAuthorizedDomainsFetchedAt = 0;
         return { success: false, error: `النطاق الحالي (${host}) غير مضاف في Authorized domains داخل Firebase Console.` };
       }
       return { success: false, error: err?.message || 'تعذر قراءة بيانات الحساب من Google.' };
     } finally {
-      if (pickerAuth) markPopupLifecycleSettled(pickerAuth);
       activeGooglePopupInFlight = false;
       if (pickerApp) {
         await deleteApp(pickerApp).catch(() => {});
@@ -6813,10 +6748,9 @@ export const authService = {
     const host = typeof window !== 'undefined' ? window.location.hostname : '';
     const isTopLevelWindow = typeof window !== 'undefined' && (() => { try { return window.self === window.top; } catch { return false; } })();
 
-    // Always resolve authorizedDomains before calling signInWithPopup (prevents Firebase 12.16.0 _PopupOperation Pending promise crash on unauthorized/offline hosts)
-    const domains = cachedAuthorizedDomains ?? await fetchFirebaseAuthorizedDomains(true);
-    if (domains && !isHostMatchedInAuthorizedDomains(host, domains)) {
-      const refreshed = cachedAuthorizedDomains ? await fetchFirebaseAuthorizedDomains(true) : domains;
+    // Prevent doomed signInWithPopup race on known unauthorized domains (eliminates Firebase 12.16.0 _PopupOperation unhandled rejection)
+    if (cachedAuthorizedDomains && !isHostMatchedInAuthorizedDomains(host, cachedAuthorizedDomains)) {
+      const refreshed = await fetchFirebaseAuthorizedDomains(true);
       if (refreshed && !isHostMatchedInAuthorizedDomains(host, refreshed)) {
         return {
           success: false,
@@ -6824,22 +6758,12 @@ export const authService = {
           blockedDomain: host,
           error: isEn
             ? `Current domain (${host}) is not authorized in Firebase Console > Authentication > Settings > Authorized domains.`
-            : `النطاق الحالي (${host}) غير مضاف بعد في قائمة Authorized domains داخل Firebase Console > Authentication > Settings.`
+            : `النطاق الحالي غير مضاف بعد في قائمة Authorized domains داخل Firebase Console > Authentication > Settings.`
         };
       }
       clearRejectedOriginValidationCache(firebaseAuth);
     }
-    if (!domains && typeof navigator !== 'undefined' && navigator.onLine === false) {
-      return {
-        success: false,
-        errorCode: 'auth/network-request-failed',
-        error: isEn
-          ? 'No internet connection to reach Google Authentication.'
-          : 'لا يوجد اتصال بالإنترنت للوصول إلى خدمة مصادقة Google.'
-      };
-    }
 
-    hardenAuthPopupResolver(firebaseAuth);
     activeGooglePopupInFlight = true;
     try {
       const provider = new GoogleAuthProvider();
@@ -6880,7 +6804,7 @@ export const authService = {
           blockedDomain: host,
           error: isEn
             ? `Current domain (${host}) is not authorized in Firebase Console > Authentication > Settings > Authorized domains.`
-            : `النطاق الحالي (${host}) غير مضاف بعد في قائمة Authorized domains داخل Firebase Console > Authentication > Settings.`
+            : `النطاق الحالي غير مضاف بعد في قائمة Authorized domains داخل Firebase Console > Authentication > Settings.`
         };
       }
       if (code === 'auth/network-request-failed' || code === 'auth/internal-error') {
@@ -6903,7 +6827,6 @@ export const authService = {
       }
       return { success: false, errorCode: code, error: err?.message || (isEn ? 'Unable to sign in with Google.' : 'تعذر تسجيل الدخول عبر Google.') };
     } finally {
-      markPopupLifecycleSettled(firebaseAuth);
       activeGooglePopupInFlight = false;
     }
   },

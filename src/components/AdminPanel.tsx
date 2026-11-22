@@ -15,6 +15,7 @@ import { ResolvedImage } from './ResolvedMedia';
 import { useLanguage } from './LanguageContext';
 import { formatVideoEmbedUrl, parseVideoSource, normalizeCourseLessons } from '../utils/authAccess';
 import { CustomVideoPlayer } from './CustomVideoPlayer';
+import { FilePreviewModal, PreviewFileType, PreviewMediaItem } from './FilePreviewModal';
 import { triggerFileDownload } from '../utils/videoStorage';
 import { ACADEMIC_GRADES, ACADEMIC_SUBJECTS, getGradeName, getCourseDisplayTitle } from '../utils/gradeMatching';
 import { HERO_IT_UNIVERSITY_IMG, COURSE_PROGRAMMING_CYBER_IMG, ENG_MOHAMED_AVATAR_IMG, getCourseFallbackImage } from '../utils/platformAssets';
@@ -302,13 +303,14 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
     ).catch(() => {});
   };
 
-  const handlePreviewAdminMedia = (url: string) => {
+  const handlePreviewAdminMedia = (
+    url: string,
+    title?: string,
+    fileType?: PreviewFileType,
+    fileName?: string
+  ) => {
     if (!url) return;
-    if (/^(firestore|indexeddb|blob):/i.test(url) || /\.(mp4|webm|mov|m3u8)(\?|$)|youtube\.com|youtu\.be|vimeo\.com|drive\.google\.com/i.test(url)) {
-      setAdminVideoPreviewUrl(url);
-    } else {
-      triggerFileDownload(url, 'academic-resource');
-    }
+    setAdminMediaPreview({ url, title, fileType, fileName });
   };
 
   // Subtabs & Modal States for Exams and Assignments
@@ -435,7 +437,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
     }
   };
 
-  const [adminVideoPreviewUrl, setAdminVideoPreviewUrl] = useState<string | null>(null);
+  const [adminMediaPreview, setAdminMediaPreview] = useState<PreviewMediaItem | null>(null);
 
   // Modals / Form States
   const [isModalOpen, setIsModalOpen] = useState<boolean>(false);
@@ -456,7 +458,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
   const [unitForm, setUnitForm] = useState<{ title: string; description: string; order: number }>({ title: '', description: '', order: 1 });
   const [editingLessonUnitIndex, setEditingLessonUnitIndex] = useState<number | null>(null);
   const [editingLessonIndex, setEditingLessonIndex] = useState<number | null>(null);
-  const [lessonForm, setLessonForm] = useState<{ title: string; videoUrl: string; duration: string; type: LessonType; pdfUrl: string; wordUrl?: string; isSection?: boolean; order: number }>({ title: '', videoUrl: '', duration: '15:00', type: 'video', pdfUrl: '', wordUrl: '', isSection: false, order: 1 });
+  const [lessonForm, setLessonForm] = useState<{ id?: string; title: string; videoUrl: string; duration: string; type: LessonType; pdfUrl: string; wordUrl?: string; isSection?: boolean; order: number }>({ title: '', videoUrl: '', duration: '15:00', type: 'video', pdfUrl: '', wordUrl: '', isSection: false, order: 1 });
   const [tempAttachment, setTempAttachment] = useState<string>('');
   const [tempImageUrl, setTempImageUrl] = useState<string>('');
   const [previewCourse, setPreviewCourse] = useState<Course | null>(null);
@@ -678,7 +680,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
       // Auto-commit any active lesson draft or uploaded video if the admin uploaded/edited a lesson and clicked save course directly
       let workingUnits = (courseForm.units || []).map(u => ({ ...u, lessons: [...(u.lessons || [])] }));
       if (
-        lessonForm.title?.trim() || lessonForm.videoUrl?.trim() || lessonForm.pdfUrl?.trim()
+        lessonForm.title?.trim() || lessonForm.videoUrl?.trim() || lessonForm.pdfUrl?.trim() || lessonForm.wordUrl?.trim()
       ) {
         if (workingUnits.length === 0) {
           workingUnits.push({
@@ -703,6 +705,8 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
           duration: lessonForm.duration?.trim() || '15:00',
           type: lessonForm.type || (lessonForm.pdfUrl && !lessonForm.videoUrl ? 'pdf' : 'video'),
           pdfUrl: lessonForm.pdfUrl?.trim() || '',
+          wordUrl: lessonForm.wordUrl?.trim() || '',
+          isSection: Boolean(lessonForm.isSection) || lessonForm.type === 'word',
           order: Number(lessonForm.order) || ((targetUnit.lessons?.length || 0) + 1)
         };
         const curIdx = (editingLessonIndex !== null && editingLessonIndex >= 0 && targetUnit.lessons[editingLessonIndex]) ? editingLessonIndex : -1;
@@ -755,6 +759,8 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
             titleEn: ul.title || (ul as any).titleEn || (ul as any).titleAr || 'Lesson',
             videoUrl: ul.videoUrl || courseForm.videoUrl || '',
             pdfUrl: ul.pdfUrl || courseForm.pdfUrl || '',
+            wordUrl: ul.wordUrl || '',
+            isSection: Boolean(ul.isSection),
             duration: ul.duration || '15:00',
             type: ul.type || 'video',
             order: ul.order || (syncedLessons.length + 1)
@@ -4153,7 +4159,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
 
                     {/* STUDENT EXAM RESULTS MODAL */}
                     {selectedExamResultsQuiz && (
-                      <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-white dark:bg-slate-950/85 backdrop-blur-md animate-fadeIn">
+                      <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/75 dark:bg-slate-950/85 backdrop-blur-md animate-fadeIn">
                         <div className="w-full max-w-2xl rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950 p-6 text-slate-900 dark:text-white shadow-2xl max-h-[85vh] flex flex-col">
                           <div className="flex items-center justify-between border-b border-slate-200 dark:border-slate-800 pb-4 mb-4">
                             <div>
@@ -4430,14 +4436,22 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
                                     </div>
 
                                     {task.pdfUrl && (
-                                      <div className="mt-3">
+                                      <div className="mt-3 flex flex-wrap items-center gap-3">
+                                        <button
+                                          type="button"
+                                          onClick={() => handlePreviewAdminMedia(task.pdfUrl, task.titleAr || task.titleEn || t('ملحق التكليف', 'Assignment Attachment'))}
+                                          className="inline-flex items-center gap-1.5 rounded-lg bg-brand-cyan/10 border border-brand-cyan/30 px-2.5 py-1 text-brand-cyan hover:bg-brand-cyan/20 font-bold text-[11px] cursor-pointer"
+                                        >
+                                          <Eye className="h-3.5 w-3.5" />
+                                          <span>{t('معاينة الملف المرفق', 'Preview Attachment')}</span>
+                                        </button>
                                         <button
                                           type="button"
                                           onClick={() => triggerFileDownload(task.pdfUrl, task.titleAr || task.titleEn || 'assignment_sheet.pdf')}
-                                          className="inline-flex items-center gap-1.5 text-brand-cyan hover:underline font-bold text-[11px] cursor-pointer"
+                                          className="inline-flex items-center gap-1.5 text-slate-600 dark:text-slate-300 hover:text-brand-cyan font-bold text-[11px] cursor-pointer"
                                         >
-                                          <FileText className="h-3.5 w-3.5" />
-                                          <span>{t('عرض شيت التكليف PDF المرفق 📎', 'View attached PDF sheet')}</span>
+                                          <Download className="h-3.5 w-3.5" />
+                                          <span>{t('تنزيل', 'Download')}</span>
                                         </button>
                                       </div>
                                     )}
@@ -4558,14 +4572,24 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
 
                                       {fileUrl && (
                                         <div className="space-y-2">
-                                          <button
-                                            type="button"
-                                            onClick={() => triggerFileDownload(fileUrl, 'student_homework_solution')}
-                                            className="inline-flex items-center gap-2 rounded-xl bg-slate-50 dark:bg-slate-900 hover:bg-slate-200 dark:hover:bg-slate-800 border border-slate-200 dark:border-slate-800 px-3.5 py-2 text-brand-cyan text-xs font-bold transition-all cursor-pointer"
-                                          >
-                                            <FileText className="h-4 w-4" />
-                                            <span>{t('فتح وتنزيل ملف/صورة حل الطالب المرفقة 📄', 'View Student Assignment File/Image')}</span>
-                                          </button>
+                                          <div className="flex flex-wrap items-center gap-2">
+                                            <button
+                                              type="button"
+                                              onClick={() => handlePreviewAdminMedia(fileUrl, `${sub.studentName} - ${taskTitle}`, undefined, (sub as any).fileName)}
+                                              className="inline-flex items-center gap-2 rounded-xl bg-brand-cyan/15 border border-brand-cyan/35 px-3.5 py-2 text-brand-cyan hover:bg-brand-cyan/25 text-xs font-bold transition-all cursor-pointer"
+                                            >
+                                              <Eye className="h-4 w-4" />
+                                              <span>{t('معاينة حل الطالب', 'Preview Student File')}</span>
+                                            </button>
+                                            <button
+                                              type="button"
+                                              onClick={() => triggerFileDownload(fileUrl, (sub as any).fileName || 'student_homework_solution')}
+                                              className="inline-flex items-center gap-2 rounded-xl bg-slate-50 dark:bg-slate-900 hover:bg-slate-200 dark:hover:bg-slate-800 border border-slate-200 dark:border-slate-800 px-3.5 py-2 text-slate-700 dark:text-slate-200 text-xs font-bold transition-all cursor-pointer"
+                                            >
+                                              <Download className="h-4 w-4" />
+                                              <span>{t('تنزيل ملف الحل', 'Download Solution')}</span>
+                                            </button>
+                                          </div>
                                           {(fileUrl.startsWith('data:image/') || /\.(jpg|jpeg|png|gif|webp)(\?.*)?$/i.test(fileUrl)) && (
                                             <div className="mt-2 max-w-sm rounded-xl overflow-hidden border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900/50 p-1">
                                               <ResolvedImage src={fileUrl} alt="Student Assignment Solution" className="w-full max-h-64 object-contain rounded-lg" />
@@ -4617,7 +4641,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
 
                         {/* GRADING MODAL FOR TEACHER */}
                         {selectedSubmissionForGrading && (
-                          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-white dark:bg-slate-950/85 backdrop-blur-md animate-fadeIn">
+                          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/75 dark:bg-slate-950/85 backdrop-blur-md animate-fadeIn">
                             <div className="w-full max-w-lg rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950 p-6 text-slate-900 dark:text-white shadow-2xl">
                               <div className="flex items-center justify-between border-b border-slate-200 dark:border-slate-800 pb-4 mb-4">
                                 <div>
@@ -5323,7 +5347,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
                               <p className="text-slate-700 dark:text-slate-200 mt-1 leading-relaxed">{inq.question || inq.message}</p>
                             </div>
                             {inq.reply && (
-                              <div className="rounded-xl bg-emerald-500/10 border border-emerald-500/20 p-3 text-emerald-200">
+                              <div className="rounded-xl bg-emerald-500/10 border border-emerald-500/20 p-3 text-emerald-800 dark:text-emerald-200">
                                 <p className="font-bold text-emerald-700 dark:text-emerald-400 text-[11px] mb-1">
                                   {t('رد الإدارة:', 'Admin Reply:')} ({inq.repliedBy || 'Eng/Mohamed abdal tawab'})
                                 </p>
@@ -5579,7 +5603,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
                                       <div className="text-[11px] text-brand-cyan font-mono mt-0.5">{ord.studentPhone}</div>
                                     )}
                                   </td>
-                                  <td className="p-4 text-slate-100 font-bold text-sm">{ord.courseTitle}</td>
+                                  <td className="p-4 text-slate-900 dark:text-slate-100 font-bold text-sm">{ord.courseTitle}</td>
                                   <td className="p-4">
                                     <span className="rounded-full bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border border-emerald-500/20 px-2.5 py-0.5 text-[11px] font-bold">
                                       {t('مجاني بالكامل', '100% Free')}
@@ -6686,7 +6710,9 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
                           <span className="rounded-full px-3 py-1 text-[10px] font-bold bg-brand-cyan/20 text-brand-cyan dark:text-brand-cyan-light border border-brand-cyan/30">
                             {t('المدير العام الرئيسي · الحساب الأساسي', 'Primary Super Admin')}
                           </span>
-                          <Lock className="h-4 w-4 text-slate-400" title={t('حساب محمي لا يمكن حذفه', 'Protected primary account')} />
+                          <span title={t('حساب محمي لا يمكن حذفه', 'Protected primary account')}>
+                            <Lock className="h-4 w-4 text-slate-400" />
+                          </span>
                         </div>
                       </div>
 
@@ -6740,7 +6766,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
 
       {/* DEDICATED EDUCATIONAL CONTENT MODALS (Lectures, Sections, Exams, Sheets) */}
       {activeContentModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-white dark:bg-brand-dark/85 backdrop-blur-md p-2 sm:p-4 animate-fadeIn">
+        <div className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-slate-950/75 dark:bg-brand-dark/85 backdrop-blur-md p-2 sm:p-4 animate-fadeIn">
           <div className="relative w-full max-w-2xl rounded-2xl border border-slate-200 dark:border-cyan-500/30 bg-white dark:bg-slate-950 p-4 sm:p-6 md:p-8 shadow-2xl overflow-y-auto max-h-[90vh]">
             {/* Close Button */}
             <button
@@ -7003,7 +7029,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
 
       {/* MODAL SYSTEM (Add / Edit Forms for everything) */}
       {isModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-white dark:bg-brand-dark/80 backdrop-blur-md p-2 sm:p-4 animate-fadeIn">
+        <div className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-slate-950/75 dark:bg-brand-dark/80 backdrop-blur-md p-2 sm:p-4 animate-fadeIn">
           <div className="relative w-full max-w-3xl rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950 p-4 sm:p-6 md:p-8 shadow-2xl overflow-y-auto max-h-[90vh]">
             
             {/* Close Button */}
@@ -7222,8 +7248,10 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
                       value={courseForm.thumbnailUrl}
                       onChange={url => setCourseForm(prev => ({ ...prev, thumbnailUrl: url }))}
                       accept="image/*"
+                      fileType="image"
                       folder="images/thumbnails"
                       courseId={selectedId}
+                      onPreview={(url, meta) => handlePreviewAdminMedia(url, courseForm.titleAr || meta?.title || t('صورة الغلاف', 'Course Thumbnail'), 'image')}
                     />
                   </div>
 
@@ -7233,8 +7261,10 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
                       value={courseForm.bannerUrl || ''}
                       onChange={url => setCourseForm(prev => ({ ...prev, bannerUrl: url }))}
                       accept="image/*"
+                      fileType="image"
                       folder="images/banners"
                       courseId={selectedId}
+                      onPreview={(url, meta) => handlePreviewAdminMedia(url, courseForm.titleAr || meta?.title || t('صورة البانر', 'Banner Image'), 'image')}
                     />
                   </div>
 
@@ -7243,7 +7273,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
                       value={courseForm.videoUrl || ''}
                       onChange={(url) => setCourseForm(prev => ({ ...prev, videoUrl: url }))}
                       courseId={selectedId}
-                      onPreviewUrl={(url) => setAdminVideoPreviewUrl(url)}
+                      onPreviewUrl={(url) => handlePreviewAdminMedia(url, courseForm.titleAr || t('فيديو تعريفي للمقرر', 'Subject Intro Video'), 'video')}
                       label={t('فيديو تعريفي للمقرر', 'Subject Intro Video')}
                     />
                   </div>
@@ -7254,8 +7284,10 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
                       value={courseForm.pdfUrl || ''}
                       onChange={url => setCourseForm(prev => ({ ...prev, pdfUrl: url }))}
                       accept="application/pdf"
+                      fileType="pdf"
                       folder="pdfs"
                       courseId={selectedId}
+                      onPreview={(url, meta) => handlePreviewAdminMedia(url, courseForm.titleAr || meta?.title || t('ملخص المنهج PDF', 'Syllabus PDF'), 'pdf')}
                     />
                   </div>
                 </div>
@@ -7457,7 +7489,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
                                       }}
                                       courseId={selectedId}
                                       lessonId={lessonForm.id || 'lesson'}
-                                      onPreviewUrl={(url) => setAdminVideoPreviewUrl(url)}
+                                      onPreviewUrl={(url) => handlePreviewAdminMedia(url, lessonForm.title || t('فيديو الدرس', 'Lesson Video'), 'video')}
                                       label={t('فيديو الدرس', 'Lesson Video')}
                                     />
                                   </div>
@@ -7492,48 +7524,31 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
                                       className="w-full rounded-lg bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-2 text-slate-900 dark:text-white font-mono focus:outline-none focus:border-emerald-500"
                                     />
                                   </div>
-                                  <div className="sm:col-span-2 bg-blue-950/20 border border-blue-900/40 rounded-xl p-3 space-y-2">
-                                    <label className="block font-bold text-blue-700 dark:text-blue-300 text-xs flex items-center gap-1.5">
-                                      <span>📝</span>
-                                      <span>{t('ملف وورد للسكشن أو التقرير (.docx / .doc) - اختياري', 'Word Lab Sheet / Document (.docx / .doc) - Optional')}</span>
-                                    </label>
-                                    <div className="flex flex-col sm:flex-row gap-2">
-                                      <input
-                                        type="text"
-                                        placeholder="https://example.com/sheet.docx"
-                                        value={lessonForm.wordUrl || ""}
-                                        onChange={e => setLessonForm({ ...lessonForm, wordUrl: e.target.value })}
-                                        className="flex-1 rounded-lg bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-2 text-slate-900 dark:text-white font-mono text-[11px] focus:outline-none focus:border-blue-500"
-                                      />
-                                      <FileUploadField
-                                        label={t('رفع ملف Word (.docx / .doc)', 'Upload Word (.docx)')}
-                                        value={lessonForm.wordUrl || ""}
-                                        onChange={url => setLessonForm(prev => ({ ...prev, wordUrl: url, isSection: true }))}
-                                        accept=".doc,.docx,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-                                        folder="word_sheets"
-                                        courseId={selectedId}
-                                      />
-                                    </div>
+                                  <div className="sm:col-span-2">
+                                    <FileUploadField
+                                      label={t('ملف وورد للسكشن أو التقرير (.docx / .doc) - اختياري', 'Word Lab Sheet / Document (.docx / .doc) - Optional')}
+                                      value={lessonForm.wordUrl || ""}
+                                      onChange={url => setLessonForm(prev => ({ ...prev, wordUrl: url, isSection: url ? true : prev.isSection }))}
+                                      accept=".doc,.docx,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                                      fileType="word"
+                                      folder="word_sheets"
+                                      courseId={selectedId}
+                                      placeholder="https://example.com/sheet.docx"
+                                      onPreview={(url, meta) => handlePreviewAdminMedia(url, lessonForm.title || meta?.title || t('ملف Word للدرس', 'Lesson Word File'), 'word')}
+                                    />
                                   </div>
                                   <div className="sm:col-span-2">
-                                    <label className="block mb-1 font-semibold text-slate-900 dark:text-white">{t('رابط PDF (اختياري)', 'PDF URL (Optional)')}</label>
-                                    <div className="flex gap-1.5">
-                                      <input
-                                        type="text"
-                                        placeholder="https://example.com/file.pdf"
-                                        value={lessonForm.pdfUrl}
-                                        onChange={e => setLessonForm({ ...lessonForm, pdfUrl: e.target.value })}
-                                        className="flex-1 rounded-lg bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-2 text-slate-900 dark:text-white font-mono text-[11px] focus:outline-none focus:border-emerald-500"
-                                      />
-                                     <FileUploadField
-                                       label={t('ملف PDF للدرس (اختياري)', 'Lesson PDF File (Optional)')}
-                                       value={lessonForm.pdfUrl || ''}
-                                       onChange={url => setLessonForm(prev => ({ ...prev, pdfUrl: url }))}
-                                       accept="application/pdf"
-                                       folder="pdfs"
-                                       courseId={selectedId}
-                                     />
-                                    </div>
+                                    <FileUploadField
+                                      label={t('ملف PDF للدرس (اختياري)', 'Lesson PDF File (Optional)')}
+                                      value={lessonForm.pdfUrl || ''}
+                                      onChange={url => setLessonForm(prev => ({ ...prev, pdfUrl: url }))}
+                                      accept="application/pdf"
+                                      fileType="pdf"
+                                      folder="pdfs"
+                                      courseId={selectedId}
+                                      placeholder="https://example.com/file.pdf"
+                                      onPreview={(url, meta) => handlePreviewAdminMedia(url, lessonForm.title || meta?.title || t('ملف PDF للدرس', 'Lesson PDF File'), 'pdf')}
+                                    />
                                   </div>
                                   <div>
                                     <label className="block mb-1 font-semibold text-slate-900 dark:text-white">{t('ترتيب الدرس', 'Order')}</label>
@@ -7588,6 +7603,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
                                             setEditingLessonUnitIndex(originalUnitIdx);
                                             setEditingLessonIndex(originalLessonIdx);
                                             setLessonForm({
+                                              id: lsn.id,
                                               title: lsn.title,
                                               videoUrl: lsn.videoUrl || '',
                                               duration: lsn.duration || '45:00',
@@ -7706,7 +7722,9 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
                       value={categoryForm.imageUrl}
                       onChange={url => setCategoryForm(prev => ({ ...prev, imageUrl: url }))}
                       accept="image/*"
+                      fileType="image"
                       folder="categories"
+                      onPreview={(url, meta) => handlePreviewAdminMedia(url, categoryForm.nameAr || meta?.title || t('صورة المرحلة', 'Category Image'), 'image')}
                     />
                   </div>
                   <div>
@@ -7859,7 +7877,9 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
                       value={articleForm.imageUrl}
                       onChange={url => setArticleForm(prev => ({ ...prev, imageUrl: url }))}
                       accept="image/*"
+                      fileType="image"
                       folder="articles"
+                      onPreview={(url, meta) => handlePreviewAdminMedia(url, articleForm.titleAr || meta?.title || t('صورة المقال', 'Article Image'), 'image')}
                     />
                   </div>
                 </div>
@@ -7919,7 +7939,9 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
                       value={newsForm.imageUrl}
                       onChange={url => setNewsForm(prev => ({ ...prev, imageUrl: url }))}
                       accept="image/*"
+                      fileType="image"
                       folder="news"
+                      onPreview={(url, meta) => handlePreviewAdminMedia(url, newsForm.titleAr || meta?.title || t('صورة الإعلان', 'Announcement Image'), 'image')}
                     />
                   </div>
                 </div>
@@ -7998,7 +8020,9 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
                       value={teacherForm.imageUrl}
                       onChange={url => setTeacherForm(prev => ({ ...prev, imageUrl: url }))}
                       accept="image/*"
+                      fileType="image"
                       folder="teachers"
+                      onPreview={(url, meta) => handlePreviewAdminMedia(url, teacherForm.nameAr || meta?.title || t('صورة المشرف', 'Supervisor Photo'), 'image')}
                     />
                   </div>
                   <div>
@@ -8564,6 +8588,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
                       accept=".pdf,.doc,.docx,application/pdf,image/*"
                       folder="assignments"
                       placeholder="https://example.com/assignment.pdf"
+                      onPreview={(url, meta) => handlePreviewAdminMedia(url, assignmentTaskForm.titleAr || meta?.title || t('ملحق التكليف', 'Assignment File'), meta?.fileType)}
                     />
                   </div>
 
@@ -8684,42 +8709,12 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
         </div>
       )}
 
-      {/* Video Preview Modal */}
-      {adminVideoPreviewUrl && (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-white dark:bg-black/80 p-4 backdrop-blur-md animate-fadeIn">
-          <div className="relative w-full max-w-4xl rounded-2xl bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-4 shadow-2xl">
-            <div className="flex items-center justify-between mb-3 border-b border-slate-200 dark:border-slate-800 pb-2">
-              <h3 className="font-bold text-slate-900 dark:text-white text-sm flex items-center gap-2">
-                <span>🎬</span>
-                <span>{t('معاينة الفيديو المرفوع', 'Preview Uploaded Video')}</span>
-              </h3>
-              <button
-                type="button"
-                onClick={() => setAdminVideoPreviewUrl(null)}
-                className="rounded-lg bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 p-1.5 transition-all text-xs font-bold cursor-pointer"
-              >
-                ✕
-              </button>
-            </div>
-            <div className="rounded-xl overflow-hidden bg-black max-h-[70vh]">
-              <CustomVideoPlayer src={adminVideoPreviewUrl} />
-            </div>
-            <div className="mt-3 flex items-center justify-between gap-2 text-xs text-slate-600 dark:text-slate-400 font-mono bg-white dark:bg-slate-950 p-2.5 rounded-xl border border-slate-200 dark:border-slate-800/80">
-              <span className="truncate flex-1 select-all">{adminVideoPreviewUrl}</span>
-              <button
-                type="button"
-                onClick={() => {
-                  navigator.clipboard.writeText(adminVideoPreviewUrl);
-                  triggerNotification(t('تم نسخ رابط الفيديو!', 'Video URL copied!'));
-                }}
-                className="rounded-lg bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-brand-cyan px-3 py-1 text-[11px] font-bold transition-all shrink-0 cursor-pointer"
-              >
-                {t('نسخ الرابط', 'Copy URL')}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      {/* Universal File & Video Preview Modal */}
+      <FilePreviewModal
+        item={adminMediaPreview}
+        onClose={() => setAdminMediaPreview(null)}
+        onCopied={(msg) => triggerNotification(msg)}
+      />
 
       {/* Course Full Preview Modal (معاينة الكورس والفيديوهات) */}
       {previewCourse && (() => {
@@ -8728,7 +8723,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
         const activePreviewVideo = normCourse.videoUrl || (allLessons.length > 0 ? allLessons[0].videoUrl : '');
 
         return (
-          <div className="fixed inset-0 z-[100] flex items-center justify-center bg-white dark:bg-black/85 p-4 sm:p-6 backdrop-blur-md animate-fadeIn">
+          <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-950/75 dark:bg-black/85 p-4 sm:p-6 backdrop-blur-md animate-fadeIn">
             <div className="relative w-full max-w-5xl rounded-3xl bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-5 sm:p-6 shadow-2xl max-h-[90vh] overflow-y-auto">
               
               {/* Header */}

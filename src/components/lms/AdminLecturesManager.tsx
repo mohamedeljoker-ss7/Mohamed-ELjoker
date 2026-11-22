@@ -4,8 +4,9 @@ import { dbService } from '../../firebase';
 import { useLanguage } from '../LanguageContext';
 import { FileUploadField } from '../FileUploadField';
 import { VideoHostingUploader } from '../VideoHostingUploader';
-import { MultiFileUploadList } from './MultiFileUploadList';
+import { MultiFileUploadList, mapAttachmentToPreviewType } from './MultiFileUploadList';
 import { ResolvedImage } from '../ResolvedMedia';
+import { PreviewFileType } from '../FilePreviewModal';
 import { emitAppToast, triggerFileDownload } from '../../utils/videoStorage';
 import {
   ACADEMIC_GRADES,
@@ -33,7 +34,7 @@ interface AdminLecturesManagerProps {
     targetTitle: string,
     details?: string
   ) => void;
-  onPreviewMedia?: (url: string) => void;
+  onPreviewMedia?: (url: string, title?: string, fileType?: PreviewFileType, fileName?: string) => void;
 }
 
 export const AdminLecturesManager: React.FC<AdminLecturesManagerProps> = ({
@@ -691,7 +692,7 @@ export const AdminLecturesManager: React.FC<AdminLecturesManagerProps> = ({
                 value={form.youtubeUrl}
                 onChange={url => setForm({ ...form, youtubeUrl: url })}
                 courseId={resolveCourseMeta(form.subject, form.courseId).courseId}
-                onPreviewUrl={onPreviewMedia}
+                onPreviewUrl={onPreviewMedia ? (url => onPreviewMedia(url, form.title || t('فيديو المحاضرة', 'Lecture Video'), 'video')) : undefined}
                 onUploadingChange={busy => setFieldUploading('video', busy)}
               />
 
@@ -703,7 +704,7 @@ export const AdminLecturesManager: React.FC<AdminLecturesManagerProps> = ({
                   accept=".pdf,application/pdf"
                   fileType="pdf"
                   folder="lectures_pdf"
-                  onPreview={onPreviewMedia ? (url => onPreviewMedia(url)) : undefined}
+                  onPreview={onPreviewMedia ? ((url, meta) => onPreviewMedia(url, form.title || meta?.title || t('ملف المحاضرة PDF', 'Lecture PDF'), meta?.fileType || 'pdf')) : undefined}
                   onUploadingChange={busy => setFieldUploading('pdf', busy)}
                 />
                 <FileUploadField
@@ -714,6 +715,7 @@ export const AdminLecturesManager: React.FC<AdminLecturesManagerProps> = ({
                   fileType="ppt"
                   folder="lectures_pptx"
                   placeholder="https://.../slides.pptx"
+                  onPreview={onPreviewMedia ? ((url, meta) => onPreviewMedia(url, form.title || meta?.title || t('ملف العرض التقديمي', 'PowerPoint Slides'), meta?.fileType || 'ppt')) : undefined}
                   onUploadingChange={busy => setFieldUploading('pptx', busy)}
                 />
               </div>
@@ -724,6 +726,7 @@ export const AdminLecturesManager: React.FC<AdminLecturesManagerProps> = ({
                 onChange={files => setForm({ ...form, images: files })}
                 accept="image/*"
                 folder="lectures_images"
+                onPreview={onPreviewMedia ? ((url, meta) => onPreviewMedia(url, meta?.title || form.title, meta?.fileType || 'image', meta?.fileName)) : undefined}
                 onUploadingChange={busy => setFieldUploading('images', busy)}
               />
 
@@ -733,6 +736,7 @@ export const AdminLecturesManager: React.FC<AdminLecturesManagerProps> = ({
                 onChange={files => setForm({ ...form, attachments: files })}
                 accept=".pdf,.doc,.docx,.ppt,.pptx,.txt,.zip,.rar"
                 folder="lectures_attachments"
+                onPreview={onPreviewMedia ? ((url, meta) => onPreviewMedia(url, meta?.title || form.title, meta?.fileType, meta?.fileName)) : undefined}
                 onUploadingChange={busy => setFieldUploading('attachments', busy)}
               />
 
@@ -849,7 +853,7 @@ export const AdminLecturesManager: React.FC<AdminLecturesManagerProps> = ({
                   {onPreviewMedia && (
                     <button
                       type="button"
-                      onClick={() => onPreviewMedia(previewItem.pdfUrl!)}
+                      onClick={() => onPreviewMedia(previewItem.pdfUrl!, previewItem.title, 'pdf')}
                       className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-slate-100 dark:bg-slate-800 text-slate-800 dark:text-slate-200 text-xs font-bold cursor-pointer"
                     >
                       <Eye className="h-3.5 w-3.5 text-brand-cyan" /> {t('عرض PDF', 'View PDF')}
@@ -865,20 +869,31 @@ export const AdminLecturesManager: React.FC<AdminLecturesManagerProps> = ({
                 </>
               )}
               {previewItem.pptxUrl && (
-                <button
-                  type="button"
-                  onClick={() => triggerFileDownload(previewItem.pptxUrl!, `${previewItem.title}.pptx`)}
-                  className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-orange-600 text-white text-xs font-bold cursor-pointer"
-                >
-                  <FileSpreadsheet className="h-3.5 w-3.5" /> PowerPoint
-                </button>
+                <>
+                  {onPreviewMedia && (
+                    <button
+                      type="button"
+                      onClick={() => onPreviewMedia(previewItem.pptxUrl!, `${previewItem.title} (PowerPoint)`, 'ppt')}
+                      className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-orange-500/15 border border-orange-500/30 text-orange-700 dark:text-orange-300 text-xs font-bold cursor-pointer"
+                    >
+                      <Eye className="h-3.5 w-3.5" /> {t('معاينة PowerPoint', 'Preview PPT')}
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => triggerFileDownload(previewItem.pptxUrl!, `${previewItem.title}.pptx`)}
+                    className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-orange-600 text-white text-xs font-bold cursor-pointer"
+                  >
+                    <FileSpreadsheet className="h-3.5 w-3.5" /> {t('تحميل PowerPoint', 'Download PPT')}
+                  </button>
+                </>
               )}
               {(previewItem.youtubeUrl || previewItem.videoUrl) && (
                 <button
                   type="button"
                   onClick={() => {
                     const vUrl = previewItem.youtubeUrl || previewItem.videoUrl!;
-                    if (onPreviewMedia) onPreviewMedia(vUrl);
+                    if (onPreviewMedia) onPreviewMedia(vUrl, previewItem.title, 'video');
                     else triggerFileDownload(vUrl, `${previewItem.title}.mp4`);
                   }}
                   className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-rose-600 text-white text-xs font-bold cursor-pointer"
@@ -887,14 +902,28 @@ export const AdminLecturesManager: React.FC<AdminLecturesManagerProps> = ({
                 </button>
               )}
               {(previewItem.attachments || []).map(att => (
-                <button
-                  key={att.id}
-                  type="button"
-                  onClick={() => triggerFileDownload(att.url, att.name)}
-                  className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-slate-100 dark:bg-slate-800 text-slate-800 dark:text-slate-200 text-xs font-bold cursor-pointer"
-                >
-                  <Download className="h-3.5 w-3.5" /> {att.name}
-                </button>
+                <div key={att.id} className="inline-flex items-center rounded-xl bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 overflow-hidden">
+                  {onPreviewMedia && (
+                    <button
+                      type="button"
+                      onClick={() => onPreviewMedia(att.url, att.name, mapAttachmentToPreviewType(att.fileType), att.name)}
+                      className="inline-flex items-center gap-1.5 px-3 py-2 text-brand-cyan hover:bg-brand-cyan/10 text-xs font-bold cursor-pointer"
+                      title={t('معاينة المرفق', 'Preview attachment')}
+                    >
+                      <Eye className="h-3.5 w-3.5" />
+                      <span>{att.name}</span>
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => triggerFileDownload(att.url, att.name)}
+                    className="inline-flex items-center gap-1 px-2.5 py-2 text-slate-600 dark:text-slate-300 hover:text-brand-cyan text-xs font-bold cursor-pointer border-r border-slate-200 dark:border-slate-700"
+                    title={t('تنزيل المرفق', 'Download attachment')}
+                  >
+                    <Download className="h-3.5 w-3.5" />
+                    {!onPreviewMedia && <span>{att.name}</span>}
+                  </button>
+                </div>
               ))}
             </div>
             {(previewItem.imageUrls?.length || 0) > 0 && (

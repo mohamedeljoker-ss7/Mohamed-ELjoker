@@ -657,8 +657,9 @@ export const AdminSectionsManager: React.FC<AdminSectionsManagerProps> = ({
                   value={form.pdfUrl}
                   onChange={url => setForm({ ...form, pdfUrl: url })}
                   accept=".pdf,.doc,.docx,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                  fileType="pdf"
                   folder="sections_docs"
-                  onPreview={onPreviewMedia ? ((url, meta) => onPreviewMedia(url, form.title || meta?.title || t('دليل المعمل', 'Lab Guide'), meta?.fileType, meta?.fileName)) : undefined}
+                  onPreview={onPreviewMedia ? ((url, meta) => onPreviewMedia(url, form.title || meta?.title || t('دليل المعمل', 'Lab Guide'), meta?.fileType || 'pdf')) : undefined}
                   onUploadingChange={busy => setFieldUploading('pdf', busy)}
                 />
                 <FileUploadField
@@ -886,7 +887,7 @@ export const AdminSectionsManager: React.FC<AdminSectionsManagerProps> = ({
                   {onPreviewMedia && (
                     <button
                       type="button"
-                      onClick={() => onPreviewMedia((previewItem.pdfUrl || previewItem.fileUrl)!, previewItem.title, previewItem.pdfUrl ? 'pdf' : undefined)}
+                      onClick={() => onPreviewMedia((previewItem.pdfUrl || previewItem.fileUrl)!, previewItem.title, 'pdf')}
                       className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-slate-100 dark:bg-slate-800 text-slate-800 dark:text-slate-200 text-xs font-bold cursor-pointer"
                     >
                       <Eye className="h-3.5 w-3.5 text-brand-cyan" /> {t('معاينة دليل المعمل', 'Preview Guide')}

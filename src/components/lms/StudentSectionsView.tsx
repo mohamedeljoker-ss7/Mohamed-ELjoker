@@ -204,11 +204,13 @@ export const StudentSectionsView: React.FC<StudentSectionsViewProps> = ({
 
                   {docUrl && (
                     <>
-                      <button type="button" onClick={() => onOpenPdf(docUrl, sec.title)} className="inline-flex items-center gap-1.5 px-3 py-2 min-h-[40px] rounded-xl bg-slate-100 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-slate-800 dark:text-slate-200 text-xs font-bold cursor-pointer">
-                        <Eye className="h-3.5 w-3.5 text-brand-cyan" />
-                        <span>{isPdf ? t('معاينة PDF', 'Preview PDF') : t('معاينة الملف', 'Preview File')}</span>
-                      </button>
-                      <button type="button" onClick={() => triggerFileDownload(docUrl, isPdf ? `${sec.title}.pdf` : sec.title)} className="inline-flex items-center gap-1.5 px-3 py-2 min-h-[40px] rounded-xl bg-slate-100 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-slate-800 dark:text-slate-200 text-xs font-bold cursor-pointer">
+                      {isPdf && (
+                        <button type="button" onClick={() => onOpenPdf(docUrl, sec.title)} className="inline-flex items-center gap-1.5 px-3 py-2 min-h-[40px] rounded-xl bg-slate-100 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-slate-800 dark:text-slate-200 text-xs font-bold cursor-pointer">
+                          <Eye className="h-3.5 w-3.5 text-brand-cyan" />
+                          <span>{t('معاينة PDF', 'Preview PDF')}</span>
+                        </button>
+                      )}
+                      <button type="button" onClick={() => triggerFileDownload(docUrl, `${sec.title}.pdf`)} className="inline-flex items-center gap-1.5 px-3 py-2 min-h-[40px] rounded-xl bg-slate-100 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-slate-800 dark:text-slate-200 text-xs font-bold cursor-pointer">
                         <Download className="h-3.5 w-3.5" />
                         <span>{t('تحميل دليل المعمل', 'Download Lab Sheet')}</span>
                       </button>
@@ -223,15 +225,10 @@ export const StudentSectionsView: React.FC<StudentSectionsViewProps> = ({
                   )}
 
                   {(sec.codeFiles || []).map(cf => (
-                    <div key={cf.id} className="inline-flex items-center rounded-xl bg-emerald-500/10 border border-emerald-500/30 text-emerald-700 dark:text-emerald-300 overflow-hidden">
-                      <button type="button" onClick={() => onOpenPdf(cf.url, cf.name)} className="inline-flex items-center gap-1.5 px-3 py-2 min-h-[40px] text-xs font-bold cursor-pointer hover:bg-emerald-500/15">
-                        <Eye className="h-3.5 w-3.5" />
-                        <span>{cf.name}</span>
-                      </button>
-                      <button type="button" onClick={() => triggerFileDownload(cf.url, cf.name)} className="inline-flex items-center px-2.5 py-2 min-h-[40px] border-s border-emerald-500/30 text-xs font-bold cursor-pointer hover:bg-emerald-500/15" title={t('تحميل', 'Download')}>
-                        <Download className="h-3.5 w-3.5" />
-                      </button>
-                    </div>
+                    <button key={cf.id} type="button" onClick={() => triggerFileDownload(cf.url, cf.name)} className="inline-flex items-center gap-1.5 px-3 py-2 min-h-[40px] rounded-xl bg-emerald-500/10 border border-emerald-500/30 text-emerald-700 dark:text-emerald-300 text-xs font-bold cursor-pointer">
+                      <Code2 className="h-3.5 w-3.5" />
+                      <span>{cf.name}</span>
+                    </button>
                   ))}
 
                   {(sec.imageUrls?.length || 0) > 0 && (

@@ -6,12 +6,12 @@ import {
 import { dbService, authService, firestoreDb, firebaseAuth, waitForFirebaseAuth, isAdminEmail } from '../firebase';
 import { doc, getDoc, setDoc, onSnapshot } from 'firebase/firestore';
 import { useLanguage } from './LanguageContext';
-import { verifyCourseAccess, formatVideoEmbedUrl, normalizeCourseLessons } from '../utils/authAccess';
-import { triggerFileDownload } from '../utils/videoStorage';
+import { verifyCourseAccess, formatVideoEmbedUrl, formatPdfEmbedUrl, normalizeCourseLessons } from '../utils/authAccess';
+import { triggerFileDownload, getFileFromIndexedDB } from '../utils/videoStorage';
+import { getFileFromFirestoreChunks } from '../utils/firestoreMediaStorage';
 import { doesCourseMatchStudent, doesCourseMatchStudentGrade, ACADEMIC_GRADES, ACADEMIC_SEMESTERS, ACADEMIC_SUBJECTS, getGradeName, getSemesterName, getCourseDisplayTitle, normalizeGradeCode, normalizeSemesterCode } from '../utils/gradeMatching';
 import { SubscriptionRequiredView } from './SubscriptionRequiredView';
 import { CustomVideoPlayer } from './CustomVideoPlayer';
-import { FilePreviewModal, PreviewMediaItem } from './FilePreviewModal';
 import { getCourseFallbackImage } from '../utils/platformAssets';
 import { StudentLecturesView } from './lms/StudentLecturesView';
 import { StudentSectionsView } from './lms/StudentSectionsView';
@@ -48,6 +48,86 @@ type StudentSubTab =
   | 'chat'
   | 'profile'
   | 'notifications';
+
+const EmbeddedPdfViewer: React.FC<{ url: string; title?: string }> = ({ url, title }) => {
+  const [resolvedUrl, setResolvedUrl] = useState<string | null>(null);
+  const [isLoading, setIsLoading] = useState(false);
+
+  useEffect(() => {
+    let createdUrl: string | null = null;
+    let isSubscribed = true;
+
+    if (url.startsWith('firestore://')) {
+      setIsLoading(true);
+      const key = url.replace('firestore://', '');
+      getFileFromFirestoreChunks(key).then(blob => {
+        if (!isSubscribed) return;
+        if (blob) {
+          createdUrl = URL.createObjectURL(blob);
+          setResolvedUrl(createdUrl);
+        } else {
+          setResolvedUrl(null);
+        }
+        setIsLoading(false);
+      }).catch(err => {
+        console.error("Failed to load PDF from Firestore:", err);
+        if (isSubscribed) setIsLoading(false);
+      });
+    } else if (url.startsWith('indexeddb://')) {
+      setIsLoading(true);
+      const key = url.replace('indexeddb://', '');
+      getFileFromIndexedDB(key).then(blob => {
+        if (!isSubscribed) return;
+        if (blob) {
+          createdUrl = URL.createObjectURL(blob);
+          setResolvedUrl(createdUrl);
+        } else {
+          setResolvedUrl(null);
+        }
+        setIsLoading(false);
+      }).catch(err => {
+        console.error("Failed to load PDF from IndexedDB:", err);
+        if (isSubscribed) setIsLoading(false);
+      });
+    } else {
+      setResolvedUrl(formatPdfEmbedUrl(url));
+    }
+
+    return () => {
+      isSubscribed = false;
+      if (createdUrl) {
+        URL.revokeObjectURL(createdUrl);
+      }
+    };
+  }, [url]);
+
+  if (isLoading) {
+    return (
+      <div className="w-full h-full flex flex-col items-center justify-center bg-slate-900 text-slate-400 gap-2">
+        <Loader2 className="h-6 w-6 animate-spin text-brand-cyan" />
+        <span className="text-xs font-bold">جاري تحميل الملف...</span>
+      </div>
+    );
+  }
+
+  const finalSrc = resolvedUrl || formatPdfEmbedUrl(url);
+
+  if (!finalSrc) {
+    return (
+      <div className="w-full h-full flex items-center justify-center text-slate-500 text-xs">
+        رابط الملف المرفق فارغ.
+      </div>
+    );
+  }
+
+  return (
+    <iframe
+      src={finalSrc}
+      className="w-full h-full border-none"
+      title={title || "PDF Viewer"}
+    />
+  );
+};
 
 export const StudentDashboard: React.FC<StudentDashboardProps> = ({ onLogout, onNavigateHome }) => {
   const { language, t, direction } = useLanguage();
@@ -114,7 +194,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({ onLogout, on
   const [examSubmissions, setExamSubmissions] = useState<ExamSubmission[]>([]);
 
   const [activeVideoModal, setActiveVideoModal] = useState<{ url: string; title: string } | null>(null);
-  const [activePdfModal, setActivePdfModal] = useState<PreviewMediaItem | null>(null);
+  const [activePdfModal, setActivePdfModal] = useState<{ url: string; title: string } | null>(null);
 
   // Question Bank UI states
   const [qbSubjectFilter, setQbSubjectFilter] = useState<string>('all');
@@ -1357,67 +1437,6 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({ onLogout, on
     triggerFileDownload(cleanUrl, 'document.pdf');
   };
 
-  const handlePreviewProtectedFile = (
-    url: string | undefined | null,
-    course: Course | null | undefined,
-    fileTitle?: string,
-    fileType?: PreviewMediaItem['fileType'],
-    task?: Assignment | null
-  ) => {
-    if (!url || typeof url !== 'string' || url.trim() === '' || url === '#') {
-      setErrorMsg(t('هذا الرابط فارغ أو غير متاح حالياً.', 'This link is empty or currently unavailable.'));
-      return;
-    }
-
-    const cleanUrl = url.trim();
-    const resolvedTitle = fileTitle || task?.titleAr || task?.titleEn || course?.titleAr || t('معاينة الملف', 'File Preview');
-
-    if (
-      (currentUser && (currentUser.role === 'admin' || currentUser.role === 'teacher')) ||
-      cleanUrl.startsWith('data:') ||
-      cleanUrl.startsWith('blob:') ||
-      cleanUrl.startsWith('indexeddb://') ||
-      cleanUrl.startsWith('firestore://')
-    ) {
-      setActivePdfModal({ url: cleanUrl, title: resolvedTitle, fileType });
-      return;
-    }
-
-    const hasAnySubscription =
-      (currentUser?.purchasedCourseIds && currentUser.purchasedCourseIds.length > 0) ||
-      myCourses.length > 0 ||
-      myOrders.some(o => {
-        const st = (o.status || '').trim().toLowerCase();
-        return ['completed', 'approved', 'active', 'graded'].includes(st);
-      });
-
-    if (task) {
-      if (task.visibility === 'free' || hasAnySubscription) {
-        setActivePdfModal({ url: cleanUrl, title: resolvedTitle, fileType });
-      } else {
-        setErrorMsg(t('عفواً، يرجى تفعيل الوصول للمقررات الدراسية أولاً لمعاينة هذا الملف.', 'Please ensure your academic access is activated to preview this file.'));
-      }
-      return;
-    }
-
-    if (course) {
-      const access = verifyCourseAccess(currentUser, course, myOrders);
-      if (access.allowed || hasAnySubscription) {
-        setActivePdfModal({ url: cleanUrl, title: resolvedTitle, fileType });
-        return;
-      }
-      if (access.reason === 'not_logged_in') {
-        onLogout();
-      } else {
-        setSelectedCourse(course);
-        setActiveTab('subscription-required' as any);
-      }
-      return;
-    }
-
-    setActivePdfModal({ url: cleanUrl, title: resolvedTitle, fileType });
-  };
-
   const handleOpenCoursePlayer = (course: Course) => {
     const access = verifyCourseAccess(currentUser, course, myOrders);
     if (!access.allowed) {
@@ -2547,147 +2566,100 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({ onLogout, on
                                     </div>
                                     <span className="px-2 py-0.5 rounded bg-blue-500/15 border border-blue-500/30 text-blue-600 dark:text-blue-300 text-[10px] font-mono font-bold">DOCX</span>
                                   </div>
-                                    <div className="flex flex-wrap gap-2 pt-1">
-                                      <button
-                                        type="button"
-                                        onClick={() => handleOpenProtectedLink(activeLesson.wordUrl!, selectedCourse, "file")}
-                                        className="flex-1 rounded-xl bg-blue-600 hover:bg-blue-500 text-white px-4 py-2.5 text-xs font-bold flex items-center justify-center gap-2 cursor-pointer shadow transition-all"
-                                      >
-                                        <Download className="h-4 w-4" />
-                                        <span>{t("تحميل ملف الوورد (.docx) للسكشن", "Download Word (.docx)")}</span>
-                                      </button>
-                                      <button
-                                        type="button"
-                                        onClick={() => handlePreviewProtectedFile(activeLesson.wordUrl!, selectedCourse, activeLesson.titleAr || t('شيت السكشن العملي', 'Lab Sheet'), 'word')}
-                                        className="rounded-xl border border-blue-500/40 bg-blue-500/10 hover:bg-blue-500/20 text-blue-600 dark:text-blue-300 px-3.5 py-2.5 text-xs font-bold flex items-center justify-center gap-1.5 cursor-pointer transition-all"
-                                      >
-                                        <Eye className="h-4 w-4" />
-                                        <span>{t("معاينة أونلاين", "Preview Online")}</span>
-                                      </button>
-                                    </div>
+                                  <div className="flex flex-wrap gap-2 pt-1">
+                                    <button
+                                      type="button"
+                                      onClick={() => handleOpenProtectedLink(activeLesson.wordUrl!, selectedCourse, "file")}
+                                      className="flex-1 rounded-xl bg-blue-600 hover:bg-blue-500 text-white px-4 py-2.5 text-xs font-bold flex items-center justify-center gap-2 cursor-pointer shadow transition-all"
+                                    >
+                                      <Download className="h-4 w-4" />
+                                      <span>{t("تحميل ملف الوورد (.docx) للسكشن", "Download Word (.docx)")}</span>
+                                    </button>
+                                    <a
+                                      href={`https://docs.google.com/viewer?url=${encodeURIComponent(activeLesson.wordUrl)}&embedded=true`}
+                                      target="_blank"
+                                      rel="noopener noreferrer"
+                                      className="rounded-xl border border-blue-500/40 bg-blue-500/10 hover:bg-blue-500/20 text-blue-600 dark:text-blue-300 px-3.5 py-2.5 text-xs font-bold flex items-center justify-center gap-1.5 cursor-pointer transition-all"
+                                    >
+                                      <span>👁️</span>
+                                      <span>{t("معاينة أونلاين", "Preview Online")}</span>
+                                    </a>
                                   </div>
-                                )}
+                                </div>
+                              )}
 
-                                {activeLesson.pdfUrl ? (
-                                  <div className="rounded-2xl border border-red-200 dark:border-red-500/25 bg-red-50/70 dark:bg-red-950/20 p-4 space-y-3">
-                                    <div className="flex items-center justify-between gap-2">
-                                      <div className="flex items-center gap-2.5">
-                                        <div className="w-10 h-10 rounded-xl bg-red-600/15 border border-red-500/30 text-red-600 dark:text-red-400 flex items-center justify-center font-black text-xs shrink-0">
-                                          PDF
-                                        </div>
-                                        <div>
-                                          <span className="text-[10px] font-bold text-red-600 dark:text-red-400 uppercase tracking-wider font-mono">Lecture Notes PDF</span>
-                                          <h5 className="font-bold text-slate-900 dark:text-white text-xs">{t('مذكرة المذاكرة والشرح بصيغة PDF', 'Lecture Textbook & Notes (PDF)')}</h5>
-                                        </div>
-                                      </div>
-                                    </div>
-                                    <div className="flex flex-wrap gap-2">
-                                      <button
-                                        type="button"
-                                        onClick={() => handlePreviewProtectedFile(activeLesson.pdfUrl, selectedCourse, activeLesson.titleAr || t('ملف المحاضرة PDF', 'Lecture PDF'), 'pdf')}
-                                        className="flex-1 rounded-xl bg-brand-cyan hover:bg-brand-cyan-light text-white dark:text-slate-950 px-4 py-2.5 text-xs font-black flex items-center justify-center gap-2 cursor-pointer shadow transition-all"
-                                      >
-                                        <Eye className="h-4 w-4" />
-                                        <span>{t('معاينة الملف أونلاين الآن', 'Preview PDF Online')}</span>
-                                      </button>
-                                      <button
-                                        type="button"
-                                        onClick={() => handleOpenProtectedLink(activeLesson.pdfUrl, selectedCourse, 'pdf')}
-                                        className="rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 hover:border-brand-cyan px-4 py-2.5 text-xs text-slate-700 dark:text-slate-200 font-bold flex items-center justify-center gap-2 cursor-pointer transition-all"
-                                      >
-                                        <Download className="h-4 w-4 text-brand-cyan" />
-                                        <span>{t('تحميل PDF', 'Download PDF')}</span>
-                                      </button>
-                                    </div>
+                              {activeLesson.pdfUrl ? (
+                                <div className="space-y-4">
+                                  {/* PDF view embedded */}
+                                  <div className="w-full h-[350px] rounded-xl border border-slate-200 dark:border-slate-800 overflow-hidden bg-slate-100 dark:bg-slate-900">
+                                    <EmbeddedPdfViewer url={activeLesson.pdfUrl} title="PDF Viewer" />
                                   </div>
-                                ) : (
-                                  <p className="text-xs text-slate-500">{t('لا يوجد ملف PDF مرفق، راجع الملحقات الإضافية.', 'No direct PDF text attached.')}</p>
-                                )}
+                                  <button 
+                                    type="button"
+                                    onClick={() => handleOpenProtectedLink(activeLesson.pdfUrl, selectedCourse, 'pdf')}
+                                    className="w-full rounded-xl bg-slate-100 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 hover:bg-slate-200 dark:hover:bg-slate-800 px-4 py-3 text-xs text-brand-cyan font-bold flex items-center justify-center gap-2 cursor-pointer transition-all"
+                                  >
+                                    <Download className="h-4 w-4" />
+                                    {t('تحميل مذكرة المذاكرة والشرح والملاحظات بصيغة PDF', 'Download PDF Textbook')}
+                                  </button>
+                                </div>
+                              ) : (
+                                <p className="text-xs text-slate-500">{t('لا يوجد ملف PDF مرفق، راجع الملحقات الإضافية.', 'No direct PDF text attached.')}</p>
+                              )}
 
-                                {/* Lesson Attachments list */}
-                                {activeLesson.attachments && activeLesson.attachments.length > 0 && (
-                                  <div className="space-y-2 pt-2 border-t border-slate-200 dark:border-slate-900">
-                                    <p className="text-[10px] font-bold text-slate-500 dark:text-slate-400 font-mono uppercase tracking-wider">{t('ملفات المقرر المتاحة للتحميل:', 'Available Downloads:')}</p>
-                                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                                      {activeLesson.attachments.map((file, idx) => {
-                                        const attLabel = file.startsWith('firestore://')
-                                          ? `${t('ملف مرفق', 'Attachment')} #${idx + 1}`
-                                          : (file.split('/').pop()?.split('?')[0] || `Attachment #${idx + 1}`);
-                                        return (
-                                          <div
-                                            key={idx}
-                                            className="rounded-lg bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-900 p-2.5 flex items-center justify-between gap-2 text-xs text-slate-700 dark:text-slate-300"
+                              {/* Lesson Attachments list */}
+                              {activeLesson.attachments && activeLesson.attachments.length > 0 && (
+                                <div className="space-y-2 pt-2 border-t border-slate-200 dark:border-slate-900">
+                                  <p className="text-[10px] font-bold text-slate-500 dark:text-slate-400 font-mono uppercase tracking-wider">{t('ملفات المقرر المتاحة للتحميل:', 'Available Downloads:')}</p>
+                                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                                    {activeLesson.attachments.map((file, idx) => (
+                                      <button
+                                        key={idx}
+                                        type="button"
+                                        onClick={() => handleOpenProtectedLink(file, selectedCourse, 'file')}
+                                        className="rounded-lg bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-900 p-2.5 flex items-center justify-between text-xs hover:border-brand-cyan/30 transition-all text-slate-700 dark:text-slate-300 w-full text-left cursor-pointer"
+                                      >
+                                        <span className="truncate max-w-[180px] font-bold">{file.split('/').pop()?.split('?')[0] || `Attachment #${idx + 1}`}</span>
+                                        <Download className="h-4 w-4 text-brand-cyan shrink-0" />
+                                      </button>
+                                    ))}
+                                  </div>
+                                </div>
+                              )}
+                            </div>
+
+                             {/* Assignments block for active lesson & course */}
+                            {(() => {
+                              const courseTasks = assignmentTasks.filter(t => t.published !== false && (t.courseId === selectedCourse.id || ((!t.courseId || t.courseId === 'all') && (normalizeGradeCode(t.grade) === 'all' || normalizeGradeCode(t.grade) === normalizeGradeCode(selectedCourse.grade)))));
+                              const hasHomework = activeLesson.homework || courseTasks.length > 0;
+                              if (!hasHomework) return null;
+
+                              return (
+                                <div className="rounded-2xl glass bg-white/85 dark:bg-slate-950/40 border border-slate-200 dark:border-slate-800/80 p-6 space-y-4">
+                                  <div className="border-s border-brand-cyan/40 ps-4 text-xs">
+                                    <span className="text-[10px] font-mono text-brand-cyan font-bold uppercase tracking-wider">Academic Tasks</span>
+                                    <h4 className="font-black text-slate-900 dark:text-white text-sm mt-1">{t('📝 قسم الشيتات والتكليفات الأسبوعية للمقرر:', 'Weekly Problem Sheets & Lab Assignments:')}</h4>
+                                    
+                                    {activeLesson.homework && (
+                                      <p className="text-slate-700 dark:text-slate-300 mt-2 leading-relaxed bg-slate-50 dark:bg-slate-900/60 p-3 rounded-xl border border-slate-200 dark:border-slate-800/50 font-bold">{activeLesson.homework}</p>
+                                    )}
+
+                                    {courseTasks.map(task => (
+                                      <div key={task.id} className="mt-3 bg-slate-50 dark:bg-slate-900/80 p-3.5 rounded-xl border border-slate-200 dark:border-slate-800 space-y-2">
+                                        <h5 className="font-bold text-xs text-brand-cyan">{task.titleAr}</h5>
+                                        {task.descriptionAr && <p className="text-slate-600 dark:text-slate-300 text-[11px]">{task.descriptionAr}</p>}
+                                        {task.pdfUrl && (
+                                          <button
+                                            type="button"
+                                            onClick={() => handleOpenProtectedLink(task.pdfUrl!, selectedCourse, 'file', task)}
+                                            className="inline-flex items-center gap-1.5 text-[11px] text-brand-cyan font-bold hover:underline cursor-pointer"
                                           >
-                                            <span className="truncate font-bold flex-1">{attLabel}</span>
-                                            <div className="flex items-center gap-1.5 shrink-0">
-                                              <button
-                                                type="button"
-                                                onClick={() => handlePreviewProtectedFile(file, selectedCourse, attLabel)}
-                                                className="px-2 py-1 rounded bg-brand-cyan/15 text-brand-cyan font-bold hover:bg-brand-cyan/25 flex items-center gap-1 cursor-pointer"
-                                                title={t('معاينة الملف', 'Preview')}
-                                              >
-                                                <Eye className="h-3.5 w-3.5" />
-                                                <span>{t('معاينة', 'Preview')}</span>
-                                              </button>
-                                              <button
-                                                type="button"
-                                                onClick={() => handleOpenProtectedLink(file, selectedCourse, 'file')}
-                                                className="p-1.5 rounded bg-slate-200/70 dark:bg-slate-800 hover:text-brand-cyan cursor-pointer"
-                                                title={t('تنزيل', 'Download')}
-                                              >
-                                                <Download className="h-3.5 w-3.5" />
-                                              </button>
-                                            </div>
-                                          </div>
-                                        );
-                                      })}
-                                    </div>
-                                  </div>
-                                )}
-                              </div>
-
-                               {/* Assignments block for active lesson & course */}
-                              {(() => {
-                                const courseTasks = assignmentTasks.filter(t => t.published !== false && (t.courseId === selectedCourse.id || ((!t.courseId || t.courseId === 'all') && (normalizeGradeCode(t.grade) === 'all' || normalizeGradeCode(t.grade) === normalizeGradeCode(selectedCourse.grade)))));
-                                const hasHomework = activeLesson.homework || courseTasks.length > 0;
-                                if (!hasHomework) return null;
-
-                                return (
-                                  <div className="rounded-2xl glass bg-white/85 dark:bg-slate-950/40 border border-slate-200 dark:border-slate-800/80 p-6 space-y-4">
-                                    <div className="border-s border-brand-cyan/40 ps-4 text-xs">
-                                      <span className="text-[10px] font-mono text-brand-cyan font-bold uppercase tracking-wider">Academic Tasks</span>
-                                      <h4 className="font-black text-slate-900 dark:text-white text-sm mt-1">{t('📝 قسم الشيتات والتكليفات الأسبوعية للمقرر:', 'Weekly Problem Sheets & Lab Assignments:')}</h4>
-                                      
-                                      {activeLesson.homework && (
-                                        <p className="text-slate-700 dark:text-slate-300 mt-2 leading-relaxed bg-slate-50 dark:bg-slate-900/60 p-3 rounded-xl border border-slate-200 dark:border-slate-800/50 font-bold">{activeLesson.homework}</p>
-                                      )}
-
-                                      {courseTasks.map(task => (
-                                        <div key={task.id} className="mt-3 bg-slate-50 dark:bg-slate-900/80 p-3.5 rounded-xl border border-slate-200 dark:border-slate-800 space-y-2">
-                                          <h5 className="font-bold text-xs text-brand-cyan">{task.titleAr}</h5>
-                                          {task.descriptionAr && <p className="text-slate-600 dark:text-slate-300 text-[11px]">{task.descriptionAr}</p>}
-                                          {task.pdfUrl && (
-                                            <div className="flex flex-wrap items-center gap-3">
-                                              <button
-                                                type="button"
-                                                onClick={() => handlePreviewProtectedFile(task.pdfUrl!, selectedCourse, task.titleAr || task.titleEn || t('ملف التكليف', 'Assignment File'), undefined, task)}
-                                                className="inline-flex items-center gap-1.5 text-[11px] text-emerald-600 dark:text-emerald-400 font-bold hover:underline cursor-pointer"
-                                              >
-                                                <Eye className="h-3.5 w-3.5" />
-                                                <span>{t('معاينة الملف', 'Preview File')}</span>
-                                              </button>
-                                              <button
-                                                type="button"
-                                                onClick={() => handleOpenProtectedLink(task.pdfUrl!, selectedCourse, 'file', task)}
-                                                className="inline-flex items-center gap-1.5 text-[11px] text-brand-cyan font-bold hover:underline cursor-pointer"
-                                              >
-                                                <Download className="h-3.5 w-3.5" />
-                                                <span>{t('تحميل شيت التكليف PDF المرفق 📎', 'Download Assignment Sheet PDF')}</span>
-                                              </button>
-                                            </div>
-                                          )}
-                                        </div>
-                                      ))}
+                                            <Download className="h-3.5 w-3.5" />
+                                            <span>{t('تحميل شيت التكليف PDF المرفق 📎', 'Download Assignment Sheet PDF')}</span>
+                                          </button>
+                                        )}
+                                      </div>
+                                    ))}
                                   </div>
 
                                   <form onSubmit={(e) => handleAssignmentSubmit(e)} className="space-y-4 text-xs text-slate-700 dark:text-slate-300 pt-2 border-t border-slate-200 dark:border-slate-900">
@@ -3294,24 +3266,14 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({ onLogout, on
                                       </div>
 
                                       {task.pdfUrl && (
-                                        <div className="flex flex-wrap gap-2">
-                                          <button
-                                            type="button"
-                                            onClick={() => handlePreviewProtectedFile(task.pdfUrl!, course || null, task.titleAr || task.titleEn || t('ملف التكليف', 'Assignment File'), undefined, task)}
-                                            className="flex-1 inline-flex items-center justify-center gap-2 rounded-xl bg-brand-cyan/15 hover:bg-brand-cyan/25 border border-brand-cyan/30 px-3.5 py-2.5 text-brand-cyan font-bold transition-all cursor-pointer"
-                                          >
-                                            <Eye className="h-4 w-4" />
-                                            <span>{t('معاينة الملف', 'Preview File')}</span>
-                                          </button>
-                                          <button
-                                            type="button"
-                                            onClick={() => handleOpenProtectedLink(task.pdfUrl!, course || null, 'file', task)}
-                                            className="flex-1 inline-flex items-center justify-center gap-2 rounded-xl bg-slate-100 dark:bg-slate-900 hover:bg-slate-200 dark:hover:bg-slate-800 border border-slate-200 dark:border-slate-800 px-3.5 py-2.5 text-slate-700 dark:text-slate-200 font-bold transition-all cursor-pointer"
-                                          >
-                                            <Download className="h-4 w-4 text-brand-cyan" />
-                                            <span>{t('تحميل الملف 📎', 'Download 📎')}</span>
-                                          </button>
-                                        </div>
+                                        <button
+                                          type="button"
+                                          onClick={() => handleOpenProtectedLink(task.pdfUrl!, course || null, 'file', task)}
+                                          className="w-full inline-flex items-center justify-center gap-2 rounded-xl bg-slate-100 dark:bg-slate-900 hover:bg-slate-200 dark:hover:bg-slate-800 border border-slate-200 dark:border-slate-800 px-3.5 py-2.5 text-brand-cyan font-bold transition-all cursor-pointer"
+                                        >
+                                          <Download className="h-4 w-4" />
+                                          <span>{t('تحميل / فتح ملف التكليف PDF 📎', 'View / Download Assignment PDF')}</span>
+                                        </button>
                                       )}
                                     </div>
 
@@ -3368,30 +3330,17 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({ onLogout, on
                                   
                                   {assign.fileUrl && (
                                     <div className="mt-2 space-y-2">
-                                      <div className="flex flex-wrap items-center gap-3">
-                                        <button 
-                                          type="button"
-                                          onClick={() => {
-                                            const targetCourse = courses.find(c => c.id === assign.courseId) || myCourses.find(c => c.id === assign.courseId) || null;
-                                            handlePreviewProtectedFile(assign.fileUrl, targetCourse, assign.homeworkAr || t('ملف التسليم', 'Submission File'));
-                                          }}
-                                          className="inline-flex items-center gap-1.5 text-[10px] text-emerald-600 dark:text-emerald-400 font-bold hover:underline cursor-pointer"
-                                        >
-                                          <Eye className="h-3.5 w-3.5" />
-                                          {t('معاينة الملف المرفق', 'Preview Attached File')}
-                                        </button>
-                                        <button 
-                                          type="button"
-                                          onClick={() => {
-                                            const targetCourse = courses.find(c => c.id === assign.courseId) || myCourses.find(c => c.id === assign.courseId) || null;
-                                            handleOpenProtectedLink(assign.fileUrl, targetCourse, 'file');
-                                          }}
-                                          className="inline-flex items-center gap-1.5 text-[10px] text-brand-cyan font-bold hover:underline cursor-pointer"
-                                        >
-                                          <Paperclip className="h-3.5 w-3.5" />
-                                          {t('تنزيل الملف المرفق بالتسليم 📎', 'Download attached solution file')}
-                                        </button>
-                                      </div>
+                                      <button 
+                                        type="button"
+                                        onClick={() => {
+                                          const targetCourse = courses.find(c => c.id === assign.courseId) || myCourses.find(c => c.id === assign.courseId) || null;
+                                          handleOpenProtectedLink(assign.fileUrl, targetCourse, 'file');
+                                        }}
+                                        className="inline-flex items-center gap-1.5 text-[10px] text-brand-cyan font-bold hover:underline cursor-pointer"
+                                      >
+                                        <Paperclip className="h-3.5 w-3.5" />
+                                        {t('عرض الملف المرفق بالتسليم 📎', 'View attached solution file')}
+                                      </button>
                                       {(assign.fileUrl.startsWith('data:image/') || /\.(jpg|jpeg|png|gif|webp)(\?.*)?$/i.test(assign.fileUrl)) && (
                                         <div className="max-w-xs rounded-xl overflow-hidden border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 p-1">
                                           <ResolvedImage src={assign.fileUrl} alt="Attached Solution" className="w-full max-h-48 object-contain rounded-lg" />
@@ -4142,14 +4091,9 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({ onLogout, on
                               </div>
                               <div className="space-y-2 pt-3 border-t border-slate-200 dark:border-slate-900">
                                 {sec.fileUrl && (
-                                  <div className="flex gap-2">
-                                    <button type="button" onClick={() => setActivePdfModal({ url: sec.fileUrl!, title: sec.title })} className="flex-1 rounded-xl bg-brand-cyan/15 text-brand-cyan py-2 text-xs font-bold cursor-pointer">
-                                      {t('معاينة الملف', 'Preview File')}
-                                    </button>
-                                    <button type="button" onClick={() => triggerFileDownload(sec.fileUrl!, `${sec.title}.docx`)} className="flex-1 rounded-xl bg-emerald-500/15 text-emerald-500 py-2 text-xs font-bold cursor-pointer">
-                                      {t('تحميل ملف السكشن', 'Download Lab File')}
-                                    </button>
-                                  </div>
+                                  <button type="button" onClick={() => triggerFileDownload(sec.fileUrl!, `${sec.title}.docx`)} className="w-full rounded-xl bg-emerald-500/15 text-emerald-500 py-2 text-xs font-bold cursor-pointer">
+                                    {t('تحميل ملف السكشن', 'Download Lab File')}
+                                  </button>
                                 )}
                               </div>
                             </div>
@@ -4476,12 +4420,40 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({ onLogout, on
         </div>
       )}
 
-      {/* DOCUMENT & FILE PREVIEW MODAL */}
-      <FilePreviewModal
-        item={activePdfModal}
-        onClose={() => setActivePdfModal(null)}
-        onCopied={(msg) => setSuccessMsg(msg)}
-      />
+      {/* DOCUMENT VIEWER & DOWNLOAD MODAL */}
+      {activePdfModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4 bg-slate-950/75 dark:bg-slate-950/90 backdrop-blur-md">
+          <div className="relative w-full max-w-4xl h-[85vh] rounded-2xl border border-cyan-500/30 bg-white dark:bg-slate-900 p-4 sm:p-6 shadow-2xl flex flex-col space-y-4">
+            <div className="flex items-center justify-between gap-2 border-b border-slate-200 dark:border-slate-800 pb-3">
+              <div className="flex items-center gap-2 min-w-0">
+                <FileText className="h-5 w-5 text-brand-cyan shrink-0" />
+                <h3 className="font-bold text-sm sm:text-base text-slate-900 dark:text-white truncate">{activePdfModal.title}</h3>
+              </div>
+              <div className="flex items-center gap-2 shrink-0">
+                <button
+                  type="button"
+                  onClick={() => triggerFileDownload(activePdfModal.url, activePdfModal.title || 'document.pdf')}
+                  className="flex items-center gap-1.5 rounded-xl bg-brand-cyan text-white dark:text-slate-950 px-3 py-1.5 text-xs font-bold hover:bg-brand-cyan-light cursor-pointer"
+                >
+                  <Download className="h-3.5 w-3.5" />
+                  <span>{t('تحميل الملف', 'Download File')}</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setActivePdfModal(null)}
+                  className="text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white p-1 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
+                >
+                  <X className="h-5 w-5" />
+                </button>
+              </div>
+            </div>
+
+            <div className="flex-1 rounded-xl overflow-hidden bg-slate-100 dark:bg-slate-950 border border-slate-200 dark:border-slate-800">
+              <EmbeddedPdfViewer url={activePdfModal.url} title={activePdfModal.title} />
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Submission Modal for Selected Task */}
       {isSubmissionModalOpen && selectedTaskForSubmission && (
@@ -4510,30 +4482,17 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({ onLogout, on
                 <p className="text-slate-600 dark:text-slate-300 text-[11px] leading-relaxed">{selectedTaskForSubmission.descriptionAr}</p>
               )}
               {selectedTaskForSubmission.pdfUrl && (
-                <div className="flex flex-wrap items-center gap-3 mt-1">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      const c = courses.find(cr => cr.id === selectedTaskForSubmission.courseId);
-                      handlePreviewProtectedFile(selectedTaskForSubmission.pdfUrl!, c || null, selectedTaskForSubmission.titleAr || selectedTaskForSubmission.titleEn || t('شيت التكليف', 'Assignment Sheet'), undefined, selectedTaskForSubmission);
-                    }}
-                    className="inline-flex items-center gap-1.5 text-emerald-600 dark:text-emerald-400 hover:underline font-bold text-[11px] cursor-pointer"
-                  >
-                    <Eye className="h-3.5 w-3.5" />
-                    <span>{t('معاينة الملف', 'Preview File')}</span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      const c = courses.find(cr => cr.id === selectedTaskForSubmission.courseId);
-                      handleOpenProtectedLink(selectedTaskForSubmission.pdfUrl!, c || null, 'file', selectedTaskForSubmission);
-                    }}
-                    className="inline-flex items-center gap-1.5 text-brand-cyan hover:underline font-bold text-[11px] cursor-pointer"
-                  >
-                    <Download className="h-3.5 w-3.5" />
-                    <span>{t('تنزيل شيت التكليف PDF 📎', 'Download Sheet PDF')}</span>
-                  </button>
-                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const c = courses.find(cr => cr.id === selectedTaskForSubmission.courseId);
+                    handleOpenProtectedLink(selectedTaskForSubmission.pdfUrl!, c || null, 'file', selectedTaskForSubmission);
+                  }}
+                  className="inline-flex items-center gap-1.5 text-brand-cyan hover:underline font-bold text-[11px] mt-1 cursor-pointer"
+                >
+                  <Download className="h-3.5 w-3.5" />
+                  <span>{t('تنزيل شيت التكليف PDF 📎', 'Download Sheet PDF')}</span>
+                </button>
               )}
             </div>
 

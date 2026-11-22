@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { 
   Course, Category, Student, NewsItem, Article, UserReview, Message, Admin, WebsiteSettings,
   Teacher, Coupon, Order, Quiz, QuizQuestion, QuizSubmission, ChatMessage, ChatThread, Assignment, AssignmentSubmission,
-  CourseUnit, UnitLesson, LessonType, LessonComment, Notification,
+  CourseUnit, UnitLesson, LessonType, LessonComment,
   LectureItem, SectionItem, ExamItem, SheetItem,
   QuestionBankItem, ScheduleItem, StudentInquiry, ExamSubmission, ActivityLogItem, OnlineExamQuestion
 } from '../types';
@@ -184,7 +184,6 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
   const [inquiries, setInquiries] = useState<StudentInquiry[]>([]);
   const [examSubmissions, setExamSubmissions] = useState<ExamSubmission[]>([]);
   const [activityLogs, setActivityLogs] = useState<ActivityLogItem[]>([]);
-  const [adminNotifications, setAdminNotifications] = useState<Notification[]>([]);
 
   // Filters & Reply Drafts for New Tabs
   const [inquiryFilter, setInquiryFilter] = useState<'all' | 'pending' | 'answered'>('all');
@@ -642,7 +641,6 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
           dbService.listenToInquiries((items) => setInquiries(items)),
           dbService.listenToExamSubmissions((subs) => setExamSubmissions(subs)),
           dbService.listenToActivityLogs((logs) => setActivityLogs(logs)),
-          dbService.listenToNotifications(fbAuthUser?.uid || currentAdmin?.id || '', fbAuthUser?.email || currentAdmin?.email || '', (notifs) => setAdminNotifications(notifs)),
         );
       }
     })();
@@ -2741,56 +2739,6 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
     }
   };
 
-  const handleDeleteSingleNotification = (notif: Notification) => {
-    requestConfirmation(
-      t('حذف التنبيه', 'Delete Notification'),
-      t(
-        `هل تريد حذف التنبيه "${notif.titleAr || notif.titleEn || ''}"؟ سيختفي فوراً من لدى جميع الطلاب.`,
-        `Delete notification "${notif.titleEn || notif.titleAr || ''}"? It will disappear immediately from all student portals.`
-      ),
-      async () => {
-        try {
-          await dbService.deleteNotification(notif.id);
-          setAdminNotifications(prev => prev.filter(n => n.id !== notif.id));
-          logAdminAction('delete', 'notification', notif.titleAr || notif.titleEn || notif.id, 'Deleted single notification');
-          triggerNotification(t('تم حذف التنبيه بنجاح ومزامنته مع منصة الطلاب.', 'Notification deleted and synced cleanly.'));
-        } catch (err: any) {
-          triggerNotification(err?.message || t('تعذر حذف التنبيه.', 'Failed to delete notification.'), true);
-        }
-      }
-    );
-  };
-
-  const handleDeleteAllNotifications = () => {
-    if (adminNotifications.length === 0) return;
-    requestConfirmation(
-      t('حذف جميع التنبيهات والإشعارات', 'Delete All Notifications'),
-      t(
-        `هل أنت متأكد من حذف جميع التنبيهات (${adminNotifications.length} تنبيه) نهائياً من المنصة؟ سيتم مسح جميع الإشعارات لدى جميع الطلاب فوراً.`,
-        `Are you sure you want to permanently delete all ${adminNotifications.length} notifications? All student alert bells will be cleared immediately.`
-      ),
-      async () => {
-        setActionLoading(true);
-        try {
-          const deletedCount = await dbService.deleteAllNotifications();
-          setAdminNotifications([]);
-          logAdminAction('delete', 'notification', 'حذف جميع التنبيهات', `Cleared ${deletedCount} notifications`);
-          triggerNotification(
-            t(
-              `تم حذف جميع التنبيهات (${deletedCount}) بنجاح ومسحها من منصة الطلاب!`,
-              `Deleted all ${deletedCount} notifications and cleared student alerts.`
-            )
-          );
-        } catch (err: any) {
-          triggerNotification(err?.message || t('تعذر حذف جميع التنبيهات.', 'Failed to delete all notifications.'), true);
-        } finally {
-          setActionLoading(false);
-        }
-      },
-      t('نعم، احذف جميع التنبيهات', 'Yes, Delete All')
-    );
-  };
-
   // Helper arrays / elements triggers
   const openAddModal = () => {
     setModalType('add');
@@ -2889,7 +2837,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
     { id: 'question-bank', labelAr: 'بنك الأسئلة', labelEn: 'Question Bank', shortAr: 'بنك الأسئلة', shortEn: 'Q-Bank', icon: ListChecks, count: questionBank.length },
     { id: 'schedule', labelAr: 'جدول المحاضرات والسكاشن', labelEn: 'Weekly Timetable', shortAr: 'الجدول', shortEn: 'Timetable', icon: Calendar, count: scheduleItems.length },
     { id: 'inquiries', labelAr: 'استفسارات وأسئلة الطلاب', labelEn: 'Student Inquiries Q&A', shortAr: 'الاستفسارات', shortEn: 'Inquiries', icon: HelpCircle, count: inquiries.length, pendingCount: inquiries.filter(i => i.status === 'pending').length },
-    { id: 'notifications', labelAr: 'إشعارات المنصة الجامعية', labelEn: 'Announcements & Alerts', shortAr: 'الإعلانات', shortEn: 'Alerts', icon: Bell, count: adminNotifications.length },
+    { id: 'notifications', labelAr: 'إشعارات المنصة الجامعية', labelEn: 'Announcements & Alerts', shortAr: 'الإعلانات', shortEn: 'Alerts', icon: Bell },
     { id: 'quizzes', labelAr: 'الاختبارات التدريبية التفاعلية', labelEn: 'Practice Assessments', shortAr: 'التدريبات', shortEn: 'Quizzes', icon: HelpCircle, count: quizzes.length },
     { id: 'assignments', labelAr: 'التكليفات والتسليمات البحثية', labelEn: 'Coursework & Submissions', shortAr: 'التكليفات', shortEn: 'Coursework', icon: ClipboardList, count: assignmentTasks.length, isBadgeYellow: assignmentSubmissions.some(s => s.status === 'submitted'), pendingCount: assignmentSubmissions.filter(s => s.status === 'submitted').length },
     { id: 'messages', labelAr: 'صندوق رسائل الوارد', labelEn: 'Contact Messages', shortAr: 'الرسائل', shortEn: 'Messages', icon: Mail, count: messages.filter(m => !m.read).length, isBadgeRed: true },
@@ -4994,31 +4942,14 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
                 {/* --- UNIVERSITY ANNOUNCEMENTS PANEL --- */}
                 {activeTab === 'notifications' && (
                   <div className="space-y-6 animate-fadeIn">
-                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-200 dark:border-slate-800 pb-4">
-                      <div>
-                        <h2 className="text-xl font-black text-slate-900 dark:text-white flex items-center gap-2.5">
-                          <Bell className="h-6 w-6 text-brand-cyan" />
-                          {t('نظام الإعلانات والتنبيهات الجامعية الفورية', 'University Platform Announcements & Alerts')}
-                        </h2>
-                        <p className="text-xs text-slate-600 dark:text-slate-400 mt-1">
-                          {t('أرسل تنبيهات فورية تظهر مباشرة في لوحة الطالب عند نشر محاضرات أو سكاشن أو شيتات أو امتحانات جديدة.', 'Broadcast instant alerts that appear live in the student portal when new academic content is published.')}
-                        </p>
-                      </div>
-
-                      <button
-                        type="button"
-                        onClick={handleDeleteAllNotifications}
-                        disabled={adminNotifications.length === 0 || actionLoading}
-                        className="inline-flex items-center justify-center gap-2 rounded-xl bg-rose-600 hover:bg-rose-700 text-white px-4 py-2.5 text-xs font-black transition-all cursor-pointer shadow-lg shadow-rose-950/20 disabled:opacity-40 disabled:cursor-not-allowed shrink-0"
-                      >
-                        <Trash2 className="h-4 w-4" />
-                        <span>{t('حذف جميع التنبيهات', 'Delete All Notifications')}</span>
-                        {adminNotifications.length > 0 && (
-                          <span className="px-1.5 py-0.5 rounded-md bg-white/20 font-mono text-[10px]">
-                            {adminNotifications.length}
-                          </span>
-                        )}
-                      </button>
+                    <div className="border-b border-slate-200 dark:border-slate-800 pb-4">
+                      <h2 className="text-xl font-black text-slate-900 dark:text-white flex items-center gap-2.5">
+                        <Bell className="h-6 w-6 text-brand-cyan" />
+                        {t('نظام الإعلانات والتنبيهات الجامعية الفورية', 'University Platform Announcements & Alerts')}
+                      </h2>
+                      <p className="text-xs text-slate-600 dark:text-slate-400 mt-1">
+                        {t('أرسل تنبيهات فورية تظهر مباشرة في لوحة الطالب عند نشر محاضرات أو سكاشن أو شيتات أو امتحانات جديدة.', 'Broadcast instant alerts that appear live in the student portal when new academic content is published.')}
+                      </p>
                     </div>
 
                     {/* Broadcast Form Card */}
@@ -5095,85 +5026,6 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
                           </button>
                         </div>
                       </form>
-                    </div>
-
-                    {/* Active Notifications Archive & Management */}
-                    <div className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950/60 p-5 space-y-4">
-                      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 dark:border-slate-800 pb-3">
-                        <h3 className="text-sm font-black text-slate-900 dark:text-white flex items-center gap-2">
-                          <Bell className="h-4 w-4 text-brand-cyan" />
-                          <span>{t('سجل التنبيهات النشطة لدى الطلاب', 'Active Platform Notifications')}</span>
-                        </h3>
-                        <span className="px-2.5 py-1 rounded-lg bg-slate-100 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-[11px] font-mono font-bold text-brand-cyan">
-                          {adminNotifications.length} {t('تنبيه', 'alerts')}
-                        </span>
-                      </div>
-
-                      {adminNotifications.length === 0 ? (
-                        <div className="rounded-xl border border-dashed border-slate-200 dark:border-slate-800 py-10 text-center space-y-1.5">
-                          <Bell className="h-8 w-8 text-slate-400 mx-auto" />
-                          <p className="text-xs font-bold text-slate-700 dark:text-slate-300">
-                            {t('لا توجد تنبيهات نشطة حالياً على المنصة.', 'No active notifications on the platform.')}
-                          </p>
-                          <p className="text-[11px] text-slate-500">
-                            {t('أي تنبيه ترسله أعلاه سيظهر هنا ولدى الطلاب فوراً.', 'Any alert broadcast above will appear here and for students live.')}
-                          </p>
-                        </div>
-                      ) : (
-                        <div className="space-y-2.5 max-h-[460px] overflow-y-auto pr-1">
-                          {adminNotifications.map((notif) => {
-                            const isGlobal = (notif.userId || '').trim().toLowerCase() === 'global';
-                            const targetCourse = notif.courseId ? courses.find(c => c.id === notif.courseId) : undefined;
-                            return (
-                              <div
-                                key={notif.id}
-                                className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900/70 p-3.5 hover:border-brand-cyan/30 transition-all"
-                              >
-                                <div className="space-y-1 min-w-0 flex-1">
-                                  <div className="flex flex-wrap items-center gap-1.5 text-[10px]">
-                                    <span className={`px-2 py-0.5 rounded font-bold ${
-                                      isGlobal
-                                        ? 'bg-brand-cyan/15 text-brand-cyan border border-brand-cyan/30'
-                                        : 'bg-amber-500/15 text-amber-600 dark:text-amber-300 border border-amber-500/30'
-                                    }`}>
-                                      {isGlobal ? t('عام لجميع الطلاب', 'Global Broadcast') : t('موجه لطالب محدد', 'Targeted Student')}
-                                    </span>
-                                    <span className="px-2 py-0.5 rounded bg-slate-200 dark:bg-slate-800 text-slate-700 dark:text-slate-300 font-mono uppercase">
-                                      {notif.type || 'general'}
-                                    </span>
-                                    {targetCourse && (
-                                      <span className="px-2 py-0.5 rounded bg-blue-500/10 text-blue-600 dark:text-blue-300 font-bold">
-                                        {t(targetCourse.titleAr, targetCourse.titleEn)}
-                                      </span>
-                                    )}
-                                    {notif.createdAt && (
-                                      <span className="text-slate-500 font-mono">
-                                        {new Date(notif.createdAt).toLocaleString(language === 'ar' ? 'ar-EG' : 'en-US')}
-                                      </span>
-                                    )}
-                                  </div>
-                                  <h4 className="text-xs font-black text-slate-900 dark:text-white truncate">
-                                    {t(notif.titleAr, notif.titleEn) || notif.titleAr || notif.titleEn}
-                                  </h4>
-                                  <p className="text-[11px] text-slate-600 dark:text-slate-400 line-clamp-2">
-                                    {t(notif.bodyAr, notif.bodyEn) || notif.bodyAr || notif.bodyEn}
-                                  </p>
-                                </div>
-
-                                <button
-                                  type="button"
-                                  onClick={() => handleDeleteSingleNotification(notif)}
-                                  className="inline-flex items-center justify-center gap-1.5 rounded-lg bg-rose-500/10 hover:bg-rose-500/20 border border-rose-500/25 text-rose-600 dark:text-rose-400 px-3 py-1.5 text-[11px] font-bold transition-all cursor-pointer shrink-0 self-end sm:self-center"
-                                  title={t('حذف التنبيه', 'Delete Notification')}
-                                >
-                                  <Trash2 className="h-3.5 w-3.5" />
-                                  <span>{t('حذف', 'Delete')}</span>
-                                </button>
-                              </div>
-                            );
-                          })}
-                        </div>
-                      )}
                     </div>
                   </div>
                 )}
@@ -7435,7 +7287,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
                       fileType="pdf"
                       folder="pdfs"
                       courseId={selectedId}
-                      onPreview={(url, meta) => handlePreviewAdminMedia(url, courseForm.titleAr || meta?.title || t('ملخص المنهج PDF', 'Syllabus PDF'), meta?.fileType || 'pdf', meta?.fileName)}
+                      onPreview={(url, meta) => handlePreviewAdminMedia(url, courseForm.titleAr || meta?.title || t('ملخص المنهج PDF', 'Syllabus PDF'), 'pdf')}
                     />
                   </div>
                 </div>
@@ -7682,7 +7534,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
                                       folder="word_sheets"
                                       courseId={selectedId}
                                       placeholder="https://example.com/sheet.docx"
-                                      onPreview={(url, meta) => handlePreviewAdminMedia(url, lessonForm.title || meta?.title || t('ملف Word للدرس', 'Lesson Word File'), meta?.fileType || 'word', meta?.fileName)}
+                                      onPreview={(url, meta) => handlePreviewAdminMedia(url, lessonForm.title || meta?.title || t('ملف Word للدرس', 'Lesson Word File'), 'word')}
                                     />
                                   </div>
                                   <div className="sm:col-span-2">
@@ -7695,7 +7547,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
                                       folder="pdfs"
                                       courseId={selectedId}
                                       placeholder="https://example.com/file.pdf"
-                                      onPreview={(url, meta) => handlePreviewAdminMedia(url, lessonForm.title || meta?.title || t('ملف PDF للدرس', 'Lesson PDF File'), meta?.fileType || 'pdf', meta?.fileName)}
+                                      onPreview={(url, meta) => handlePreviewAdminMedia(url, lessonForm.title || meta?.title || t('ملف PDF للدرس', 'Lesson PDF File'), 'pdf')}
                                     />
                                   </div>
                                   <div>
@@ -7743,40 +7595,8 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
                                         </span>
                                         <span className="font-bold text-slate-700 dark:text-slate-200 truncate">{lsn.title}</span>
                                       </div>
-                                      <div className="flex flex-wrap items-center gap-1.5 shrink-0">
+                                      <div className="flex items-center gap-2 shrink-0">
                                         {lsn.duration && <span className="text-[10px] text-slate-600 dark:text-slate-400 font-mono bg-slate-50 dark:bg-slate-900 px-1.5 py-0.5 rounded">{lsn.duration}</span>}
-                                        {lsn.pdfUrl && (
-                                          <button
-                                            type="button"
-                                            onClick={() => handlePreviewAdminMedia(lsn.pdfUrl!, `${lsn.title} (PDF)`, 'pdf')}
-                                            className="px-2 py-1 rounded bg-red-500/10 text-red-600 dark:text-red-300 hover:bg-red-500/20 text-[10px] font-bold flex items-center gap-1 cursor-pointer"
-                                            title={t('معاينة PDF', 'Preview PDF')}
-                                          >
-                                            <Eye className="h-3 w-3" />
-                                            <span>PDF</span>
-                                          </button>
-                                        )}
-                                        {lsn.wordUrl && (
-                                          <button
-                                            type="button"
-                                            onClick={() => handlePreviewAdminMedia(lsn.wordUrl!, `${lsn.title} (Word)`, 'word')}
-                                            className="px-2 py-1 rounded bg-blue-500/10 text-blue-600 dark:text-blue-300 hover:bg-blue-500/20 text-[10px] font-bold flex items-center gap-1 cursor-pointer"
-                                            title={t('معاينة Word', 'Preview Word')}
-                                          >
-                                            <Eye className="h-3 w-3" />
-                                            <span>DOCX</span>
-                                          </button>
-                                        )}
-                                        {lsn.videoUrl && (
-                                          <button
-                                            type="button"
-                                            onClick={() => handlePreviewAdminMedia(lsn.videoUrl!, lsn.title, 'video')}
-                                            className="p-1 rounded bg-brand-cyan/10 text-brand-cyan hover:bg-brand-cyan/20 cursor-pointer"
-                                            title={t('معاينة الفيديو', 'Preview Video')}
-                                          >
-                                            <Play className="h-3 w-3" />
-                                          </button>
-                                        )}
                                         <button
                                           type="button"
                                           onClick={() => {
@@ -8768,7 +8588,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
                       accept=".pdf,.doc,.docx,application/pdf,image/*"
                       folder="assignments"
                       placeholder="https://example.com/assignment.pdf"
-                      onPreview={(url, meta) => handlePreviewAdminMedia(url, assignmentTaskForm.titleAr || meta?.title || t('ملحق التكليف', 'Assignment File'), meta?.fileType, meta?.fileName)}
+                      onPreview={(url, meta) => handlePreviewAdminMedia(url, assignmentTaskForm.titleAr || meta?.title || t('ملحق التكليف', 'Assignment File'), meta?.fileType)}
                     />
                   </div>
 
@@ -8978,26 +8798,6 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
                         {normCourse.descriptionAr}
                       </p>
                     )}
-                    {normCourse.pdfUrl && (
-                      <div className="pt-2 flex flex-wrap gap-2">
-                        <button
-                          type="button"
-                          onClick={() => handlePreviewAdminMedia(normCourse.pdfUrl!, `${getCourseDisplayTitle(normCourse, language)} - PDF`, 'pdf')}
-                          className="inline-flex items-center gap-1.5 rounded-xl bg-brand-cyan/15 hover:bg-brand-cyan/25 text-brand-cyan border border-brand-cyan/30 px-3 py-1.5 text-xs font-bold cursor-pointer"
-                        >
-                          <Eye className="h-3.5 w-3.5" />
-                          <span>{t('معاينة ملخص المقرر (PDF)', 'Preview Syllabus PDF')}</span>
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => triggerFileDownload(normCourse.pdfUrl!, `${getCourseDisplayTitle(normCourse, language)}.pdf`)}
-                          className="inline-flex items-center gap-1.5 rounded-xl bg-slate-100 dark:bg-slate-900 hover:bg-slate-200 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-800 px-3 py-1.5 text-xs font-bold cursor-pointer"
-                        >
-                          <Download className="h-3.5 w-3.5" />
-                          <span>{t('تنزيل', 'Download')}</span>
-                        </button>
-                      </div>
-                    )}
                   </div>
                 </div>
 
@@ -9017,10 +8817,6 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
                             onClick={() => {
                               if (lsn.videoUrl) {
                                 setPreviewCourse(prev => prev ? { ...prev, videoUrl: lsn.videoUrl } : null);
-                              } else if (lsn.pdfUrl) {
-                                handlePreviewAdminMedia(lsn.pdfUrl, t(lsn.titleAr, lsn.titleEn), 'pdf');
-                              } else if (lsn.wordUrl) {
-                                handlePreviewAdminMedia(lsn.wordUrl, t(lsn.titleAr, lsn.titleEn), 'word');
                               }
                             }}
                             className={`w-full p-2.5 rounded-xl border text-xs text-right transition-all flex items-center gap-2 cursor-pointer ${
@@ -9034,39 +8830,11 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
                               <p className="truncate font-semibold">{t(lsn.titleAr, lsn.titleEn)}</p>
                               <span className="text-[10px] text-slate-500 dark:text-slate-400 font-mono">{lsn.duration || '15:00'}</span>
                             </div>
-                            <div className="flex items-center gap-1 shrink-0">
-                              {lsn.pdfUrl && (
-                                <button
-                                  type="button"
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    handlePreviewAdminMedia(lsn.pdfUrl!, `${t(lsn.titleAr, lsn.titleEn)} (PDF)`, 'pdf');
-                                  }}
-                                  className="px-1.5 py-0.5 rounded bg-red-500/15 text-red-600 dark:text-red-300 hover:bg-red-500/25 text-[10px] font-bold cursor-pointer"
-                                  title={t('معاينة ملف PDF', 'Preview PDF')}
-                                >
-                                  PDF
-                                </button>
-                              )}
-                              {lsn.wordUrl && (
-                                <button
-                                  type="button"
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    handlePreviewAdminMedia(lsn.wordUrl!, `${t(lsn.titleAr, lsn.titleEn)} (Word)`, 'word');
-                                  }}
-                                  className="px-1.5 py-0.5 rounded bg-blue-500/15 text-blue-600 dark:text-blue-300 hover:bg-blue-500/25 text-[10px] font-bold cursor-pointer"
-                                  title={t('معاينة ملف Word', 'Preview Word')}
-                                >
-                                  DOCX
-                                </button>
-                              )}
-                              {lsn.videoUrl ? (
-                                <Play className="h-3.5 w-3.5 text-brand-cyan shrink-0" />
-                              ) : !lsn.pdfUrl && !lsn.wordUrl ? (
-                                <span className="text-[9px] text-slate-600 font-mono shrink-0">No file</span>
-                              ) : null}
-                            </div>
+                            {lsn.videoUrl ? (
+                              <Play className="h-3.5 w-3.5 text-brand-cyan shrink-0" />
+                            ) : (
+                              <span className="text-[9px] text-slate-600 font-mono shrink-0">No video</span>
+                            )}
                           </div>
                         ))
                       ) : (

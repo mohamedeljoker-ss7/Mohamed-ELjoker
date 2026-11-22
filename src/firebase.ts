@@ -1,5 +1,5 @@
 import { initializeApp, getApps, getApp, deleteApp } from 'firebase/app';
-import { initializeFirestore, getFirestore, collection, doc, getDocs, getDoc, getDocFromServer, setDoc, updateDoc, deleteDoc, addDoc, query, where, orderBy, onSnapshot, deleteField, increment, arrayUnion, writeBatch } from 'firebase/firestore';
+import { initializeFirestore, getFirestore, collection, doc, getDocs, getDoc, getDocFromServer, setDoc, updateDoc, deleteDoc, addDoc, query, where, orderBy, onSnapshot, deleteField, increment, arrayUnion } from 'firebase/firestore';
 import { getAuth, signInWithEmailAndPassword, createUserWithEmailAndPassword, sendPasswordResetEmail, verifyPasswordResetCode, confirmPasswordReset, signOut, onAuthStateChanged, GoogleAuthProvider, signInWithPopup, signInWithRedirect, getRedirectResult, User } from 'firebase/auth';
 import firebaseAppletConfig from '../firebase-applet-config.json';
 import { Course, Category, Student, NewsItem, Article, UserReview, Message, Admin, WebsiteSettings, Teacher, Coupon, Order, Quiz, QuizSubmission, UserAuth, Assignment, AssignmentSubmission, Certificate, ChatMessage, ChatThread, LessonComment, Notification, LessonAccess, CourseAccess, CourseRequest, LectureItem, SectionItem, ExamItem, SheetItem, SheetSubmission, QuestionBankItem, OnlineExamQuestion, ExamSubmission, ScheduleItem, StudentInquiry, ActivityLogItem, SheetAnswerKeyDoc, ExamPrivateKeyDoc, ExamPrivateKeyEntry } from './types';
@@ -5563,40 +5563,9 @@ export const dbService = {
         throw new Error(formatCloudErrorMessage(err, 'تعذر حذف الإشعار من قاعدة البيانات السحابية.'));
       }
     }
-    knownGlobalNotifIds.delete(id);
     const current = getStorageItem<Notification[]>('notifications', []);
     const updated = current.filter(item => item.id !== id);
     setStorageItem('notifications', updated);
-  },
-
-  deleteAllNotifications: async (): Promise<number> => {
-    checkAdminWrite('delete_all_notifications', {});
-    await requireCloudWriteAuth(false);
-    let deletedCount = 0;
-
-    if (isFirebaseConfigured) {
-      try {
-        const snap = await getDocs(collection(firestoreDb, 'notifications'));
-        deletedCount = snap.size;
-        if (!snap.empty) {
-          const docs = snap.docs;
-          for (let i = 0; i < docs.length; i += 450) {
-            const chunk = docs.slice(i, i + 450);
-            const batch = writeBatch(firestoreDb);
-            chunk.forEach(d => batch.delete(d.ref));
-            await batch.commit();
-          }
-        }
-      } catch (err: any) {
-        throw new Error(formatCloudErrorMessage(err, 'تعذر حذف جميع التنبيهات من قاعدة البيانات السحابية.'));
-      }
-    } else {
-      deletedCount = getStorageItem<Notification[]>('notifications', []).length;
-    }
-
-    knownGlobalNotifIds.clear();
-    setStorageItem('notifications', []);
-    return deletedCount;
   }
 };
 

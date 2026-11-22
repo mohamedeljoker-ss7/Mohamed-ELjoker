@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Course, Category, NewsItem, Article, UserReview, WebsiteSettings, Order, Notification } from './types';
-import { dbService, authService, isAdminEmail, firebaseAuth, waitForFirebaseAuth } from './firebase';
+import { dbService, authService, isAdminEmail, firebaseAuth, waitForFirebaseAuth, onFirestoreStreamReady } from './firebase';
 import { LanguageProvider, useLanguage } from './components/LanguageContext';
 import { useTheme } from './components/ThemeContext';
 import { Header } from './components/Header';
@@ -16,7 +16,7 @@ import { doesCourseMatchStudent, doesCourseMatchStudentGrade, doesSubjectMatch, 
 import { 
   Star, Phone, Send, Info, Award, Calendar, BookOpen, Clock, FileText, CheckCircle2, 
   MapPin, HelpCircle, ShieldAlert, ArrowLeft, Loader, Play, Download, Check, X, Video, Plus, Sparkles,
-  Code2, Cpu, ShieldCheck, GraduationCap, Terminal, Globe
+  Code2, Cpu, ShieldCheck, GraduationCap, Terminal, Globe, Eye, EyeOff, KeyRound
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { HERO_IT_UNIVERSITY_IMG, ENG_MOHAMED_AVATAR_IMG } from './utils/platformAssets';
@@ -74,7 +74,20 @@ function AcademyApp() {
   const [studentCanUseRedirect, setStudentCanUseRedirect] = useState<boolean>(false);
   const [studentAuthLoading, setStudentAuthLoading] = useState<boolean>(false);
   const [studentAuthSuccess, setStudentAuthSuccess] = useState<string>('');
+  const [studentResetSuccess, setStudentResetSuccess] = useState<string>('');
   const [studentAccountStatus, setStudentAccountStatus] = useState<string>('');
+
+  // In-app Password Reset Link (?mode=resetPassword&oobCode=...) State
+  const [isPasswordResetModalOpen, setIsPasswordResetModalOpen] = useState<boolean>(false);
+  const [resetOobCode, setResetOobCode] = useState<string>('');
+  const [resetVerifiedEmail, setResetVerifiedEmail] = useState<string>('');
+  const [resetCodeVerifying, setResetCodeVerifying] = useState<boolean>(false);
+  const [resetNewPassword, setResetNewPassword] = useState<string>('');
+  const [resetConfirmPassword, setResetConfirmPassword] = useState<string>('');
+  const [resetShowPassword, setResetShowPassword] = useState<boolean>(false);
+  const [resetModalError, setResetModalError] = useState<string>('');
+  const [resetModalSuccess, setResetModalSuccess] = useState<string>('');
+  const [resetSubmitting, setResetSubmitting] = useState<boolean>(false);
 
   // Enroll Modal State
   const [isEnrollModalOpen, setIsEnrollModalOpen] = useState<boolean>(false);
@@ -174,6 +187,41 @@ function AcademyApp() {
 
   // Synchronize on mount and handle direct url access routing
   useEffect(() => {
+    try {
+      const urlParams = new URLSearchParams(window.location.search);
+      const authActionMode = urlParams.get('mode');
+      const authOobCode = urlParams.get('oobCode');
+      if (authActionMode === 'resetPassword' && authOobCode) {
+        urlParams.delete('mode');
+        urlParams.delete('oobCode');
+        urlParams.delete('apiKey');
+        urlParams.delete('lang');
+        urlParams.delete('continueUrl');
+        const nextSearch = urlParams.toString();
+        const cleanUrl = `${window.location.pathname}${nextSearch ? '?' + nextSearch : ''}${window.location.hash}`;
+        window.history.replaceState(null, '', cleanUrl);
+
+        setResetOobCode(authOobCode);
+        setResetVerifiedEmail('');
+        setResetNewPassword('');
+        setResetConfirmPassword('');
+        setResetModalError('');
+        setResetModalSuccess('');
+        setResetCodeVerifying(true);
+        setIsPasswordResetModalOpen(true);
+
+        authService.verifyResetPasswordCode(authOobCode).then((verifyRes) => {
+          if (verifyRes.success && verifyRes.email) {
+            setResetVerifiedEmail(verifyRes.email);
+          } else {
+            setResetModalError(verifyRes.error || 'رابط إعادة تعيين كلمة المرور غير صالح أو منتهي الصلاحية.');
+          }
+        }).finally(() => {
+          setResetCodeVerifying(false);
+        });
+      }
+    } catch {}
+
     authService.consumeGoogleRedirectResult().then((redirectOutcome) => {
       if (!redirectOutcome.handled || !redirectOutcome.result) return;
       const res = redirectOutcome.result;
@@ -300,30 +348,51 @@ function AcademyApp() {
 
   useEffect(() => {
     fetchData();
-    const unsubCourses = dbService.listenToCourses((realtimeCourses) => {
-      setCourses(realtimeCourses);
-    });
-    const unsubSettings = dbService.listenToSettings((realtimeSettings) => {
-      setSettings(realtimeSettings);
-      if (realtimeSettings && realtimeSettings.forceLogoutVersion) {
-        const forceVer = Number(realtimeSettings.forceLogoutVersion);
-        localStorage.setItem('academy_global_force_logout_ver', String(forceVer));
-        const activeUser = authService.getCurrentUser();
-        if (activeUser && activeUser.role !== 'admin' && !isAdminEmail(activeUser.email || '')) {
-          const userLoginTime = activeUser.lastLoginTimestamp || Date.now();
-          if (userLoginTime < forceVer) {
-            console.log("Global force logout triggered from settings listener!");
-            authService.logout();
-            setIsStudentLoggedIn(false);
-            if (window.location.pathname.includes('student') || currentView === 'student-panel') {
-              handleNavigate('home');
-            }
-            emitAppToast('تم إنهاء جميع جلسات الدخول وتسجيل الخروج من المنصة بواسطة إدارة المنصة الجامعية.', 'info');
-          }
-        }
+    let unsubCourses: (() => void) | undefined;
+    let unsubSettings: (() => void) | undefined;
+    let cancelled = false;
+
+    const attachPublicStreams = () => {
+      if (cancelled) return;
+      if (!unsubCourses) {
+        unsubCourses = dbService.listenToCourses((realtimeCourses) => {
+          setCourses(realtimeCourses);
+        });
       }
-    });
+      if (!unsubSettings) {
+        unsubSettings = dbService.listenToSettings((realtimeSettings) => {
+          setSettings(realtimeSettings);
+          if (realtimeSettings && realtimeSettings.forceLogoutVersion) {
+            const forceVer = Number(realtimeSettings.forceLogoutVersion);
+            localStorage.setItem('academy_global_force_logout_ver', String(forceVer));
+            const activeUser = authService.getCurrentUser();
+            if (activeUser && activeUser.role !== 'admin' && !isAdminEmail(activeUser.email || '')) {
+              const userLoginTime = activeUser.lastLoginTimestamp || Date.now();
+              if (userLoginTime < forceVer) {
+                console.log("Global force logout triggered from settings listener!");
+                authService.logout();
+                setIsStudentLoggedIn(false);
+                if (window.location.pathname.includes('student') || currentView === 'student-panel') {
+                  handleNavigate('home');
+                }
+                emitAppToast('تم إنهاء جميع جلسات الدخول وتسجيل الخروج من المنصة بواسطة إدارة المنصة الجامعية.', 'info');
+              }
+            }
+          }
+        });
+      }
+    };
+
+    const unsubReady = onFirestoreStreamReady(attachPublicStreams);
+    const handleOnlineReconnect = () => {
+      fetchData();
+    };
+    window.addEventListener('online', handleOnlineReconnect);
+
     return () => {
+      cancelled = true;
+      unsubReady();
+      window.removeEventListener('online', handleOnlineReconnect);
       if (unsubCourses) unsubCourses();
       if (unsubSettings) unsubSettings();
     };
@@ -455,6 +524,7 @@ function AcademyApp() {
     setStudentUnauthorizedDomain('');
     setStudentCanUseRedirect(false);
     setStudentAuthSuccess('');
+    setStudentResetSuccess('');
     setStudentAccountStatus('');
     setIsStudentAuthOpen(true);
   };
@@ -472,6 +542,7 @@ function AcademyApp() {
     setStudentUnauthorizedDomain('');
     setStudentCanUseRedirect(false);
     setStudentAuthSuccess('');
+    setStudentResetSuccess('');
     setStudentAccountStatus('');
     setIsAdminLoginOpen(true);
   };
@@ -674,6 +745,8 @@ function AcademyApp() {
 
   const handleAdminPasswordReset = async () => {
     setLoginError('');
+    setAdminProviderDisabled(false);
+    setAdminUnauthorizedDomain('');
     setAdminResetSuccess('');
     const targetEmail = adminEmail.trim().toLowerCase();
     if (!targetEmail || !validateEmail(targetEmail)) {
@@ -686,18 +759,127 @@ function AcademyApp() {
     }
     setAdminLoginLoading(true);
     try {
-      const res = await authService.sendAdminPasswordReset(targetEmail);
+      const res = await authService.sendPasswordReset(targetEmail, 'admin');
       if (res.success) {
+        const domainNoteAr = res.warningDomain
+          ? ` (ملاحظة: أضف النطاق ${res.warningDomain} في Authorized domains ليفتح الرابط داخل المنصة مباشرة).`
+          : '';
+        const domainNoteEn = res.warningDomain
+          ? ` (Note: add ${res.warningDomain} to Authorized domains so reset links open directly inside the app).`
+          : '';
         setAdminResetSuccess(
           language === 'ar'
-            ? `تم إرسال رابط تعيين / إعادة تعيين كلمة المرور إلى ${targetEmail}. افتح بريدك الإلكتروني واختر كلمة المرور الخاصة بك ثم سجل الدخول بها هنا.`
-            : `Password setup/reset link sent to ${targetEmail}. Open your email to set your password, then sign in here.`
+            ? `تم إرسال رابط تعيين / إعادة تعيين كلمة المرور إلى ${targetEmail}. راجع البريد الوارد ورسائل غير المرغوب فيها (Spam/Junk) واضغط على الرابط لإكمال تعيين كلمة المرور.${domainNoteAr}`
+            : `Password setup/reset link sent to ${targetEmail}. Check your inbox and Spam/Junk folder, then click the link to set your new password.${domainNoteEn}`
         );
       } else {
+        setAdminProviderDisabled(res.errorCode === 'auth/operation-not-allowed');
+        setAdminUnauthorizedDomain(res.blockedDomain || '');
         setLoginError(res.error || t('تعذر إرسال رابط تعيين كلمة المرور.', 'Could not send password reset link.'));
       }
     } finally {
       setAdminLoginLoading(false);
+    }
+  };
+
+  const handleStudentPasswordReset = async () => {
+    setStudentAuthError('');
+    setStudentProviderDisabled(false);
+    setStudentUnauthorizedDomain('');
+    setStudentResetSuccess('');
+    const targetEmail = studentAuthForm.email.trim().toLowerCase();
+    if (!targetEmail || !validateEmail(targetEmail)) {
+      setStudentAuthError(
+        language === 'ar'
+          ? 'يرجى كتابة البريد الإلكتروني للطالب في الخانة أعلاه أولاً ثم الضغط على «تعيين / نسيت كلمة المرور؟».'
+          : 'Please enter the student email address above first, then click Set / Forgot Password.'
+      );
+      return;
+    }
+    setStudentAuthLoading(true);
+    try {
+      const res = await authService.sendPasswordReset(targetEmail, 'student');
+      if (res.success) {
+        const domainNoteAr = res.warningDomain
+          ? ` (ملاحظة: أضف النطاق ${res.warningDomain} في Authorized domains ليفتح الرابط داخل المنصة مباشرة).`
+          : '';
+        const domainNoteEn = res.warningDomain
+          ? ` (Note: add ${res.warningDomain} to Authorized domains so reset links open directly inside the app).`
+          : '';
+        setStudentResetSuccess(
+          language === 'ar'
+            ? `تم إرسال رابط تعيين / إعادة تعيين كلمة المرور إلى ${targetEmail}. راجع البريد الوارد ورسائل غير المرغوب فيها (Spam/Junk) ثم اضغط الرابط لاختيار كلمة مرور جديدة.${domainNoteAr}`
+            : `Password setup/reset link sent to ${targetEmail}. Check your inbox and Spam/Junk folder, then open the link to set a new password.${domainNoteEn}`
+        );
+      } else {
+        setStudentProviderDisabled(res.errorCode === 'auth/operation-not-allowed');
+        setStudentUnauthorizedDomain(res.blockedDomain || '');
+        setStudentAuthError(res.error || t('تعذر إرسال رابط إعادة تعيين كلمة المرور.', 'Could not send password reset link.'));
+      }
+    } finally {
+      setStudentAuthLoading(false);
+    }
+  };
+
+  const handleConfirmInAppPasswordReset = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (resetSubmitting || resetCodeVerifying) return;
+    setResetModalError('');
+    setResetModalSuccess('');
+
+    if (!resetOobCode) {
+      setResetModalError(t('رمز إعادة التعيين غير صالح أو منتهي.', 'Reset code is invalid or missing.'));
+      return;
+    }
+    if (!resetNewPassword || resetNewPassword.length < 6) {
+      setResetModalError(t('كلمة المرور يجب أن لا تقل عن 6 أحرف.', 'Password must be at least 6 characters.'));
+      return;
+    }
+    if (resetNewPassword !== resetConfirmPassword) {
+      setResetModalError(t('كلمتا المرور غير متطابقتين.', 'Passwords do not match.'));
+      return;
+    }
+
+    setResetSubmitting(true);
+    try {
+      const res = await authService.confirmResetPassword(resetOobCode, resetNewPassword);
+      if (res.success) {
+        const emailLower = resetVerifiedEmail.trim().toLowerCase();
+        setResetModalSuccess(
+          language === 'ar'
+            ? 'تم حفظ كلمة المرور الجديدة بنجاح! يمكنك تسجيل الدخول الآن.'
+            : 'Your new password has been saved! You can sign in now.'
+        );
+        setTimeout(() => {
+          setIsPasswordResetModalOpen(false);
+          setResetNewPassword('');
+          setResetConfirmPassword('');
+          if (emailLower && isAdminEmail(emailLower)) {
+            setAdminEmail(emailLower);
+            setAdminPassword('');
+            openAdminAuthModal();
+            setAdminResetSuccess(
+              language === 'ar'
+                ? 'تم تعيين كلمة المرور الجديدة بنجاح. أدخلها الآن لتسجيل الدخول كمدير.'
+                : 'New password saved. Enter it now to sign in as Manager.'
+            );
+          } else {
+            if (emailLower) {
+              setStudentAuthForm((prev) => ({ ...prev, email: emailLower, password: '' }));
+            }
+            openStudentAuthModal('login');
+            setStudentResetSuccess(
+              language === 'ar'
+                ? 'تم تعيين كلمة المرور الجديدة بنجاح. يمكنك تسجيل الدخول الآن.'
+                : 'New password saved. You can sign in now.'
+            );
+          }
+        }, 1200);
+      } else {
+        setResetModalError(res.error || t('تعذر حفظ كلمة المرور الجديدة.', 'Failed to update password.'));
+      }
+    } finally {
+      setResetSubmitting(false);
     }
   };
 
@@ -707,10 +889,13 @@ function AcademyApp() {
     }
     setLoginError('');
     setAdminResetSuccess('');
+    setAdminProviderDisabled(false);
     setAdminUnauthorizedDomain('');
     setAdminCanUseRedirect(false);
     setStudentAuthError('');
+    setStudentProviderDisabled(false);
     setStudentAuthSuccess('');
+    setStudentResetSuccess('');
     setStudentAccountStatus('');
     setStudentUnauthorizedDomain('');
     setStudentCanUseRedirect(false);
@@ -802,6 +987,7 @@ function AcademyApp() {
     if (studentAuthLoading) return;
     setStudentAuthError('');
     setStudentAuthSuccess('');
+    setStudentResetSuccess('');
     setStudentUnauthorizedDomain('');
     setStudentCanUseRedirect(false);
     
@@ -2130,11 +2316,75 @@ function AcademyApp() {
                       <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">{t('بوابة إدارة محتوى منصة MOHAMED ELJOKER التعليمية', 'Secure gateway for MOHAMED ELJOKER Platform')}</p>
                     </div>
 
+                    {dbService.isRealFirebase() && (
+                      <div className="mb-4 space-y-2.5">
+                        <button
+                          type="button"
+                          disabled={adminLoginLoading}
+                          onClick={() => handleGoogleAuth('admin')}
+                          className="w-full rounded-xl bg-slate-900 dark:bg-white text-white dark:text-slate-950 hover:opacity-90 py-3 px-4 font-extrabold transition-all cursor-pointer shadow-md text-xs sm:text-sm disabled:opacity-60 flex items-center justify-center gap-2"
+                        >
+                          <span>🔐</span>
+                          <span>{adminLoginLoading ? t('جاري الاتصال بـ Google...', 'Connecting to Google...') : t('الدخول بحساب Google (المدير)', 'Sign in with Google (Manager)')}</span>
+                        </button>
+                        <div className="relative flex items-center py-1">
+                          <div className="flex-grow border-t border-slate-200 dark:border-slate-800" />
+                          <span className="mx-3 shrink-0 text-[10px] font-bold text-slate-400">
+                            {t('أو بالبريد الإلكتروني وكلمة المرور', 'Or with Email & Password')}
+                          </span>
+                          <div className="flex-grow border-t border-slate-200 dark:border-slate-800" />
+                        </div>
+                      </div>
+                    )}
+
                     <form onSubmit={handleAdminLoginSubmit} className="space-y-4 text-xs sm:text-sm text-slate-700 dark:text-slate-300">
                       {loginError && (
-                        <div className="rounded-lg bg-red-500/10 border border-red-500/20 p-3 text-red-600 dark:text-red-400 font-bold flex items-start gap-1.5 text-xs">
-                          <ShieldAlert className="h-4.5 w-4.5 shrink-0 mt-0.5" />
-                          <span>{loginError}</span>
+                        <div className="rounded-xl bg-red-500/10 border border-red-500/20 p-3 text-red-600 dark:text-red-400 font-bold space-y-2 text-xs leading-relaxed">
+                          <div className="flex items-start gap-1.5">
+                            <ShieldAlert className="h-4.5 w-4.5 shrink-0 mt-0.5" />
+                            <span>{loginError}</span>
+                          </div>
+                          {adminUnauthorizedDomain && (
+                            <div className="rounded-lg bg-slate-950/5 dark:bg-slate-900/80 border border-red-500/20 p-2.5 text-[11px] font-medium text-slate-700 dark:text-slate-200 space-y-1.5">
+                              <p className="font-bold">
+                                {t('خطوة مطلوبة لتشغيل الدخول بعد النشر:', 'Required setup for deployed domain:')}
+                              </p>
+                              <p>
+                                {t('افتح Firebase Console ← Authentication ← Settings ← Authorized domains وأضف النطاق:', 'Open Firebase Console → Authentication → Settings → Authorized domains and add:')}
+                              </p>
+                              <code dir="ltr" className="block text-left rounded bg-slate-200/80 dark:bg-slate-950 px-2 py-1 font-mono text-[11px] text-brand-cyan select-all">
+                                {adminUnauthorizedDomain}
+                              </code>
+                              <button
+                                type="button"
+                                disabled={adminLoginLoading}
+                                onClick={() => handleGoogleAuth('admin')}
+                                className="w-full rounded-lg bg-brand-cyan text-white dark:text-slate-950 hover:bg-brand-cyan-light py-1.5 px-3 font-extrabold text-[11px] cursor-pointer transition-colors disabled:opacity-60"
+                              >
+                                {t('تمت الإضافة — إعادة التحقق والدخول بحساب Google', 'Added — Recheck & Sign in with Google')}
+                              </button>
+                            </div>
+                          )}
+                          {adminCanUseRedirect && dbService.isRealFirebase() && (
+                            <button
+                              type="button"
+                              disabled={adminLoginLoading}
+                              onClick={() => handleGoogleRedirectFallback('admin')}
+                              className="w-full rounded-lg bg-slate-900 dark:bg-white text-white dark:text-slate-950 hover:opacity-90 py-2 px-3 font-extrabold text-xs cursor-pointer transition-colors disabled:opacity-60"
+                            >
+                              {t('المتابعة عبر إعادة التوجيه (Google Redirect) ←', 'Continue via Google Redirect →')}
+                            </button>
+                          )}
+                          {adminProviderDisabled && !adminUnauthorizedDomain && dbService.isRealFirebase() && (
+                            <button
+                              type="button"
+                              disabled={adminLoginLoading}
+                              onClick={() => handleGoogleAuth('admin')}
+                              className="w-full rounded-lg bg-brand-cyan text-white dark:text-slate-950 hover:bg-brand-cyan-light py-2 px-3 font-extrabold text-xs cursor-pointer transition-colors"
+                            >
+                              {t('تسجيل الدخول بحساب Google الآن ←', 'Sign in with Google Now →')}
+                            </button>
+                          )}
                         </div>
                       )}
                       {adminResetSuccess && (
@@ -2186,17 +2436,6 @@ function AcademyApp() {
                       >
                         {adminLoginLoading ? t('جاري تسجيل الدخول...', 'Signing in...') : t('تسجيل الدخول كمدير', 'Login as Manager')}
                       </button>
-
-                      {dbService.isRealFirebase() && (
-                        <button
-                          type="button"
-                          disabled={adminLoginLoading}
-                          onClick={() => handleGoogleAuth('admin')}
-                          className="w-full rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-800 dark:text-white py-2.5 font-bold transition-all cursor-pointer text-xs disabled:opacity-60"
-                        >
-                          🔐 {adminLoginLoading ? t('جاري الاتصال بـ Google...', 'Connecting to Google...') : t('الدخول بحساب Google (المدير)', 'Sign in with Google (Manager)')}
-                        </button>
-                      )}
                     </form>
                   </div>
                 </motion.div>
@@ -2415,16 +2654,24 @@ function AcademyApp() {
                         <span>{loginError}</span>
                       </div>
                       {adminUnauthorizedDomain && (
-                        <div className="rounded-lg bg-slate-950/5 dark:bg-slate-900/80 border border-red-500/20 p-2.5 text-[10px] font-medium text-slate-700 dark:text-slate-200 space-y-1">
+                        <div className="rounded-lg bg-slate-950/5 dark:bg-slate-900/80 border border-red-500/20 p-2.5 text-[10px] font-medium text-slate-700 dark:text-slate-200 space-y-1.5">
                           <p className="font-bold">
                             {t('خطوة مطلوبة لتشغيل الدخول بعد النشر:', 'Required setup for deployed domain:')}
                           </p>
                           <p>
                             {t('افتح Firebase Console ← Authentication ← Settings ← Authorized domains وأضف النطاق:', 'Open Firebase Console → Authentication → Settings → Authorized domains and add:')}
                           </p>
-                          <code className="block rounded bg-slate-200/80 dark:bg-slate-950 px-2 py-1 font-mono text-[10px] text-brand-cyan select-all">
+                          <code dir="ltr" className="block text-left rounded bg-slate-200/80 dark:bg-slate-950 px-2 py-1 font-mono text-[10px] text-brand-cyan select-all">
                             {adminUnauthorizedDomain}
                           </code>
+                          <button
+                            type="button"
+                            disabled={adminLoginLoading}
+                            onClick={() => handleGoogleAuth('admin')}
+                            className="w-full rounded-lg bg-brand-cyan text-white dark:text-slate-950 hover:bg-brand-cyan-light py-1.5 px-3 font-extrabold text-[10px] cursor-pointer transition-colors disabled:opacity-60"
+                          >
+                            {t('تمت الإضافة — إعادة التحقق والدخول بحساب Google', 'Added — Recheck & Sign in with Google')}
+                          </button>
                         </div>
                       )}
                       {adminCanUseRedirect && dbService.isRealFirebase() && (
@@ -2437,7 +2684,7 @@ function AcademyApp() {
                           {t('المتابعة عبر إعادة التوجيه (Google Redirect) ←', 'Continue via Google Redirect →')}
                         </button>
                       )}
-                      {adminProviderDisabled && dbService.isRealFirebase() && (
+                      {adminProviderDisabled && !adminUnauthorizedDomain && dbService.isRealFirebase() && (
                         <button
                           type="button"
                           disabled={adminLoginLoading}
@@ -2567,6 +2814,12 @@ function AcademyApp() {
                     </div>
                   )}
 
+                  {studentResetSuccess && (
+                    <div className="rounded-xl bg-emerald-500/10 border border-emerald-500/25 p-3 text-emerald-700 dark:text-emerald-300 font-bold text-[11px] leading-relaxed">
+                      {studentResetSuccess}
+                    </div>
+                  )}
+
                   {studentAuthError && (
                     <div className={`rounded-xl border p-3.5 font-bold space-y-2 text-[11px] ${
                       studentAccountStatus === 'pending'
@@ -2578,16 +2831,24 @@ function AcademyApp() {
                         <span>{studentAuthError}</span>
                       </div>
                       {studentUnauthorizedDomain && (
-                        <div className="rounded-lg bg-slate-950/5 dark:bg-slate-900/80 border border-red-500/20 p-2.5 text-[10px] font-medium text-slate-700 dark:text-slate-200 space-y-1">
+                        <div className="rounded-lg bg-slate-950/5 dark:bg-slate-900/80 border border-red-500/20 p-2.5 text-[10px] font-medium text-slate-700 dark:text-slate-200 space-y-1.5">
                           <p className="font-bold">
                             {t('خطوة مطلوبة لتشغيل الدخول بعد النشر:', 'Required setup for deployed domain:')}
                           </p>
                           <p>
                             {t('افتح Firebase Console ← Authentication ← Settings ← Authorized domains وأضف النطاق:', 'Open Firebase Console → Authentication → Settings → Authorized domains and add:')}
                           </p>
-                          <code className="block rounded bg-slate-200/80 dark:bg-slate-950 px-2 py-1 font-mono text-[10px] text-brand-cyan select-all">
+                          <code dir="ltr" className="block text-left rounded bg-slate-200/80 dark:bg-slate-950 px-2 py-1 font-mono text-[10px] text-brand-cyan select-all">
                             {studentUnauthorizedDomain}
                           </code>
+                          <button
+                            type="button"
+                            disabled={studentAuthLoading}
+                            onClick={() => handleGoogleAuth('student')}
+                            className="w-full rounded-lg bg-brand-cyan text-white dark:text-slate-950 hover:bg-brand-cyan-light py-1.5 px-3 font-extrabold text-[10px] cursor-pointer transition-colors disabled:opacity-60"
+                          >
+                            {t('تمت الإضافة — إعادة التحقق والدخول بحساب Google', 'Added — Recheck & Continue with Google')}
+                          </button>
                         </div>
                       )}
                       {studentCanUseRedirect && dbService.isRealFirebase() && (
@@ -2600,7 +2861,7 @@ function AcademyApp() {
                           {t('المتابعة عبر إعادة التوجيه (Google Redirect) ←', 'Continue via Google Redirect →')}
                         </button>
                       )}
-                      {studentProviderDisabled && dbService.isRealFirebase() && (
+                      {studentProviderDisabled && !studentUnauthorizedDomain && dbService.isRealFirebase() && (
                         <button
                           type="button"
                           disabled={studentAuthLoading}
@@ -2710,7 +2971,19 @@ function AcademyApp() {
                   )}
 
                   <div>
-                    <label className="block mb-1.5 font-semibold text-slate-800 dark:text-white">{t('كلمة المرور الآمنة', 'Password')}</label>
+                    <div className="flex items-center justify-between mb-1.5">
+                      <label className="font-semibold text-slate-800 dark:text-white">{t('كلمة المرور الآمنة', 'Password')}</label>
+                      {studentAuthMode === 'login' && dbService.isRealFirebase() && (
+                        <button
+                          type="button"
+                          disabled={studentAuthLoading}
+                          onClick={handleStudentPasswordReset}
+                          className="text-[11px] font-bold text-brand-cyan hover:underline cursor-pointer disabled:opacity-50"
+                        >
+                          {t('تعيين / نسيت كلمة المرور؟', 'Set / Forgot Password?')}
+                        </button>
+                      )}
+                    </div>
                     <input
                       type="password"
                       required
@@ -2867,6 +3140,129 @@ function AcademyApp() {
                 user={authService.getCurrentUser()}
               />
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* In-App Password Reset Link Modal (?mode=resetPassword&oobCode=...) */}
+      {isPasswordResetModalOpen && (
+        <div className="fixed inset-0 z-[120] flex items-center justify-center bg-slate-950/75 dark:bg-[#090d16]/90 backdrop-blur-md p-3 sm:p-4 animate-fadeIn">
+          <div className="relative w-full max-w-md rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950 p-6 sm:p-7 shadow-2xl max-h-[90vh] overflow-y-auto">
+            <button
+              type="button"
+              onClick={() => setIsPasswordResetModalOpen(false)}
+              className="absolute top-3.5 left-3.5 rounded-lg bg-slate-100 dark:bg-slate-900 p-2 text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white border border-slate-200 dark:border-slate-800 cursor-pointer"
+              aria-label="Close"
+            >
+              <X className="h-4.5 w-4.5" />
+            </button>
+
+            <div className="text-center mb-5 mt-1">
+              <span className="inline-flex h-12 w-12 items-center justify-center rounded-xl bg-brand-cyan/10 border border-brand-cyan/20 text-brand-cyan mx-auto mb-3">
+                <KeyRound className="h-6 w-6" />
+              </span>
+              <h3 className="text-lg font-black text-slate-900 dark:text-white">
+                {t('تعيين كلمة مرور جديدة', 'Set a New Password')}
+              </h3>
+              <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
+                {t('منصة MOHAMED ELJOKER التعليمية', 'MOHAMED ELJOKER Educational Platform')}
+              </p>
+            </div>
+
+            {resetCodeVerifying ? (
+              <div className="flex flex-col items-center justify-center py-8 gap-3 text-slate-500 dark:text-slate-400 text-xs font-bold">
+                <Loader className="h-6 w-6 animate-spin text-brand-cyan" />
+                <span>{t('جاري التحقق من صلاحية رابط تعيين كلمة المرور...', 'Verifying your password reset link...')}</span>
+              </div>
+            ) : resetModalError && !resetVerifiedEmail ? (
+              <div className="space-y-4">
+                <div className="rounded-xl bg-red-500/10 border border-red-500/20 p-3.5 text-red-600 dark:text-red-400 font-bold text-xs flex items-start gap-2 leading-relaxed">
+                  <ShieldAlert className="h-4.5 w-4.5 shrink-0 mt-0.5" />
+                  <span>{resetModalError}</span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsPasswordResetModalOpen(false);
+                    openStudentAuthModal('login');
+                  }}
+                  className="w-full rounded-xl bg-brand-cyan text-white dark:text-slate-950 hover:bg-brand-cyan-light py-3 font-bold text-xs cursor-pointer transition-colors"
+                >
+                  {t('العودة لتسجيل الدخول وطلب رابط جديد', 'Back to Login & Request a New Link')}
+                </button>
+              </div>
+            ) : (
+              <form onSubmit={handleConfirmInAppPasswordReset} className="space-y-4 text-xs text-slate-700 dark:text-slate-300">
+                {resetVerifiedEmail && (
+                  <div className="rounded-xl bg-slate-100 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 px-3.5 py-2.5 flex items-center justify-between gap-2">
+                    <span className="text-slate-500 dark:text-slate-400 font-semibold">{t('الحساب:', 'Account:')}</span>
+                    <span dir="ltr" className="font-mono font-bold text-slate-900 dark:text-white truncate">{resetVerifiedEmail}</span>
+                  </div>
+                )}
+
+                {resetModalError && (
+                  <div className="rounded-xl bg-red-500/10 border border-red-500/20 p-3 text-red-600 dark:text-red-400 font-bold flex items-start gap-1.5 text-xs leading-relaxed">
+                    <ShieldAlert className="h-4 w-4 shrink-0 mt-0.5" />
+                    <span>{resetModalError}</span>
+                  </div>
+                )}
+
+                {resetModalSuccess && (
+                  <div className="rounded-xl bg-emerald-500/10 border border-emerald-500/25 p-3 text-emerald-700 dark:text-emerald-300 font-bold flex items-center gap-2 text-xs leading-relaxed">
+                    <CheckCircle2 className="h-4 w-4 shrink-0" />
+                    <span>{resetModalSuccess}</span>
+                  </div>
+                )}
+
+                <div>
+                  <label className="block mb-1.5 font-semibold text-slate-800 dark:text-white">
+                    {t('كلمة المرور الجديدة (6 أحرف على الأقل)', 'New Password (min 6 characters)')}
+                  </label>
+                  <div className="relative">
+                    <input
+                      type={resetShowPassword ? 'text' : 'password'}
+                      required
+                      minLength={6}
+                      placeholder="••••••••"
+                      value={resetNewPassword}
+                      onChange={e => setResetNewPassword(e.target.value)}
+                      className="w-full rounded-xl bg-slate-50 dark:bg-slate-900 border border-slate-300 dark:border-slate-800 p-3 pl-10 text-slate-900 dark:text-white focus:outline-none focus:border-brand-cyan font-mono"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setResetShowPassword(v => !v)}
+                      className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-700 dark:hover:text-white cursor-pointer"
+                      aria-label={resetShowPassword ? 'Hide password' : 'Show password'}
+                    >
+                      {resetShowPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                    </button>
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block mb-1.5 font-semibold text-slate-800 dark:text-white">
+                    {t('تأكيد كلمة المرور الجديدة', 'Confirm New Password')}
+                  </label>
+                  <input
+                    type={resetShowPassword ? 'text' : 'password'}
+                    required
+                    minLength={6}
+                    placeholder="••••••••"
+                    value={resetConfirmPassword}
+                    onChange={e => setResetConfirmPassword(e.target.value)}
+                    className="w-full rounded-xl bg-slate-50 dark:bg-slate-900 border border-slate-300 dark:border-slate-800 p-3 text-slate-900 dark:text-white focus:outline-none focus:border-brand-cyan font-mono"
+                  />
+                </div>
+
+                <button
+                  type="submit"
+                  disabled={resetSubmitting || Boolean(resetModalSuccess)}
+                  className="w-full rounded-xl bg-brand-cyan text-white dark:text-slate-950 hover:bg-brand-cyan-light py-3 font-bold transition-all cursor-pointer shadow-md text-xs disabled:opacity-60"
+                >
+                  {resetSubmitting ? t('جاري حفظ كلمة المرور...', 'Saving new password...') : t('حفظ كلمة المرور الجديدة', 'Save New Password')}
+                </button>
+              </form>
+            )}
           </div>
         </div>
       )}

@@ -576,7 +576,8 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
       if (cancelled) return;
       loadData();
 
-      const hasAdminFbAuth = !dbService.isRealFirebase() || Boolean(firebaseAuth?.currentUser && isAdminEmail(firebaseAuth.currentUser.email || ''));
+      const hasAdminFbAuth = !dbService.isRealFirebase() || await dbService.verifyAdminSession();
+      if (cancelled) return;
       cleanups = [
         dbService.listenToCourses((realtimeCourses) => setCourses(realtimeCourses)),
       ];

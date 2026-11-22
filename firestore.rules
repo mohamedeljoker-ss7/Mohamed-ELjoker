@@ -8,12 +8,16 @@ service cloud.firestore {
     }
 
     function isSuperAdminEmail() {
-      return isSignedIn() && request.auth.token.email != null && 
+      return isSignedIn() &&
+        ('email' in request.auth.token) &&
+        request.auth.token.email is string &&
         request.auth.token.email.lower() == 'mhmdbdaltwabalsdawy7@gmail.com';
     }
 
     function isListedAdminEmail() {
-      return isSignedIn() && request.auth.token.email != null &&
+      return isSignedIn() &&
+        ('email' in request.auth.token) &&
+        request.auth.token.email is string &&
         exists(/databases/$(database)/documents/admins/$(request.auth.token.email.lower()));
     }
 
@@ -312,7 +316,7 @@ service cloud.firestore {
 
     // Admins whitelist (keyed by lowercase email; only Primary Super Admin can modify)
     match /admins/{adminId} {
-      allow get: if isAdmin() || (isSignedIn() && request.auth.token.email != null && adminId == request.auth.token.email.lower());
+      allow get: if isAdmin() || (isSignedIn() && ('email' in request.auth.token) && request.auth.token.email is string && adminId == request.auth.token.email.lower());
       allow list: if isAdmin();
       allow write: if isSuperAdminEmail();
     }

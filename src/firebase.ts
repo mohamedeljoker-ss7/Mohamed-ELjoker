@@ -1,6 +1,6 @@
 import { initializeApp, getApps, getApp, deleteApp } from 'firebase/app';
 import { initializeFirestore, getFirestore, collection, doc, getDocs, getDoc, getDocFromServer, setDoc, updateDoc, deleteDoc, addDoc, query, where, orderBy, onSnapshot, deleteField, increment, arrayUnion } from 'firebase/firestore';
-import { getAuth, signInWithEmailAndPassword, createUserWithEmailAndPassword, sendPasswordResetEmail, signOut, onAuthStateChanged, GoogleAuthProvider, signInWithPopup, signInWithRedirect, getRedirectResult, User } from 'firebase/auth';
+import { getAuth, signInWithEmailAndPassword, createUserWithEmailAndPassword, sendPasswordResetEmail, verifyPasswordResetCode, confirmPasswordReset, signOut, onAuthStateChanged, GoogleAuthProvider, signInWithPopup, signInWithRedirect, getRedirectResult, User } from 'firebase/auth';
 import firebaseAppletConfig from '../firebase-applet-config.json';
 import { Course, Category, Student, NewsItem, Article, UserReview, Message, Admin, WebsiteSettings, Teacher, Coupon, Order, Quiz, QuizSubmission, UserAuth, Assignment, AssignmentSubmission, Certificate, ChatMessage, ChatThread, LessonComment, Notification, LessonAccess, CourseAccess, CourseRequest, LectureItem, SectionItem, ExamItem, SheetItem, SheetSubmission, QuestionBankItem, OnlineExamQuestion, ExamSubmission, ScheduleItem, StudentInquiry, ActivityLogItem, SheetAnswerKeyDoc, ExamPrivateKeyDoc, ExamPrivateKeyEntry } from './types';
 import { normalizeCourseLessons } from './utils/authAccess';
@@ -392,6 +392,137 @@ async function withFirestoreReadTimeout<T>(promise: Promise<T>, timeoutMs = 4500
   }
 }
 
+let firestoreStreamReady = false;
+const firestoreStreamListeners = new Set<() => void>();
+
+export const isFirestoreStreamReady = (): boolean => firestoreStreamReady;
+
+export const onFirestoreStreamReady = (cb: () => void): (() => void) => {
+  if (firestoreStreamReady) {
+    cb();
+    return () => {};
+  }
+  firestoreStreamListeners.add(cb);
+  return () => {
+    firestoreStreamListeners.delete(cb);
+  };
+};
+
+const markFirestoreStreamReady = () => {
+  if (firestoreStreamReady) return;
+  firestoreStreamReady = true;
+  firestoreStreamListeners.forEach((cb) => {
+    try { cb(); } catch {}
+  });
+  firestoreStreamListeners.clear();
+};
+
+let cachedAuthorizedDomains: string[] | null = null;
+let cachedAuthorizedDomainsFetchedAt = 0;
+
+function isHostMatchedInAuthorizedDomains(hostname: string, domains: string[]): boolean {
+  const cleanHost = (hostname || '').trim().toLowerCase();
+  if (!cleanHost) return true;
+  if (cleanHost === 'localhost' || cleanHost === '127.0.0.1' || cleanHost === '[::1]') {
+    return true;
+  }
+  return domains.some((d) => {
+    const cleanDomain = String(d || '').trim().toLowerCase();
+    return cleanDomain && (cleanHost === cleanDomain || cleanHost.endsWith('.' + cleanDomain));
+  });
+}
+
+async function fetchFirebaseAuthorizedDomains(forceRefresh = false): Promise<string[] | null> {
+  if (!firebaseConfig.apiKey || typeof fetch === 'undefined') return null;
+  const now = Date.now();
+  if (!forceRefresh && cachedAuthorizedDomains && (now - cachedAuthorizedDomainsFetchedAt) < 30000) {
+    return cachedAuthorizedDomains;
+  }
+  const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
+  const timer = controller ? setTimeout(() => controller.abort(), 5000) : null;
+  try {
+    const res = await fetch(
+      `https://identitytoolkit.googleapis.com/v1/projects?key=${encodeURIComponent(firebaseConfig.apiKey)}`,
+      {
+        method: 'GET',
+        cache: 'no-store',
+        ...(controller ? { signal: controller.signal } : {})
+      }
+    );
+    if (!res.ok) return cachedAuthorizedDomains;
+    const json = await res.json();
+    if (Array.isArray(json?.authorizedDomains)) {
+      cachedAuthorizedDomains = json.authorizedDomains.map((d: any) => String(d || '').trim().toLowerCase()).filter(Boolean);
+      cachedAuthorizedDomainsFetchedAt = Date.now();
+      return cachedAuthorizedDomains;
+    }
+    return cachedAuthorizedDomains;
+  } catch {
+    return cachedAuthorizedDomains;
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
+let cachedEmailPasswordEnabled: boolean | null = null;
+let cachedEmailPasswordCheckedAt = 0;
+
+async function checkEmailPasswordProviderEnabled(forceRefresh = false): Promise<boolean | null> {
+  if (!firebaseConfig.apiKey || typeof fetch === 'undefined') return null;
+  const now = Date.now();
+  if (!forceRefresh && cachedEmailPasswordEnabled !== null && (now - cachedEmailPasswordCheckedAt) < 30000) {
+    return cachedEmailPasswordEnabled;
+  }
+  const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
+  const timer = controller ? setTimeout(() => controller.abort(), 5000) : null;
+  try {
+    const res = await fetch(
+      `https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=${encodeURIComponent(firebaseConfig.apiKey)}`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          email: 'provider-check@example.invalid',
+          password: 'ProviderCheck!2026',
+          returnSecureToken: false
+        }),
+        ...(controller ? { signal: controller.signal } : {})
+      }
+    );
+    const json = await res.json().catch(() => null);
+    const errMsg = String(json?.error?.message || '');
+    if (errMsg.includes('PASSWORD_LOGIN_DISABLED') || errMsg.includes('OPERATION_NOT_ALLOWED')) {
+      cachedEmailPasswordEnabled = false;
+      cachedEmailPasswordCheckedAt = Date.now();
+      return false;
+    }
+    if (errMsg) {
+      cachedEmailPasswordEnabled = true;
+      cachedEmailPasswordCheckedAt = Date.now();
+      return true;
+    }
+    return cachedEmailPasswordEnabled;
+  } catch {
+    return cachedEmailPasswordEnabled;
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
+function clearRejectedOriginValidationCache(authInstance: any): void {
+  try {
+    const resolver = authInstance?._popupRedirectResolver;
+    const key = typeof authInstance?._key === 'function' ? authInstance._key() : null;
+    if (resolver?.originValidationPromises && key && resolver.originValidationPromises[key]) {
+      Promise.resolve(resolver.originValidationPromises[key]).catch(() => {
+        try {
+          delete resolver.originValidationPromises[key];
+        } catch {}
+      });
+    }
+  } catch {}
+}
+
 if (firebaseConfig.apiKey && firebaseConfig.projectId) {
   try {
     if (!getApps().length) {
@@ -425,6 +556,18 @@ if (firebaseConfig.apiKey && firebaseConfig.projectId) {
     isFirebaseConfigured = true;
     console.log("Firebase initialized successfully inside MOHAMED ELJOKER IT University Platform with database ID:", dbId || "(default)");
 
+    // Pre-fetch authorized domains immediately so click handlers know host status synchronously without delaying signInWithPopup
+    fetchFirebaseAuthorizedDomains(true).then((domains) => {
+      if (domains && typeof window !== 'undefined' && isHostMatchedInAuthorizedDomains(window.location.hostname, domains)) {
+        const resolver = (firebaseAuth as any)?._popupRedirectResolver;
+        if (resolver && typeof resolver._originValidation === 'function') {
+          Promise.resolve(resolver._originValidation(firebaseAuth)).catch(() => {
+            clearRejectedOriginValidationCache(firebaseAuth);
+          });
+        }
+      }
+    }).catch(() => {});
+
     // Validate Firestore connection on boot (non-blocking)
     setTimeout(() => {
       (async () => {
@@ -432,8 +575,10 @@ if (firebaseConfig.apiKey && firebaseConfig.projectId) {
           console.warn("Browser reports offline status; skipping live Firestore boot probe and using cached fallback.");
           return;
         }
+
         try {
           await getDocFromServer(doc(firestoreDb, 'settings', 'global'));
+          markFirestoreStreamReady();
         } catch (err) {
           if (err instanceof Error && err.message.includes('the client is offline')) {
             const restDiag = await fetchPublicFirestoreDocViaRestWithStatus('settings', 'global');
@@ -463,9 +608,33 @@ export const waitForFirebaseAuth = async (): Promise<void> => {
   }
 };
 
+const verifiedAdminCheckCache: { key: string; allowed: boolean; ts: number } = { key: '', allowed: false, ts: 0 };
+
 const isFirebaseSignedInAdmin = (): boolean => {
   return Boolean(firebaseAuth?.currentUser && isAdminEmail(firebaseAuth.currentUser.email || ''));
 };
+
+async function isVerifiedFirebaseAdmin(): Promise<boolean> {
+  if (!isFirebaseConfigured || !firebaseAuth) return false;
+  await waitForFirebaseAuth();
+  const user = firebaseAuth.currentUser;
+  if (!user) return false;
+  const email = (user.email || '').trim().toLowerCase();
+  if (!email) return false;
+  if (isSuperAdminEmail(email)) return true;
+
+  const cacheKey = `${user.uid}:${email}`;
+  const now = Date.now();
+  if (verifiedAdminCheckCache.key === cacheKey && (now - verifiedAdminCheckCache.ts) < 60000) {
+    return verifiedAdminCheckCache.allowed;
+  }
+  const level = await resolveAdminAccessLevel(email, user);
+  const allowed = level !== null;
+  verifiedAdminCheckCache.key = cacheKey;
+  verifiedAdminCheckCache.allowed = allowed;
+  verifiedAdminCheckCache.ts = now;
+  return allowed;
+}
 
 const canReadApprovedContentFromFirestore = (): boolean => {
   if (!firebaseAuth?.currentUser) return false;
@@ -1013,6 +1182,7 @@ export function sanitizeForFirestore(val: any): any {
 export const dbService = {
   // Check if real database is connected
   isRealFirebase: () => isFirebaseConfigured,
+  verifyAdminSession: (): Promise<boolean> => isVerifiedFirebaseAdmin(),
 
   // --- File/Media Uploads ---
   uploadFileWithProgress: async (
@@ -3068,8 +3238,8 @@ export const dbService = {
   // --- Students ---
   getStudents: async (): Promise<Student[]> => {
     if (isFirebaseConfigured) {
-      await waitForFirebaseAuth();
-      if (!firebaseAuth?.currentUser || !isAdminEmail(firebaseAuth.currentUser.email || '')) {
+      const isAdm = await isVerifiedFirebaseAdmin();
+      if (!isAdm) {
         return getStorageItem<Student[]>('students', defaultStudents);
       }
       try {
@@ -3755,8 +3925,8 @@ export const dbService = {
   // --- Messages ---
   getMessages: async (): Promise<Message[]> => {
     if (isFirebaseConfigured) {
-      await waitForFirebaseAuth();
-      if (!firebaseAuth?.currentUser || !isAdminEmail(firebaseAuth.currentUser.email || '')) {
+      const isAdm = await isVerifiedFirebaseAdmin();
+      if (!isAdm) {
         return getStorageItem<Message[]>('messages', defaultMessages);
       }
       try {
@@ -3867,8 +4037,8 @@ export const dbService = {
   // --- Admins ---
   getAdmins: async (): Promise<Admin[]> => {
     if (isFirebaseConfigured) {
-      await waitForFirebaseAuth();
-      if (!isFirebaseSignedInAdmin()) {
+      const isAdm = await isVerifiedFirebaseAdmin();
+      if (!isAdm) {
         return getStorageItem<Admin[]>('admins', defaultAdmins);
       }
       try {
@@ -4022,8 +4192,8 @@ export const dbService = {
   // --- Coupons ---
   getCoupons: async (): Promise<Coupon[]> => {
     if (isFirebaseConfigured) {
-      await waitForFirebaseAuth();
-      if (!isFirebaseSignedInAdmin()) {
+      const isAdm = await isVerifiedFirebaseAdmin();
+      if (!isAdm) {
         return getStorageItem<Coupon[]>('coupons', defaultCoupons);
       }
       try {
@@ -4091,8 +4261,8 @@ export const dbService = {
         return studentId ? local.filter(o => o.studentId === studentId) : local;
       }
       try {
-        const isAdm = isAdminEmail(firebaseAuth.currentUser.email || '');
-        const effectiveStudentId = isAdm ? studentId : (studentId || firebaseAuth.currentUser.uid);
+        const isAdm = await isVerifiedFirebaseAdmin();
+        const effectiveStudentId = isAdm ? studentId : firebaseAuth.currentUser.uid;
 
         const ordersRef = collection(firestoreDb, 'orders');
         const ordersQuery = effectiveStudentId
@@ -4130,7 +4300,7 @@ export const dbService = {
         return () => {};
       }
       const isAdm = isAdminEmail(firebaseAuth.currentUser.email || '');
-      const effectiveStudentId = isAdm ? studentId : (studentId || firebaseAuth.currentUser.uid);
+      const effectiveStudentId = isAdm ? studentId : firebaseAuth.currentUser.uid;
 
       let ordersList: Order[] = [];
       let requestsList: Order[] = [];
@@ -4714,7 +4884,7 @@ export const dbService = {
         return () => {};
       }
       const isAdm = isAdminEmail(firebaseAuth.currentUser.email || '');
-      const effectiveStudentId = isAdm ? studentId : (studentId || firebaseAuth.currentUser.uid);
+      const effectiveStudentId = isAdm ? studentId : firebaseAuth.currentUser.uid;
       const colRef = collection(firestoreDb, 'assignments');
       const q = effectiveStudentId ? query(colRef, where('studentId', '==', effectiveStudentId)) : colRef;
       return onSnapshot(q, (snap) => {
@@ -4745,8 +4915,8 @@ export const dbService = {
         return studentId ? list.filter(a => a.studentId === studentId) : list;
       }
       try {
-        const isAdm = isAdminEmail(firebaseAuth.currentUser.email || '');
-        const effectiveStudentId = isAdm ? studentId : (studentId || firebaseAuth.currentUser.uid);
+        const isAdm = await isVerifiedFirebaseAdmin();
+        const effectiveStudentId = isAdm ? studentId : firebaseAuth.currentUser.uid;
         const refCol = collection(firestoreDb, 'assignments');
         const q = effectiveStudentId ? query(refCol, where('studentId', '==', effectiveStudentId)) : refCol;
         const snap = await getDocs(q);
@@ -5447,17 +5617,44 @@ function saveActiveUserSession(user: UserAuth, markFreshLogin: boolean = false):
   }
 }
 
+let activeGooglePopupInFlight = false;
+
 // Unified Auth Service with Role-based Authentication (Admin, Teacher, Student)
 export const authService = {
   isRealFirebase: () => isFirebaseConfigured,
+
+  recheckAuthorizedDomain: async (): Promise<{ authorized: boolean; host: string; projectId: string }> => {
+    const host = typeof window !== 'undefined' ? window.location.hostname : '';
+    const projectId = firebaseConfig.projectId || '';
+    const domains = await fetchFirebaseAuthorizedDomains(true);
+    if (!domains) {
+      return { authorized: true, host, projectId };
+    }
+    const authorized = isHostMatchedInAuthorizedDomains(host, domains);
+    if (authorized && firebaseAuth) {
+      clearRejectedOriginValidationCache(firebaseAuth);
+    }
+    return { authorized, host, projectId };
+  },
 
   // Pick a Google account in an isolated temporary Firebase app so the active Super Admin stays logged in
   pickGoogleAccountForAdmin: async (): Promise<{ success: boolean; name?: string; email?: string; error?: string }> => {
     if (!isFirebaseConfigured) {
       return { success: false, error: 'ميزة اختيار حساب Google متاحة عند الاتصال بـ Firebase.' };
     }
+    if (activeGooglePopupInFlight) {
+      return { success: false, error: 'يوجد طلب تسجيل دخول مفتوح بالفعل. يرجى إتمامه أو إغلاقه أولاً.' };
+    }
+    const host = typeof window !== 'undefined' ? window.location.hostname : '';
+    if (cachedAuthorizedDomains && !isHostMatchedInAuthorizedDomains(host, cachedAuthorizedDomains)) {
+      const refreshed = await fetchFirebaseAuthorizedDomains(true);
+      if (refreshed && !isHostMatchedInAuthorizedDomains(host, refreshed)) {
+        return { success: false, error: `النطاق الحالي (${host}) غير مضاف في Authorized domains داخل Firebase Console.` };
+      }
+    }
     const appName = 'admin_picker_' + Date.now();
     let pickerApp: ReturnType<typeof initializeApp> | null = null;
+    activeGooglePopupInFlight = true;
     try {
       pickerApp = initializeApp(firebaseConfig, appName);
       const pickerAuth = getAuth(pickerApp);
@@ -5473,18 +5670,18 @@ export const authService = {
       return { success: true, name: displayName, email: cleanEmail };
     } catch (err: any) {
       const code = String(err?.code || '');
-      if (code === 'auth/popup-closed-by-user') {
+      if (code === 'auth/popup-closed-by-user' || code === 'auth/cancelled-popup-request') {
         return { success: false, error: 'تم إغلاق نافذة اختيار حساب Google قبل الاختيار.' };
       }
       if (code === 'auth/popup-blocked') {
         return { success: false, error: 'قام المتصفح بحظر النافذة المنبثقة. اسمح بالنوافذ المنبثقة أو اكتب البريد يدوياً.' };
       }
       if (code === 'auth/unauthorized-domain') {
-        const host = typeof window !== 'undefined' ? window.location.hostname : '';
         return { success: false, error: `النطاق الحالي (${host}) غير مضاف في Authorized domains داخل Firebase Console.` };
       }
       return { success: false, error: err?.message || 'تعذر قراءة بيانات الحساب من Google.' };
     } finally {
+      activeGooglePopupInFlight = false;
       if (pickerApp) {
         await deleteApp(pickerApp).catch(() => {});
       }
@@ -5526,8 +5723,17 @@ export const authService = {
         try {
           const userCredential = await signInWithEmailAndPassword(firebaseAuth, cleanEmail, cleanPassword);
           fbUser = userCredential.user;
+          cachedEmailPasswordEnabled = true;
+          cachedEmailPasswordCheckedAt = Date.now();
         } catch (signInErr: any) {
           authErrCode = String(signInErr?.code || '');
+          if (authErrCode === 'auth/operation-not-allowed') {
+            cachedEmailPasswordEnabled = false;
+            cachedEmailPasswordCheckedAt = Date.now();
+          } else if (authErrCode === 'auth/wrong-password' || authErrCode === 'auth/invalid-credential' || authErrCode === 'auth/user-not-found') {
+            cachedEmailPasswordEnabled = true;
+            cachedEmailPasswordCheckedAt = Date.now();
+          }
         }
 
         if (!fbUser) {
@@ -5652,44 +5858,201 @@ export const authService = {
     }
   },
 
-  sendAdminPasswordReset: async (email: string): Promise<{ success: boolean; error?: string }> => {
+  sendPasswordReset: async (
+    email: string,
+    role: 'admin' | 'student' = 'student'
+  ): Promise<{ success: boolean; error?: string; errorCode?: string; blockedDomain?: string; warningDomain?: string }> => {
     const cleanEmail = email.trim().toLowerCase();
     const isEn = isEnglishUi();
     if (!cleanEmail) {
-      return { success: false, error: isEn ? 'Please enter the administrator email first.' : 'يرجى إدخال البريد الإلكتروني للمدير أولاً.' };
+      return {
+        success: false,
+        error: isEn
+          ? `Please enter your ${role === 'admin' ? 'administrator' : 'student'} email first.`
+          : (role === 'admin' ? 'يرجى إدخال البريد الإلكتروني للمدير أولاً.' : 'يرجى إدخال البريد الإلكتروني للطالب أولاً.')
+      };
     }
     if (!isFirebaseConfigured || !firebaseAuth) {
-      return { success: false, error: isEn ? 'Password reset is only available when Firebase is configured.' : 'خدمة إعادة تعيين كلمة المرور متاحة عند الاتصال بـ Firebase.' };
+      return {
+        success: false,
+        error: isEn ? 'Password reset is only available when Firebase is configured.' : 'خدمة تعيين وإعادة تعيين كلمة المرور متاحة عند الاتصال بـ Firebase.'
+      };
     }
+
+    const host = typeof window !== 'undefined' ? window.location.hostname : '';
+    const providerEnabled = await checkEmailPasswordProviderEnabled(true);
+    if (providerEnabled === false) {
+      return {
+        success: false,
+        errorCode: 'auth/operation-not-allowed',
+        error: isEn
+          ? 'Email/Password sign-in provider is currently disabled in Firebase Console (Authentication > Sign-in method). Enable Email/Password there first so password reset links can work, or sign in with Google above.'
+          : 'مزود البريد الإلكتروني وكلمة المرور (Email/Password) معطل حالياً في Firebase Console. قم بتفعيله أولاً من Authentication > Sign-in method حتى يعمل رابط تعيين/استعادة كلمة المرور، أو سجل الدخول بحساب Google بالأعلى.'
+      };
+    }
+
+    const domains = await fetchFirebaseAuthorizedDomains();
+    const hostAuthorized = !host || !domains || isHostMatchedInAuthorizedDomains(host, domains);
+    const currentAppUrl = typeof window !== 'undefined' ? `${window.location.origin}${window.location.pathname}` : '';
+
     try {
-      await sendPasswordResetEmail(firebaseAuth, cleanEmail);
-      return { success: true };
+      if (hostAuthorized && currentAppUrl) {
+        try {
+          await sendPasswordResetEmail(firebaseAuth, cleanEmail, {
+            url: currentAppUrl,
+            handleCodeInApp: true
+          });
+          return { success: true };
+        } catch (actionErr: any) {
+          const actionCode = String(actionErr?.code || '');
+          if (actionCode === 'auth/unauthorized-continue-uri' || actionCode === 'auth/invalid-continue-uri') {
+            await sendPasswordResetEmail(firebaseAuth, cleanEmail);
+            return { success: true, warningDomain: host || undefined };
+          }
+          throw actionErr;
+        }
+      } else {
+        await sendPasswordResetEmail(firebaseAuth, cleanEmail);
+        return { success: true, warningDomain: host && !hostAuthorized ? host : undefined };
+      }
     } catch (err: any) {
       const code = String(err?.code || '');
       if (code === 'auth/operation-not-allowed') {
+        cachedEmailPasswordEnabled = false;
+        cachedEmailPasswordCheckedAt = Date.now();
         return {
           success: false,
+          errorCode: code,
           error: isEn
             ? 'Email/Password provider is not enabled in Firebase Authentication Console. Enable it under Authentication > Sign-in method first.'
             : 'مزود Email/Password غير مفعّل في Firebase Console. يرجى تفعيله من Authentication > Sign-in method أولاً.'
         };
       }
-      if (code === 'auth/unauthorized-domain') {
-        const host = typeof window !== 'undefined' ? window.location.hostname : '';
+      if (code === 'auth/unauthorized-domain' || code === 'auth/unauthorized-continue-uri') {
         return {
           success: false,
+          errorCode: 'auth/unauthorized-domain',
+          blockedDomain: host,
           error: isEn
             ? `Domain (${host}) is not in Firebase Authorized domains.`
-            : `النطاق (${host}) غير مضاف في Authorized domains داخل Firebase Console.`
+            : `النطاق الحالي (${host}) غير مضاف في Authorized domains داخل Firebase Console.`
         };
       }
       if (code === 'auth/invalid-email') {
-        return { success: false, error: isEn ? 'Invalid email address.' : 'صيغة البريد الإلكتروني غير صحيحة.' };
+        return { success: false, errorCode: code, error: isEn ? 'Invalid email address.' : 'صيغة البريد الإلكتروني غير صحيحة.' };
+      }
+      if (code === 'auth/user-not-found') {
+        return {
+          success: false,
+          errorCode: code,
+          error: isEn
+            ? 'No user account was found for this email address.'
+            : 'لا يوجد حساب مسجل بهذا البريد الإلكتروني في Firebase Authentication.'
+        };
       }
       if (code === 'auth/too-many-requests') {
-        return { success: false, error: isEn ? 'Too many requests. Please wait before trying again.' : 'طلبات كثيرة جداً. يرجى الانتظار قليلاً ثم المحاولة مرة أخرى.' };
+        return { success: false, errorCode: code, error: isEn ? 'Too many requests. Please wait before trying again.' : 'طلبات كثيرة جداً. يرجى الانتظار قليلاً ثم المحاولة مرة أخرى.' };
       }
-      return { success: false, error: err?.message || (isEn ? 'Could not send password reset email.' : 'تعذر إرسال رابط تعيين كلمة المرور.') };
+      if (code === 'auth/network-request-failed') {
+        return { success: false, errorCode: code, error: isEn ? 'Network error while contacting Firebase.' : 'تعذر الاتصال بخادم المصادقة. تحقق من اتصال الإنترنت.' };
+      }
+      return { success: false, errorCode: code, error: err?.message || (isEn ? 'Could not send password reset email.' : 'تعذر إرسال رابط تعيين كلمة المرور.') };
+    }
+  },
+
+  sendAdminPasswordReset: async (email: string): Promise<{ success: boolean; error?: string; errorCode?: string; blockedDomain?: string; warningDomain?: string }> => {
+    return authService.sendPasswordReset(email, 'admin');
+  },
+
+  verifyResetPasswordCode: async (oobCode: string): Promise<{ success: boolean; email?: string; error?: string; errorCode?: string }> => {
+    const isEn = isEnglishUi();
+    if (!isFirebaseConfigured || !firebaseAuth) {
+      return { success: false, error: isEn ? 'Firebase is not configured.' : 'إعدادات Firebase غير متوفرة.' };
+    }
+    const cleanCode = (oobCode || '').trim();
+    if (!cleanCode) {
+      return { success: false, error: isEn ? 'Invalid password reset link.' : 'رابط إعادة تعيين كلمة المرور غير صالح أو ناقص.' };
+    }
+    try {
+      const email = await verifyPasswordResetCode(firebaseAuth, cleanCode);
+      return { success: true, email: (email || '').trim().toLowerCase() };
+    } catch (err: any) {
+      const code = String(err?.code || '');
+      if (code === 'auth/expired-action-code') {
+        return {
+          success: false,
+          errorCode: code,
+          error: isEn
+            ? 'This password reset link has expired. Request a new link from the login page.'
+            : 'انتهت صلاحية رابط تعيين كلمة المرور أو تم استخدامه بالفعل. يرجى طلب رابط جديد من صفحة الدخول.'
+        };
+      }
+      if (code === 'auth/invalid-action-code') {
+        return {
+          success: false,
+          errorCode: code,
+          error: isEn
+            ? 'This password reset link is invalid or has already been used.'
+            : 'رابط تعيين كلمة المرور غير صالح أو سبق استخدامه. اطلب رابطاً جديداً.'
+        };
+      }
+      if (code === 'auth/user-disabled') {
+        return { success: false, errorCode: code, error: isEn ? 'This account has been disabled.' : 'هذا الحساب معطل في Firebase.' };
+      }
+      return {
+        success: false,
+        errorCode: code,
+        error: err?.message || (isEn ? 'Could not verify reset link.' : 'تعذر التحقق من رابط إعادة تعيين كلمة المرور.')
+      };
+    }
+  },
+
+  confirmResetPassword: async (oobCode: string, newPassword: string): Promise<{ success: boolean; error?: string; errorCode?: string }> => {
+    const isEn = isEnglishUi();
+    if (!isFirebaseConfigured || !firebaseAuth) {
+      return { success: false, error: isEn ? 'Firebase is not configured.' : 'إعدادات Firebase غير متوفرة.' };
+    }
+    const cleanCode = (oobCode || '').trim();
+    if (!cleanCode) {
+      return { success: false, error: isEn ? 'Invalid reset code.' : 'رمز إعادة التعيين غير صالح.' };
+    }
+    if (!newPassword || newPassword.length < 6) {
+      return { success: false, error: isEn ? 'Password must be at least 6 characters.' : 'كلمة المرور يجب أن لا تقل عن 6 أحرف.' };
+    }
+    try {
+      await confirmPasswordReset(firebaseAuth, cleanCode, newPassword);
+      cachedEmailPasswordEnabled = true;
+      cachedEmailPasswordCheckedAt = Date.now();
+      return { success: true };
+    } catch (err: any) {
+      const code = String(err?.code || '');
+      if (code === 'auth/operation-not-allowed') {
+        cachedEmailPasswordEnabled = false;
+        cachedEmailPasswordCheckedAt = Date.now();
+        return {
+          success: false,
+          errorCode: code,
+          error: isEn
+            ? 'Email/Password sign-in is disabled in Firebase Console. Enable Email/Password in Authentication > Sign-in method first.'
+            : 'مزود Email/Password معطل حالياً في Firebase Console. فعّله أولاً من Authentication > Sign-in method.'
+        };
+      }
+      if (code === 'auth/weak-password') {
+        return { success: false, errorCode: code, error: isEn ? 'Password is too weak. Choose a stronger password (at least 6 characters).' : 'كلمة المرور ضعيفة جداً. اختر كلمة مرور أقوى (6 أحرف على الأقل).' };
+      }
+      if (code === 'auth/expired-action-code' || code === 'auth/invalid-action-code') {
+        return {
+          success: false,
+          errorCode: code,
+          error: isEn
+            ? 'This reset link is expired or has already been used. Request a new link.'
+            : 'انتهت صلاحية هذا الرابط أو سبق استخدامه. اطلب رابطاً جديداً.'
+        };
+      }
+      if (code === 'auth/network-request-failed') {
+        return { success: false, errorCode: code, error: isEn ? 'Network error while updating password.' : 'تعذر الاتصال بالخادم لحفظ كلمة المرور.' };
+      }
+      return { success: false, errorCode: code, error: err?.message || (isEn ? 'Failed to set new password.' : 'تعذر حفظ كلمة المرور الجديدة.') };
     }
   },
 
@@ -5747,9 +6110,18 @@ export const authService = {
       try {
         const userCredential = await signInWithEmailAndPassword(firebaseAuth, normalizedEmail, password);
         fbUser = userCredential.user;
+        cachedEmailPasswordEnabled = true;
+        cachedEmailPasswordCheckedAt = Date.now();
       } catch (err: any) {
         console.warn("Firebase Login Notice:", err?.code || err?.message || err);
         const code = String(err?.code || '');
+        if (code === 'auth/operation-not-allowed') {
+          cachedEmailPasswordEnabled = false;
+          cachedEmailPasswordCheckedAt = Date.now();
+        } else if (code === 'auth/wrong-password' || code === 'auth/invalid-credential' || code === 'auth/user-not-found') {
+          cachedEmailPasswordEnabled = true;
+          cachedEmailPasswordCheckedAt = Date.now();
+        }
         let errorMsg = isEn ? 'Incorrect email or password.' : 'البريد الإلكتروني أو كلمة المرور غير صحيحة.';
         let blockedDomain: string | undefined;
         if (code === 'auth/operation-not-allowed') {
@@ -6278,16 +6650,44 @@ export const authService = {
     if (!isFirebaseConfigured || !firebaseAuth) {
       return { success: false, error: 'خدمة Google غير متاحة في وضع التخزين المحلي.' };
     }
+    const isEn = isEnglishUi();
+    if (activeGooglePopupInFlight) {
+      return {
+        success: false,
+        errorCode: 'auth/cancelled-popup-request',
+        error: isEn ? 'A Google sign-in window is already open. Please complete or close it first.' : 'نافذة تسجيل الدخول بحساب Google مفتوحة بالفعل. يرجى إتمامها أو إغلاقها أولاً.'
+      };
+    }
+
+    const host = typeof window !== 'undefined' ? window.location.hostname : '';
     const isTopLevelWindow = typeof window !== 'undefined' && (() => { try { return window.self === window.top; } catch { return false; } })();
+
+    // Prevent doomed signInWithPopup race on known unauthorized domains (eliminates Firebase 12.16.0 _PopupOperation unhandled rejection)
+    if (cachedAuthorizedDomains && !isHostMatchedInAuthorizedDomains(host, cachedAuthorizedDomains)) {
+      const refreshed = await fetchFirebaseAuthorizedDomains(true);
+      if (refreshed && !isHostMatchedInAuthorizedDomains(host, refreshed)) {
+        return {
+          success: false,
+          errorCode: 'auth/unauthorized-domain',
+          blockedDomain: host,
+          error: isEn
+            ? `Current domain (${host}) is not authorized in Firebase Console > Authentication > Settings > Authorized domains.`
+            : `النطاق الحالي غير مضاف بعد في قائمة Authorized domains داخل Firebase Console > Authentication > Settings.`
+        };
+      }
+      clearRejectedOriginValidationCache(firebaseAuth);
+    }
+
+    activeGooglePopupInFlight = true;
     try {
       const provider = new GoogleAuthProvider();
       provider.setCustomParameters({ prompt: 'select_account' });
       const credential = await signInWithPopup(firebaseAuth, provider);
       return await authService.finalizeGoogleSignedInUser(credential.user, targetMode);
     } catch (err: any) {
+      clearRejectedOriginValidationCache(firebaseAuth);
       console.warn("Google sign-in notice:", err?.code || err?.message || err);
       const code = String(err?.code || '');
-      const isEn = isEnglishUi();
       if (code === 'auth/popup-closed-by-user' || code === 'auth/cancelled-popup-request') {
         return { success: false, errorCode: code, error: isEn ? 'Google sign-in popup was closed before completion.' : 'تم إغلاق نافذة تسجيل الدخول قبل إتمام العملية.' };
       }
@@ -6311,23 +6711,23 @@ export const authService = {
         };
       }
       if (code === 'auth/unauthorized-domain') {
-        const host = typeof window !== 'undefined' ? window.location.hostname : '';
+        cachedAuthorizedDomainsFetchedAt = 0;
         return {
           success: false,
           errorCode: code,
           blockedDomain: host,
           error: isEn
             ? `Current domain (${host}) is not authorized in Firebase Console > Authentication > Settings > Authorized domains.`
-            : `النطاق الحالي (${host}) غير مضاف بعد في قائمة Authorized domains داخل Firebase Console > Authentication > Settings.`
+            : `النطاق الحالي غير مضاف بعد في قائمة Authorized domains داخل Firebase Console > Authentication > Settings.`
         };
       }
-      if (code === 'auth/network-request-failed') {
+      if (code === 'auth/network-request-failed' || code === 'auth/internal-error') {
         return {
           success: false,
           errorCode: code,
           error: isEn
-            ? 'Network error while contacting Google / Firebase Authentication.'
-            : 'تعذر الاتصال بخدمة المصادقة. تحقق من اتصال الإنترنت وحاول مرة أخرى.'
+            ? 'Network or browser popup error while contacting Google Authentication. Please try again.'
+            : 'تعذر الاتصال بخدمة مصادقة Google أو تم مقاطعة النافذة. تحقق من اتصال الإنترنت وأعد المحاولة.'
         };
       }
       if (code === 'auth/account-exists-with-different-credential') {
@@ -6340,6 +6740,8 @@ export const authService = {
         };
       }
       return { success: false, errorCode: code, error: err?.message || (isEn ? 'Unable to sign in with Google.' : 'تعذر تسجيل الدخول عبر Google.') };
+    } finally {
+      activeGooglePopupInFlight = false;
     }
   },
 
@@ -6374,10 +6776,13 @@ export const authService = {
     const savedMode = typeof sessionStorage !== 'undefined'
       ? (sessionStorage.getItem('academy_pending_google_redirect_mode') as 'admin' | 'student' | null)
       : null;
+    if (!savedMode) {
+      return { handled: false };
+    }
     try {
       const redirectResult = await getRedirectResult(firebaseAuth);
       if (!redirectResult || !redirectResult.user) {
-        if (savedMode && typeof sessionStorage !== 'undefined') {
+        if (typeof sessionStorage !== 'undefined') {
           sessionStorage.removeItem('academy_pending_google_redirect_mode');
         }
         return { handled: false };
@@ -6474,6 +6879,9 @@ export const authService = {
   },
 
   logout: async (): Promise<void> => {
+    verifiedAdminCheckCache.key = '';
+    verifiedAdminCheckCache.allowed = false;
+    verifiedAdminCheckCache.ts = 0;
     if (isFirebaseConfigured) {
       try {
         await signOut(firebaseAuth);

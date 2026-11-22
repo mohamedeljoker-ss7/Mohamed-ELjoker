@@ -10,6 +10,7 @@ import {
 import { dbService, mergeExamWithPrivateKey } from '../../firebase';
 import { useLanguage } from '../LanguageContext';
 import { FileUploadField } from '../FileUploadField';
+import { PreviewFileType } from '../FilePreviewModal';
 import { emitAppToast, triggerFileDownload } from '../../utils/videoStorage';
 import {
   ACADEMIC_GRADES,
@@ -39,7 +40,7 @@ interface AdminExamsManagerProps {
     targetTitle: string,
     details?: string
   ) => void;
-  onPreviewMedia?: (url: string) => void;
+  onPreviewMedia?: (url: string, title?: string, fileType?: PreviewFileType, fileName?: string) => void;
 }
 
 export const AdminExamsManager: React.FC<AdminExamsManagerProps> = ({
@@ -1047,7 +1048,7 @@ export const AdminExamsManager: React.FC<AdminExamsManagerProps> = ({
                   accept=".pdf,application/pdf"
                   fileType="pdf"
                   folder="lms_exams"
-                  onPreview={(url) => onPreviewMedia?.(url)}
+                  onPreview={onPreviewMedia ? ((url, meta) => onPreviewMedia(url, `${form.title || t('أسئلة الامتحان', 'Exam Questions')}`, meta?.fileType || 'pdf')) : undefined}
                   onUploadingChange={busy => setFieldUploading('questionsPdf', busy)}
                 />
                 <FileUploadField
@@ -1057,7 +1058,7 @@ export const AdminExamsManager: React.FC<AdminExamsManagerProps> = ({
                   accept=".pdf,application/pdf"
                   fileType="pdf"
                   folder="lms_exams_answers"
-                  onPreview={(url) => onPreviewMedia?.(url)}
+                  onPreview={onPreviewMedia ? ((url, meta) => onPreviewMedia(url, `${form.title || t('الإجابة النموذجية', 'Model Answer')}`, meta?.fileType || 'pdf')) : undefined}
                   onUploadingChange={busy => setFieldUploading('modelAnswer', busy)}
                 />
               </div>
@@ -1436,22 +1437,44 @@ export const AdminExamsManager: React.FC<AdminExamsManagerProps> = ({
             {(mergedPreviewExam.questionsPdfUrl || mergedPreviewExam.questionsFileUrl || mergedPreviewExam.modelAnswerUrl || mergedPreviewExam.answersFileUrl) && (
               <div className="flex flex-wrap gap-2">
                 {(mergedPreviewExam.questionsPdfUrl || mergedPreviewExam.questionsFileUrl) && (
-                  <button
-                    type="button"
-                    onClick={() => triggerFileDownload((mergedPreviewExam.questionsPdfUrl || mergedPreviewExam.questionsFileUrl)!, `${mergedPreviewExam.title}_questions.pdf`)}
-                    className="px-3 py-1.5 rounded-xl bg-slate-100 dark:bg-slate-800 text-xs font-bold text-slate-800 dark:text-slate-200 inline-flex items-center gap-1.5 cursor-pointer"
-                  >
-                    <Download className="h-3.5 w-3.5 text-rose-500" /> {t('ملف الأسئلة PDF', 'Questions PDF')}
-                  </button>
+                  <>
+                    {onPreviewMedia && (
+                      <button
+                        type="button"
+                        onClick={() => onPreviewMedia((mergedPreviewExam.questionsPdfUrl || mergedPreviewExam.questionsFileUrl)!, `${mergedPreviewExam.title} - ${t('الأسئلة', 'Questions')}`, 'pdf')}
+                        className="px-3 py-1.5 rounded-xl bg-brand-cyan/15 border border-brand-cyan/30 text-xs font-bold text-brand-cyan inline-flex items-center gap-1.5 cursor-pointer"
+                      >
+                        <Eye className="h-3.5 w-3.5" /> {t('معاينة الأسئلة PDF', 'Preview Questions PDF')}
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => triggerFileDownload((mergedPreviewExam.questionsPdfUrl || mergedPreviewExam.questionsFileUrl)!, `${mergedPreviewExam.title}_questions.pdf`)}
+                      className="px-3 py-1.5 rounded-xl bg-slate-100 dark:bg-slate-800 text-xs font-bold text-slate-800 dark:text-slate-200 inline-flex items-center gap-1.5 cursor-pointer"
+                    >
+                      <Download className="h-3.5 w-3.5 text-rose-500" /> {t('تحميل ملف الأسئلة PDF', 'Download Questions PDF')}
+                    </button>
+                  </>
                 )}
                 {(mergedPreviewExam.modelAnswerUrl || mergedPreviewExam.answersFileUrl) && (
-                  <button
-                    type="button"
-                    onClick={() => triggerFileDownload((mergedPreviewExam.modelAnswerUrl || mergedPreviewExam.answersFileUrl)!, `${mergedPreviewExam.title}_answers.pdf`)}
-                    className="px-3 py-1.5 rounded-xl bg-emerald-500/10 text-xs font-bold text-emerald-700 dark:text-emerald-300 inline-flex items-center gap-1.5 cursor-pointer"
-                  >
-                    <Download className="h-3.5 w-3.5" /> {t('ملف الإجابة النموذجية (معاينة الإدارة)', 'Answer Key PDF (Admin)')}
-                  </button>
+                  <>
+                    {onPreviewMedia && (
+                      <button
+                        type="button"
+                        onClick={() => onPreviewMedia((mergedPreviewExam.modelAnswerUrl || mergedPreviewExam.answersFileUrl)!, `${mergedPreviewExam.title} - ${t('الإجابة النموذجية', 'Answer Key')}`, 'pdf')}
+                        className="px-3 py-1.5 rounded-xl bg-emerald-500/15 border border-emerald-500/30 text-xs font-bold text-emerald-700 dark:text-emerald-300 inline-flex items-center gap-1.5 cursor-pointer"
+                      >
+                        <Eye className="h-3.5 w-3.5" /> {t('معاينة الإجابة النموذجية', 'Preview Answer Key')}
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => triggerFileDownload((mergedPreviewExam.modelAnswerUrl || mergedPreviewExam.answersFileUrl)!, `${mergedPreviewExam.title}_answers.pdf`)}
+                      className="px-3 py-1.5 rounded-xl bg-emerald-500/10 text-xs font-bold text-emerald-700 dark:text-emerald-300 inline-flex items-center gap-1.5 cursor-pointer"
+                    >
+                      <Download className="h-3.5 w-3.5" /> {t('تحميل ملف الإجابة النموذجية', 'Download Answer Key PDF')}
+                    </button>
+                  </>
                 )}
               </div>
             )}

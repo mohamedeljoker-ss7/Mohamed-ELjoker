@@ -15,7 +15,7 @@ interface FileUploadFieldProps {
   courseId?: string;
   placeholder?: string;
   fileType?: 'pdf' | 'image' | 'word' | 'ppt' | 'code' | 'zip' | 'other';
-  onPreview?: (url: string, meta?: { title?: string; fileType?: PreviewFileType }) => void;
+  onPreview?: (url: string, meta?: { title?: string; fileType?: PreviewFileType; fileName?: string }) => void;
   onUploadingChange?: (busy: boolean) => void;
   onErrorChange?: (err: string | null) => void;
 }
@@ -38,6 +38,7 @@ export const FileUploadField: React.FC<FileUploadFieldProps> = ({
   const [progressInfo, setProgressInfo] = useState<UploadProgressInfo | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [internalPreview, setInternalPreview] = useState<PreviewMediaItem | null>(null);
+  const [uploadedFileName, setUploadedFileName] = useState<string>('');
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const cancelControlHolder = useRef<UploadControlHolder>({});
@@ -51,13 +52,14 @@ export const FileUploadField: React.FC<FileUploadFieldProps> = ({
   }, [errorMsg]);
 
   const urlLooksInvalid = Boolean(value && value.trim() && !isValidMediaOrWebUrl(value));
+  const typeProbe = `${uploadedFileName} ${value || ''}`;
 
-  const isImage = fileType === 'image' || accept.includes('image') || (value && /\.(jpg|jpeg|png|webp|gif|svg)(\?.*)?$/i.test(value));
-  const isPdf = fileType === 'pdf' || accept.includes('pdf') || (value && /\.pdf(\?.*)?$/i.test(value));
-  const isWord = fileType === 'word' || accept.includes('word') || accept.includes('doc') || (value && /\.(docx?|doc)(\?.*)?$/i.test(value));
-  const isPpt = fileType === 'ppt' || accept.includes('ppt') || (value && /\.(pptx?|ppt)(\?.*)?$/i.test(value));
-  const isZip = fileType === 'zip' || (value && /\.(zip|rar|7z|tar|gz)(\?.*)?$/i.test(value));
-  const isCode = fileType === 'code' || (value && /\.(py|ipynb|json|sql|cpp|c|h|js|ts|tsx|html|css|txt)(\?.*)?$/i.test(value));
+  const isImage = fileType === 'image' || accept.includes('image') || /\.(jpg|jpeg|png|webp|gif|svg)(\?.*)?$/i.test(typeProbe);
+  const isPdf = fileType === 'pdf' || (accept.includes('pdf') && !/\.(docx?|pptx?|zip|rar)$/i.test(typeProbe)) || /\.pdf(\?.*)?$/i.test(typeProbe);
+  const isWord = fileType === 'word' || (accept.includes('word') && !/\.pdf(\?.*)?$/i.test(typeProbe)) || (accept.includes('doc') && !/\.pdf(\?.*)?$/i.test(typeProbe)) || /\.(docx?|doc)(\?.*)?$/i.test(typeProbe);
+  const isPpt = fileType === 'ppt' || accept.includes('ppt') || /\.(pptx?|ppt)(\?.*)?$/i.test(typeProbe);
+  const isZip = fileType === 'zip' || /\.(zip|rar|7z|tar|gz)(\?.*)?$/i.test(typeProbe);
+  const isCode = fileType === 'code' || /\.(py|ipynb|json|sql|cpp|c|h|js|ts|tsx|html|css|txt)(\?.*)?$/i.test(typeProbe);
 
   const detectedPreviewType: PreviewFileType = isPdf
     ? 'pdf'
@@ -107,6 +109,7 @@ export const FileUploadField: React.FC<FileUploadFieldProps> = ({
 
       setIsUploading(false);
       setProgressInfo(null);
+      setUploadedFileName(file.name);
       onChange(downloadUrl);
     } catch (err: any) {
       setIsUploading(false);
@@ -165,6 +168,7 @@ export const FileUploadField: React.FC<FileUploadFieldProps> = ({
           value={value}
           onChange={(e) => {
             setErrorMsg(null);
+            setUploadedFileName('');
             onChange(e.target.value);
           }}
           placeholder={placeholder || (isPdf ? 'https://.../file.pdf' : 'https://.../file')}
@@ -248,7 +252,9 @@ export const FileUploadField: React.FC<FileUploadFieldProps> = ({
               </div>
             )}
             <div className="truncate text-xs font-mono text-slate-700 dark:text-slate-300 dir-ltr text-left">
-              {value.startsWith('firestore://')
+              {uploadedFileName
+                ? `${uploadedFileName}${value.startsWith('firestore://') ? ` (${t('محفوظ سحابياً', 'Cloud')})` : ''}`
+                : value.startsWith('firestore://')
                 ? `${t('ملف محفوظ سحابياً', 'Cloud File')} (${value.slice(0, 26)}...)`
                 : value}
             </div>
@@ -258,10 +264,11 @@ export const FileUploadField: React.FC<FileUploadFieldProps> = ({
             <button
               type="button"
               onClick={() => {
+                const fName = uploadedFileName || undefined;
                 if (onPreview) {
-                  onPreview(value, { title: label, fileType: detectedPreviewType });
+                  onPreview(value, { title: uploadedFileName || label, fileType: detectedPreviewType, fileName: fName });
                 } else {
-                  setInternalPreview({ url: value, title: label, fileType: detectedPreviewType });
+                  setInternalPreview({ url: value, title: uploadedFileName || label, fileType: detectedPreviewType, fileName: fName });
                 }
               }}
               className="text-xs text-brand-cyan hover:underline cursor-pointer font-bold"
@@ -270,14 +277,17 @@ export const FileUploadField: React.FC<FileUploadFieldProps> = ({
             </button>
             <button
               type="button"
-              onClick={() => triggerFileDownload(value, label || 'resource')}
+              onClick={() => triggerFileDownload(value, uploadedFileName || label || 'resource')}
               className="text-xs text-slate-600 dark:text-slate-300 hover:text-brand-cyan cursor-pointer font-bold"
             >
               {t('تنزيل', 'Download')}
             </button>
             <button
               type="button"
-              onClick={() => onChange('')}
+              onClick={() => {
+                setUploadedFileName('');
+                onChange('');
+              }}
               className="text-xs text-rose-600 dark:text-rose-400 hover:underline shrink-0 cursor-pointer font-bold"
             >
               {t('حذف', 'Remove')}

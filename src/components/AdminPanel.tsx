@@ -11,6 +11,7 @@ import { onAuthStateChanged } from 'firebase/auth';
 import { uploadLargeVideo } from '../utils/largeVideoUploader';
 import { VideoHostingUploader } from './VideoHostingUploader';
 import { FileUploadField } from './FileUploadField';
+import { ResolvedImage } from './ResolvedMedia';
 import { useLanguage } from './LanguageContext';
 import { formatVideoEmbedUrl, parseVideoSource, normalizeCourseLessons } from '../utils/authAccess';
 import { CustomVideoPlayer } from './CustomVideoPlayer';
@@ -104,8 +105,27 @@ const IT_SUBJECT_OPTIONS = [
   { id: 'course_english_tech_it', label: 'English', titleAr: 'English – اللغة الإنجليزية' },
 ];
 
-const resolveCourseBySubject = (subj: string) => {
-  const lower = (subj || '').toLowerCase();
+const resolveCourseBySubjectFromList = (subj: string, coursesList: Course[] = []) => {
+  const lower = (subj || '').trim().toLowerCase();
+  if (lower && coursesList.length > 0) {
+    const dynamicMatch = coursesList.find(c => {
+      const idMatch = c.id.toLowerCase() === lower;
+      const subjEn = (c.subjectEn || '').toLowerCase();
+      const subjAr = (c.subjectAr || '').toLowerCase();
+      const subjField = (c.subject || '').toLowerCase();
+      const titleEn = (c.titleEn || '').toLowerCase();
+      const titleAr = (c.titleAr || '').toLowerCase();
+      return idMatch || subjEn === lower || subjAr === lower || subjField === lower ||
+        titleEn.includes(lower) || titleAr.includes(lower) ||
+        (subjEn && lower.includes(subjEn));
+    });
+    if (dynamicMatch) {
+      return {
+        courseId: dynamicMatch.id,
+        courseTitle: dynamicMatch.titleAr || dynamicMatch.titleEn || subj
+      };
+    }
+  }
   const found = IT_SUBJECT_OPTIONS.find(
     s => s.label.toLowerCase() === lower || lower.includes(s.label.toLowerCase()) || s.titleAr.toLowerCase().includes(lower)
   );
@@ -134,6 +154,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
 
   // Database States
   const [courses, setCourses] = useState<Course[]>([]);
+  const resolveCourseBySubject = (subj: string) => resolveCourseBySubjectFromList(subj, courses);
   const [categories, setCategories] = useState<Category[]>([]);
   const [students, setStudents] = useState<Student[]>([]);
   const [articles, setArticles] = useState<Article[]>([]);
@@ -261,7 +282,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
   const [notificationForm, setNotificationForm] = useState({
     title: '',
     message: '',
-    type: 'general' as 'general' | 'activation' | 'lecture' | 'exam',
+    type: 'general' as 'general' | 'course_activated' | 'lecture_added' | 'assignment' | 'exam',
     targetCourseId: 'all',
   });
 
@@ -1164,7 +1185,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
       }
       setIsModalOpen(false);
     } catch (err: any) {
-      triggerNotification('Error', true);
+      triggerNotification(err?.message || t('حدث خطأ أثناء حفظ القسم', 'Error saving category'), true);
     } finally {
       setActionLoading(false);
     }
@@ -1188,8 +1209,8 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
           await dbService.deleteCategory(id);
           setCategories(prev => prev.filter(c => c.id !== id));
           triggerNotification(t('تم حذف القسم.', 'Category deleted.'));
-        } catch {
-          triggerNotification('Failed to delete category', true);
+        } catch (err: any) {
+          triggerNotification(err?.message || t('فشل حذف القسم', 'Failed to delete category'), true);
         }
       }
     );
@@ -1200,18 +1221,39 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
     e.preventDefault();
     setActionLoading(true);
     try {
+      const isApproved = studentForm.status === 'active';
+      const studentPayload = { ...studentForm, isApproved };
       if (modalType === 'add') {
-        const added = await dbService.addStudent(studentForm);
-        setStudents(prev => [...prev, added]);
+        const added = await dbService.addStudent(studentPayload);
+        setStudents(prev => {
+          const filtered = prev.filter(s => s.id !== added.id && s.email?.toLowerCase() !== added.email?.toLowerCase());
+          return [...filtered, added];
+        });
         triggerNotification(t('تم تسجيل الطالب بنجاح.', 'Student registered successfully.'));
       } else {
-        await dbService.updateStudent(selectedId, studentForm);
-        setStudents(prev => prev.map(s => s.id === selectedId ? { ...s, ...studentForm } : s));
+        await dbService.updateStudent(selectedId, studentPayload);
+        const cleanEmail = (studentForm.email || '').trim().toLowerCase();
+        if (cleanEmail) {
+          try {
+            const allUsers = await authService.getAllUsers();
+            const matchingUser = allUsers.find(u => u.email?.toLowerCase() === cleanEmail && u.id !== selectedId);
+            if (matchingUser) {
+              await authService.updateUser(matchingUser.id, {
+                name: studentForm.name,
+                phone: studentForm.phone,
+                status: studentForm.status as any,
+                isApproved,
+                purchasedCourseIds: studentForm.purchasedCourseIds || []
+              } as any);
+            }
+          } catch {}
+        }
+        setStudents(prev => prev.map(s => s.id === selectedId ? { ...s, ...studentPayload } : s));
         triggerNotification(t('تم تعديل بيانات الطالب.', 'Student updated successfully.'));
       }
       setIsModalOpen(false);
-    } catch {
-      triggerNotification('Error saving student', true);
+    } catch (err: any) {
+      triggerNotification(err?.message || t('حدث خطأ أثناء حفظ بيانات الطالب', 'Error saving student'), true);
     } finally {
       setActionLoading(false);
     }
@@ -1263,7 +1305,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
           );
         } catch (err: any) {
           console.error(err);
-          triggerNotification(t('خطأ أثناء تحديث حالة الطالب', 'Error updating student status'), true);
+          triggerNotification(err?.message || t('خطأ أثناء تحديث حالة الطالب', 'Error updating student status'), true);
         } finally {
           setActionLoading(false);
         }
@@ -1309,7 +1351,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
           triggerNotification(t('تم قبول حساب الطالب وتفعيله بنجاح وإرسال إشعار فوري له', 'Student account approved and notified successfully'));
         } catch (err: any) {
           console.error(err);
-          triggerNotification(t('خطأ أثناء تفعيل حساب الطالب', 'Error approving student account'), true);
+          triggerNotification(err?.message || t('خطأ أثناء تفعيل حساب الطالب', 'Error approving student account'), true);
         } finally {
           setActionLoading(false);
         }
@@ -1338,7 +1380,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
           triggerNotification(t('تم رفض طلب تسجيل الطالب', 'Student registration rejected'));
         } catch (err: any) {
           console.error(err);
-          triggerNotification(t('خطأ أثناء رفض الحساب', 'Error rejecting student account'), true);
+          triggerNotification(err?.message || t('خطأ أثناء رفض الحساب', 'Error rejecting student account'), true);
         } finally {
           setActionLoading(false);
         }
@@ -1362,7 +1404,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
           triggerNotification(t('تم حذف الطالب نهائياً من المنصة بنجاح.', 'Student deleted from platform successfully.'));
         } catch (err: any) {
           console.error(err);
-          triggerNotification(t('خطأ أثناء حذف الطالب', 'Error deleting student'), true);
+          triggerNotification(err?.message || t('خطأ أثناء حذف الطالب', 'Error deleting student'), true);
         } finally {
           setActionLoading(false);
         }
@@ -1386,7 +1428,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
           triggerNotification(t('تمت إزالة جميع الحسابات المسجلة وتنظيف المنصة لاستقبال تسجيلات جديدة بنجاح! 🚀', 'All student accounts removed and platform reset successfully!'));
         } catch (err: any) {
           console.error(err);
-          triggerNotification(t('خطأ أثناء مسح حسابات الطلاب', 'Error resetting student accounts'), true);
+          triggerNotification(err?.message || t('خطأ أثناء مسح حسابات الطلاب', 'Error resetting student accounts'), true);
         } finally {
           setActionLoading(false);
         }
@@ -1408,7 +1450,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
           triggerNotification(t('تم إخراج جميع الحسابات المسجلة من المنصة على جميع الأجهزة بنجاح! ✅', 'All accounts have been logged out across all devices successfully!'));
         } catch (err: any) {
           console.error(err);
-          triggerNotification(t('خطأ أثناء تنفيذ تسجيل الخروج الجماعي', 'Error performing global logout'), true);
+          triggerNotification(err?.message || t('خطأ أثناء تنفيذ تسجيل الخروج الجماعي', 'Error performing global logout'), true);
         } finally {
           setActionLoading(false);
         }
@@ -1431,8 +1473,8 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
         triggerNotification(t('تم تحديث المقال.', 'Article updated.'));
       }
       setIsModalOpen(false);
-    } catch {
-      triggerNotification('Error saving article', true);
+    } catch (err: any) {
+      triggerNotification(err?.message || t('خطأ أثناء حفظ المقال', 'Error saving article'), true);
     } finally {
       setActionLoading(false);
     }
@@ -1460,8 +1502,8 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
           await dbService.deleteArticle(id);
           setArticles(prev => prev.filter(a => a.id !== id));
           triggerNotification(t('تم حذف المقال بنجاح.', 'Article deleted successfully.'));
-        } catch {
-          triggerNotification('Error deleting article', true);
+        } catch (err: any) {
+          triggerNotification(err?.message || t('خطأ أثناء حذف المقال', 'Error deleting article'), true);
         } finally {
           setActionLoading(false);
         }
@@ -1484,8 +1526,8 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
         triggerNotification(t('تم تعديل الخبر.', 'News item updated.'));
       }
       setIsModalOpen(false);
-    } catch {
-      triggerNotification('Error', true);
+    } catch (err: any) {
+      triggerNotification(err?.message || t('خطأ أثناء حفظ الخبر', 'Error saving news item'), true);
     } finally {
       setActionLoading(false);
     }
@@ -1512,8 +1554,8 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
           await dbService.deleteNews(id);
           setNews(prev => prev.filter(n => n.id !== id));
           triggerNotification(t('تم حذف الخبر بنجاح.', 'News item deleted successfully.'));
-        } catch {
-          triggerNotification('Error', true);
+        } catch (err: any) {
+          triggerNotification(err?.message || t('خطأ أثناء حذف الخبر', 'Error deleting news item'), true);
         } finally {
           setActionLoading(false);
         }
@@ -1528,8 +1570,8 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
       await dbService.updateReview(rev.id, { approved: nextState });
       setReviews(prev => prev.map(r => r.id === rev.id ? { ...r, approved: nextState } : r));
       triggerNotification(t('تم تعديل حالة الموافقة على المراجعة.', 'Review approval status changed.'));
-    } catch {
-      triggerNotification('Error updating review status', true);
+    } catch (err: any) {
+      triggerNotification(err?.message || t('خطأ أثناء تحديث التقييم', 'Error updating review status'), true);
     }
   };
 
@@ -1543,8 +1585,8 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
           await dbService.deleteReview(id);
           setReviews(prev => prev.filter(r => r.id !== id));
           triggerNotification(t('تم حذف التقييم بنجاح.', 'Review deleted successfully.'));
-        } catch {
-          triggerNotification('Error deleting review', true);
+        } catch (err: any) {
+          triggerNotification(err?.message || t('خطأ أثناء حذف التقييم', 'Error deleting review'), true);
         } finally {
           setActionLoading(false);
         }
@@ -1558,8 +1600,8 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
       await dbService.updateMessage(msg.id, { read: true });
       setMessages(prev => prev.map(m => m.id === msg.id ? { ...m, read: true } : m));
       triggerNotification(t('تم تحديد الرسالة كمقروءة.', 'Message marked as read.'));
-    } catch {
-      triggerNotification(t('خطأ أثناء تحديث حالة الرسالة', 'Error updating message'), true);
+    } catch (err: any) {
+      triggerNotification(err?.message || t('خطأ أثناء تحديث حالة الرسالة', 'Error updating message'), true);
     }
   };
 
@@ -1572,8 +1614,8 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
           await dbService.deleteMessage(id);
           setMessages(prev => prev.filter(m => m.id !== id));
           triggerNotification(t('تم حذف الرسالة بنجاح من صندوق الوارد.', 'Message deleted successfully.'));
-        } catch {
-          triggerNotification(t('خطأ أثناء حذف الرسالة', 'Error deleting message'), true);
+        } catch (err: any) {
+          triggerNotification(err?.message || t('خطأ أثناء حذف الرسالة', 'Error deleting message'), true);
         }
       }
     );
@@ -1589,9 +1631,9 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
           await dbService.deleteChatMessage(selectedChatStudentId, msgId);
           setLiveChatMessages(prev => prev.filter(m => m.id !== msgId));
           triggerNotification(t('تم حذف الرسالة من المحادثة بنجاح.', 'Chat message deleted successfully.'));
-        } catch (err) {
+        } catch (err: any) {
           console.error(err);
-          triggerNotification(t('خطأ أثناء حذف الرسالة', 'Error deleting message'), true);
+          triggerNotification(err?.message || t('خطأ أثناء حذف الرسالة', 'Error deleting message'), true);
         }
       }
     );
@@ -1607,9 +1649,9 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
           await dbService.deleteStudentChat(selectedChatStudentId);
           setLiveChatMessages([]);
           triggerNotification(t('تم حذف المحادثة بالكامل بنجاح.', 'Chat deleted successfully.'));
-        } catch (err) {
+        } catch (err: any) {
           console.error(err);
-          triggerNotification(t('خطأ أثناء حذف المحادثة', 'Error deleting chat'), true);
+          triggerNotification(err?.message || t('خطأ أثناء حذف المحادثة', 'Error deleting chat'), true);
         }
       }
     );
@@ -1629,9 +1671,9 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
         timestamp: Date.now()
       });
       triggerNotification(t('تم إرسال الرد للطالب بنجاح! 🚀', 'Reply sent to student!'));
-    } catch (err) {
+    } catch (err: any) {
       console.error(err);
-      triggerNotification(t('خطأ أثناء إرسال الرد', 'Error sending reply'), true);
+      triggerNotification(err?.message || t('خطأ أثناء إرسال الرد', 'Error sending reply'), true);
     }
   };
 
@@ -1644,8 +1686,8 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
       await dbService.updateSettings(settingsForm);
       setSettings(settingsForm);
       triggerNotification(t('تم حفظ إعدادات الموقع بنجاح المزامنة!', 'Website settings saved and synchronized successfully!'));
-    } catch {
-      triggerNotification('Error saving website settings', true);
+    } catch (err: any) {
+      triggerNotification(err?.message || t('خطأ أثناء حفظ إعدادات الموقع', 'Error saving website settings'), true);
     } finally {
       setActionLoading(false);
     }
@@ -1957,16 +1999,10 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
         await authService.updateUser(u.id, { purchasedCourseIds: updatedCourseIds });
       }
 
-      if (ord.studentId && matchingStudents.length === 0 && matchingUsers.length === 0) {
-        await authService.updateUser(ord.studentId, {
-          purchasedCourseIds: []
-        }).catch(() => {});
-      }
-
       triggerNotification(t('تم رفض طلب التفعيل وحجب الوصول للمقرر.', 'Activation request rejected and subject access blocked.'));
     } catch (err: any) {
       console.error(err);
-      triggerNotification(t('خطأ أثناء رفض الطلب', 'Error rejecting request'), true);
+      triggerNotification(err?.message || t('خطأ أثناء رفض الطلب', 'Error rejecting request'), true);
     } finally {
       setActionLoading(false);
     }
@@ -2042,8 +2078,8 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
           await dbService.deleteOrder(id);
           setOrders(prev => prev.filter(o => o.id !== id));
           triggerNotification(t('تم حذف الاشتراك بنجاح.', 'Enrollment deleted successfully.'));
-        } catch {
-          triggerNotification('Error deleting enrollment', true);
+        } catch (err: any) {
+          triggerNotification(err?.message || t('خطأ أثناء حذف الاشتراك', 'Error deleting enrollment'), true);
         }
       }
     );
@@ -2108,12 +2144,13 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
           bodyAr: `تم نشر امتحان جديد: ${q.titleAr}`,
           bodyEn: `New exam published: ${q.titleEn}`,
           isRead: false,
+          type: 'exam',
           createdAt: new Date().toISOString()
         }).catch(err => console.error("Error creating notification:", err));
       }
       triggerNotification(updatedStatus ? t('تم نشر الامتحان بنجاح للطلاب ✅', 'Exam published to students!') : t('تم إخفاء الامتحان عن الطلاب 🔒', 'Exam hidden from students.'));
-    } catch {
-      triggerNotification('Error toggling exam status', true);
+    } catch (err: any) {
+      triggerNotification(err?.message || t('خطأ أثناء تغيير حالة الامتحان', 'Error toggling exam status'), true);
     }
   };
 
@@ -2126,8 +2163,8 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
           await dbService.deleteQuiz(id);
           setQuizzes(prev => prev.filter(q => q.id !== id));
           triggerNotification(t('تم حذف الامتحان بنجاح.', 'Exam deleted.'));
-        } catch {
-          triggerNotification('Error deleting quiz', true);
+        } catch (err: any) {
+          triggerNotification(err?.message || t('خطأ أثناء حذف الامتحان', 'Error deleting quiz'), true);
         }
       }
     );
@@ -2139,12 +2176,25 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
     setActionLoading(true);
     try {
       const isCourseVis = assignmentTaskForm.visibility === 'course';
+      let resolvedCourseId = '';
+      let resolvedCourseName = '';
+
+      if (isCourseVis) {
+        const selectedCourse =
+          courses.find(c => c.id === assignmentTaskForm.courseId) ||
+          (courses.length > 0 ? courses[0] : null);
+        if (!selectedCourse) {
+          throw new Error(t('يرجى اختيار المقرر الدراسي المرتبط بالتكليف', 'Please select the course linked to this assignment'));
+        }
+        resolvedCourseId = selectedCourse.id;
+        resolvedCourseName = t(selectedCourse.titleAr, selectedCourse.titleEn);
+      }
 
       const finalPayload: Omit<Assignment, 'id'> = {
         ...assignmentTaskForm,
         visibility: isCourseVis ? 'course' : 'free',
-        courseId: '',
-        courseName: ''
+        courseId: resolvedCourseId,
+        courseName: resolvedCourseName
       };
 
       if (modalType === 'add') {
@@ -2158,7 +2208,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
       }
       setIsModalOpen(false);
     } catch (err: any) {
-      triggerNotification(err.message || 'Error saving assignment task', true);
+      triggerNotification(err?.message || 'Error saving assignment task', true);
     } finally {
       setActionLoading(false);
     }
@@ -2167,10 +2217,11 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
   const handleEditAssignmentTask = (a: Assignment) => {
     const isCourseVis = a.visibility === 'course' || (a.visibility !== 'free' && a.courseId && a.courseId !== 'all' && a.courseId.trim() !== '');
     const vis: 'free' | 'course' = isCourseVis ? 'course' : 'free';
+    const matchedCourse = a.courseId ? courses.find(c => c.id === a.courseId) : undefined;
 
     setAssignmentTaskForm({
-      courseId: '',
-      courseName: '',
+      courseId: vis === 'course' ? (a.courseId || matchedCourse?.id || '') : '',
+      courseName: vis === 'course' ? (a.courseName || (matchedCourse ? t(matchedCourse.titleAr, matchedCourse.titleEn) : '')) : '',
       visibility: vis,
       grade: a.grade || 'all',
       titleAr: a.titleAr,
@@ -2203,12 +2254,14 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
           bodyAr: `تم نشر واجب جديد: ${a.titleAr}`,
           bodyEn: `New assignment published: ${a.titleEn}`,
           isRead: false,
+          type: 'assignment',
+          courseId: a.courseId || undefined,
           createdAt: new Date().toISOString()
         }).catch(err => console.error("Error creating notification:", err));
       }
       triggerNotification(updatedStatus ? t('تم نشر الواجب للطلاب ✅', 'Assignment published!') : t('تم إخفاء الواجب 🔒', 'Assignment hidden.'));
-    } catch {
-      triggerNotification('Error toggling assignment status', true);
+    } catch (err: any) {
+      triggerNotification(err?.message || t('خطأ أثناء تغيير حالة نشر الواجب', 'Error toggling assignment status'), true);
     }
   };
 
@@ -2221,8 +2274,8 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
           await dbService.deleteAssignmentTask(id);
           setAssignmentTasks(prev => prev.filter(a => a.id !== id));
           triggerNotification(t('تم حذف تكليف الواجب.', 'Assignment deleted.'));
-        } catch {
-          triggerNotification('Error deleting assignment', true);
+        } catch (err: any) {
+          triggerNotification(err?.message || t('خطأ أثناء حذف تكليف الواجب', 'Error deleting assignment'), true);
         }
       }
     );
@@ -2259,8 +2312,8 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
           await dbService.deleteAssignmentSubmission(id);
           setAssignmentSubmissions(prev => prev.filter(s => s.id !== id));
           triggerNotification(t('تم حذف تسليم الواجب.', 'Submission deleted.'));
-        } catch {
-          triggerNotification('Error deleting submission', true);
+        } catch (err: any) {
+          triggerNotification(err?.message || t('خطأ أثناء حذف التسليم', 'Error deleting submission'), true);
         }
       }
     );
@@ -3924,9 +3977,9 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
                       {teachers.map(teach => (
                         <div key={teach.id} className="rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950/40 shadow-xs dark:shadow-none p-5 text-xs text-slate-900 dark:text-white">
                           <div className="flex items-start gap-4">
-                            <img
-                              referrerPolicy="no-referrer"
+                            <ResolvedImage
                               src={teach.imageUrl || ENG_MOHAMED_AVATAR_IMG}
+                              fallbackSrc={ENG_MOHAMED_AVATAR_IMG}
                               alt={t(teach.nameAr, teach.nameEn)}
                               className="h-16 w-16 rounded-xl object-cover border border-slate-200 dark:border-slate-800"
                             />
@@ -4380,7 +4433,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
                                       <div className="mt-3">
                                         <button
                                           type="button"
-                                          onClick={() => triggerFileDownload(task.pdfUrl, task.title || 'assignment_sheet.pdf')}
+                                          onClick={() => triggerFileDownload(task.pdfUrl, task.titleAr || task.titleEn || 'assignment_sheet.pdf')}
                                           className="inline-flex items-center gap-1.5 text-brand-cyan hover:underline font-bold text-[11px] cursor-pointer"
                                         >
                                           <FileText className="h-3.5 w-3.5" />
@@ -4515,7 +4568,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
                                           </button>
                                           {(fileUrl.startsWith('data:image/') || /\.(jpg|jpeg|png|gif|webp)(\?.*)?$/i.test(fileUrl)) && (
                                             <div className="mt-2 max-w-sm rounded-xl overflow-hidden border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900/50 p-1">
-                                              <img src={fileUrl} alt="Student Assignment Solution" className="w-full max-h-64 object-contain rounded-lg" />
+                                              <ResolvedImage src={fileUrl} alt="Student Assignment Solution" className="w-full max-h-64 object-contain rounded-lg" />
                                             </div>
                                           )}
                                         </div>
@@ -4904,11 +4957,26 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
                               className="w-full rounded-xl bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 px-3.5 py-2.5 text-xs text-slate-900 dark:text-white focus:outline-none focus:border-brand-cyan cursor-pointer"
                             >
                               <option value="general">📢 {t('تنبيه عام لجميع الطلاب', 'General Announcement')}</option>
-                              <option value="lecture">📚 {t('محاضرة أو سكشن جديد', 'New Lecture / Section')}</option>
-                              <option value="activation">✅ {t('اعتماد وتفعيل مادة / حساب', 'Account / Course Activation')}</option>
-                              <option value="exam">📝 {t('امتحان أو شيت جديد', 'New Exam / Sheet')}</option>
+                              <option value="lecture_added">📚 {t('محاضرة أو سكشن جديد', 'New Lecture / Section')}</option>
+                              <option value="course_activated">✅ {t('اعتماد وتفعيل مادة / حساب', 'Account / Course Activation')}</option>
+                              <option value="assignment">📝 {t('تكليف أو واجب دراسي جديد', 'New Assignment Task')}</option>
+                              <option value="exam">🎓 {t('امتحان أو شيت جديد', 'New Exam / Sheet')}</option>
                             </select>
                           </div>
+                        </div>
+
+                        <div>
+                          <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1.5">{t('توجيه الإشعار لمقرر محدد (اختياري)', 'Target Subject / Course (Optional)')}</label>
+                          <select
+                            value={notificationForm.targetCourseId}
+                            onChange={e => setNotificationForm(prev => ({ ...prev, targetCourseId: e.target.value }))}
+                            className="w-full rounded-xl bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 px-3.5 py-2.5 text-xs text-slate-900 dark:text-white focus:outline-none focus:border-brand-cyan cursor-pointer"
+                          >
+                            <option value="all">{t('إشعار عام لجميع طلاب قسم IT (بدون ربط بمقرر)', 'All IT Department Students (General)')}</option>
+                            {courses.map(c => (
+                              <option key={c.id} value={c.id}>{t(c.titleAr, c.titleEn)}</option>
+                            ))}
+                          </select>
                         </div>
 
                         <div>
@@ -5957,9 +6025,9 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
                                           replyTimestamp: Date.now()
                                         });
                                         triggerNotification(t('تم إرسال ردك بنجاح!', 'Reply sent successfully!'));
-                                      } catch (err) {
+                                      } catch (err: any) {
                                         console.error(err);
-                                        triggerNotification(t('حدث خطأ أثناء إرسال الرد.', 'Error sending reply.'), true);
+                                        triggerNotification(err?.message || t('حدث خطأ أثناء إرسال الرد.', 'Error sending reply.'), true);
                                       } finally {
                                         setActionLoading(false);
                                       }
@@ -5982,9 +6050,9 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
                                         try {
                                           await dbService.deleteComment(comm.id);
                                           triggerNotification(t('تم حذف التعليق بنجاح.', 'Comment deleted successfully.'));
-                                        } catch (err) {
+                                        } catch (err: any) {
                                           console.error(err);
-                                          triggerNotification(t('حدث خطأ أثناء حذف التعليق.', 'Error deleting comment.'), true);
+                                          triggerNotification(err?.message || t('حدث خطأ أثناء حذف التعليق.', 'Error deleting comment.'), true);
                                         } finally {
                                           setActionLoading(false);
                                         }
@@ -8401,11 +8469,12 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
                       value={assignmentTaskForm.visibility || 'free'}
                       onChange={e => {
                         const val = e.target.value as 'free' | 'course';
+                        const defaultCourse = val === 'course' && courses.length > 0 ? courses[0] : null;
                         setAssignmentTaskForm({
                           ...assignmentTaskForm,
                           visibility: val,
-                          courseId: '',
-                          courseName: ''
+                          courseId: val === 'course' ? (assignmentTaskForm.courseId || defaultCourse?.id || '') : '',
+                          courseName: val === 'course' ? (assignmentTaskForm.courseName || (defaultCourse ? t(defaultCourse.titleAr, defaultCourse.titleEn) : '')) : ''
                         });
                       }}
                       className="w-full rounded-xl bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-3 text-slate-900 dark:text-white focus:outline-none font-bold"
@@ -8414,6 +8483,30 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
                       <option value="course">🔒 {t('لملتحقي المقرر الدراسي', 'Enrolled Subject Students Only')}</option>
                     </select>
                   </div>
+
+                  {assignmentTaskForm.visibility === 'course' && (
+                    <div>
+                      <label className="block mb-1.5 font-semibold text-slate-900 dark:text-white">{t('المقرر الدراسي المرتبط بالتكليف', 'Linked Course / Subject')}</label>
+                      <select
+                        required
+                        value={assignmentTaskForm.courseId || ''}
+                        onChange={e => {
+                          const selected = courses.find(c => c.id === e.target.value);
+                          setAssignmentTaskForm({
+                            ...assignmentTaskForm,
+                            courseId: e.target.value,
+                            courseName: selected ? t(selected.titleAr, selected.titleEn) : ''
+                          });
+                        }}
+                        className="w-full rounded-xl bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-3 text-slate-900 dark:text-white focus:outline-none font-bold"
+                      >
+                        <option value="">{t('-- اختر المقرر الدراسي --', '-- Select Course --')}</option>
+                        {courses.map(c => (
+                          <option key={c.id} value={c.id}>{t(c.titleAr, c.titleEn)}</option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
 
                   <div>
                     <label className="block mb-1.5 font-semibold text-slate-900 dark:text-white">{t('المرحلة / الصف الدراسي', 'Target Grade')}</label>
@@ -8463,13 +8556,13 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
                     />
                   </div>
 
-                  <div>
-                    <label className="block mb-1.5 font-semibold text-slate-900 dark:text-white">{t('رابط ملحق PDF أو الشيت', 'PDF Attachment Link')}</label>
-                    <input
-                      type="url"
+                  <div className="sm:col-span-2">
+                    <FileUploadField
+                      label={t('ملحق التكليف (PDF / مستند أو رابط)', 'Assignment Attachment (PDF / Doc or URL)')}
                       value={assignmentTaskForm.pdfUrl || ''}
-                      onChange={e => setAssignmentTaskForm({ ...assignmentTaskForm, pdfUrl: e.target.value })}
-                      className="w-full rounded-xl bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-3 text-slate-900 dark:text-white font-mono"
+                      onChange={url => setAssignmentTaskForm({ ...assignmentTaskForm, pdfUrl: url })}
+                      accept=".pdf,.doc,.docx,application/pdf,image/*"
+                      folder="assignments"
                       placeholder="https://example.com/assignment.pdf"
                     />
                   </div>

@@ -1332,12 +1332,12 @@ export const dbService = {
 
   updateSettings: async (settings: WebsiteSettings): Promise<void> => {
     checkAdminWrite('update_settings', { settings });
+    await requireCloudWriteAuth(true);
     if (isFirebaseConfigured) {
       try {
-        await setDoc(doc(firestoreDb, 'settings', 'global'), settings);
-        return;
+        await setDoc(doc(firestoreDb, 'settings', 'global'), sanitizeForFirestore(settings));
       } catch (err: any) {
-        handleFirestoreError(err, OperationType.UPDATE, 'settings/global');
+        throw new Error(formatCloudErrorMessage(err, 'تعذر حفظ إعدادات المنصة في قاعدة البيانات السحابية.'));
       }
     }
     setStorageItem<WebsiteSettings>('settings', settings);
@@ -1412,53 +1412,52 @@ export const dbService = {
 
   addCategory: async (category: Omit<Category, 'id'>): Promise<Category> => {
     checkAdminWrite('add_category', { category });
+    await requireCloudWriteAuth(true);
     const newId = 'cat_' + Date.now();
     const newCategory: Category = { id: newId, ...category };
-    const current = getStorageItem<Category[]>('categories', defaultCategories);
-    current.push(newCategory);
-    setStorageItem('categories', current);
 
     if (isFirebaseConfigured) {
       try {
-        await setDoc(doc(firestoreDb, 'categories', newId), category);
+        await setDoc(doc(firestoreDb, 'categories', newId), sanitizeForFirestore(category));
       } catch (err: any) {
-        console.warn("Firestore addCategory notice:", err);
+        throw new Error(formatCloudErrorMessage(err, 'تعذر إضافة الفرقة/القسم في قاعدة البيانات السحابية.'));
       }
     }
+    const current = getStorageItem<Category[]>('categories', defaultCategories);
+    current.push(newCategory);
+    setStorageItem('categories', current);
     return newCategory;
   },
 
   updateCategory: async (id: string, category: Partial<Category>): Promise<void> => {
     checkAdminWrite('update_category', { id, category });
-    const current = getStorageItem<Category[]>('categories', defaultCategories);
-    const updated = current.map(item => item.id === id ? { ...item, ...category } : item);
-    setStorageItem('categories', updated);
+    await requireCloudWriteAuth(true);
 
     if (isFirebaseConfigured) {
       try {
-        await updateDoc(doc(firestoreDb, 'categories', id), category as any);
+        await setDoc(doc(firestoreDb, 'categories', id), sanitizeForFirestore(category) as any, { merge: true });
       } catch (err: any) {
-        try {
-          await setDoc(doc(firestoreDb, 'categories', id), category as any, { merge: true });
-        } catch (setErr) {
-          console.warn("Firestore updateCategory notice:", setErr);
-        }
+        throw new Error(formatCloudErrorMessage(err, 'تعذر تحديث الفرقة/القسم في قاعدة البيانات السحابية.'));
       }
     }
+    const current = getStorageItem<Category[]>('categories', defaultCategories);
+    const updated = current.map(item => item.id === id ? { ...item, ...category } : item);
+    setStorageItem('categories', updated);
   },
 
   deleteCategory: async (id: string): Promise<void> => {
     checkAdminWrite('delete_category', { id });
-    const current = getStorageItem<Category[]>('categories', defaultCategories);
-    const updated = current.filter(item => item.id !== id);
-    setStorageItem('categories', updated);
+    await requireCloudWriteAuth(true);
     if (isFirebaseConfigured) {
       try {
         await deleteDoc(doc(firestoreDb, 'categories', id));
       } catch (err: any) {
-        console.warn("Firestore deleteCategory notice:", err);
+        throw new Error(formatCloudErrorMessage(err, 'تعذر حذف الفرقة/القسم من قاعدة البيانات السحابية.'));
       }
     }
+    const current = getStorageItem<Category[]>('categories', defaultCategories);
+    const updated = current.filter(item => item.id !== id);
+    setStorageItem('categories', updated);
   },
 
   // --- Courses ---
@@ -1528,6 +1527,7 @@ export const dbService = {
 
   addCourse: async (course: Omit<Course, 'id' | 'createdAt'>): Promise<Course> => {
     checkAdminWrite('add_course', { course });
+    await requireCloudWriteAuth(true);
     const newId = 'course_' + Date.now();
     const isPublished = course.published !== false;
     const isPremium = typeof course.isPremium === 'boolean' ? course.isPremium : !course.isFree;
@@ -1543,26 +1543,25 @@ export const dbService = {
       createdAt: new Date().toISOString().split('T')[0]
     };
 
-    // 1. Immediately persist to local cache first
-    const current = getStorageItem<Course[]>('courses', defaultCourses);
-    const updated = [...current.filter(c => c.id !== newId), newCourse];
-    setStorageItem('courses', updated);
-
-    // 2. Sync to Firestore in the background
     if (isFirebaseConfigured) {
       try {
         const firestoreData = sanitizeForFirestore(newCourse);
         await setDoc(doc(firestoreDb, 'courses', newId), firestoreData);
       } catch (err: any) {
-        console.warn("Firestore addCourse sync notice:", err);
+        throw new Error(formatCloudErrorMessage(err, 'تعذر حفظ المقرر في قاعدة البيانات السحابية.'));
       }
     }
+
+    const current = getStorageItem<Course[]>('courses', defaultCourses);
+    const updated = [...current.filter(c => c.id !== newId), newCourse];
+    setStorageItem('courses', updated);
 
     return newCourse;
   },
 
   updateCourse: async (id: string, course: Partial<Course>): Promise<void> => {
     checkAdminWrite('update_course', { id, course });
+    await requireCloudWriteAuth(true);
     const patch: any = { ...course };
     if (typeof course.published === 'boolean') {
       patch.status = course.published ? 'published' : 'draft';
@@ -1571,25 +1570,18 @@ export const dbService = {
       patch.isPremium = !course.isFree;
     }
 
-    // 1. Immediately persist to local cache first
-    const current = getStorageItem<Course[]>('courses', defaultCourses);
-    const updated = current.map(item => item.id === id ? { ...item, ...patch } : item);
-    setStorageItem('courses', updated);
-
-    // 2. Sync to Firestore
     if (isFirebaseConfigured) {
       try {
         const firestorePatch = sanitizeForFirestore(patch);
-        await updateDoc(doc(firestoreDb, 'courses', id), firestorePatch);
+        await setDoc(doc(firestoreDb, 'courses', id), firestorePatch, { merge: true });
       } catch (err: any) {
-        try {
-          const mergePayload = sanitizeForFirestore(patch);
-          await setDoc(doc(firestoreDb, 'courses', id), mergePayload, { merge: true });
-        } catch (setErr) {
-          console.warn("Firebase updateCourse sync notice:", setErr);
-        }
+        throw new Error(formatCloudErrorMessage(err, 'تعذر تحديث المقرر في قاعدة البيانات السحابية.'));
       }
     }
+
+    const current = getStorageItem<Course[]>('courses', defaultCourses);
+    const updated = current.map(item => item.id === id ? { ...item, ...patch } : item);
+    setStorageItem('courses', updated);
   },
 
 
@@ -2950,52 +2942,55 @@ export const dbService = {
 
   addScheduleItem: async (item: Omit<ScheduleItem, 'id'>): Promise<ScheduleItem> => {
     checkAdminWrite('add_schedule', { item });
+    await requireCloudWriteAuth(true);
     const newId = 'sch_' + Date.now();
     const fullItem: ScheduleItem = {
       id: newId,
       ...item
     };
-    const current = getStorageItem<ScheduleItem[]>('schedule', defaultSchedule);
-    const updated = [...current.filter(s => s.id !== newId), fullItem];
-    setStorageItem('schedule', updated);
 
     if (isFirebaseConfigured) {
       try {
         await setDoc(doc(firestoreDb, 'schedule', newId), sanitizeForFirestore(fullItem));
-      } catch (e) {
-        console.warn("addScheduleItem sync notice:", e);
+      } catch (e: any) {
+        throw new Error(formatCloudErrorMessage(e, 'تعذر حفظ موعد الجدول في قاعدة البيانات السحابية.'));
       }
     }
+    const current = getStorageItem<ScheduleItem[]>('schedule', defaultSchedule);
+    const updated = [...current.filter(s => s.id !== newId), fullItem];
+    setStorageItem('schedule', updated);
     return fullItem;
   },
 
   updateScheduleItem: async (id: string, patch: Partial<ScheduleItem>): Promise<void> => {
     checkAdminWrite('update_schedule', { id, patch });
-    const current = getStorageItem<ScheduleItem[]>('schedule', defaultSchedule);
-    const updated = current.map(s => s.id === id ? { ...s, ...patch } : s);
-    setStorageItem('schedule', updated);
+    await requireCloudWriteAuth(true);
 
     if (isFirebaseConfigured) {
       try {
         await setDoc(doc(firestoreDb, 'schedule', id), sanitizeForFirestore(patch), { merge: true });
-      } catch (e) {
-        console.warn("updateScheduleItem sync notice:", e);
+      } catch (e: any) {
+        throw new Error(formatCloudErrorMessage(e, 'تعذر تحديث موعد الجدول في قاعدة البيانات السحابية.'));
       }
     }
+    const current = getStorageItem<ScheduleItem[]>('schedule', defaultSchedule);
+    const updated = current.map(s => s.id === id ? { ...s, ...patch } : s);
+    setStorageItem('schedule', updated);
   },
 
   deleteScheduleItem: async (id: string): Promise<void> => {
     checkAdminWrite('delete_schedule', { id });
-    const current = getStorageItem<ScheduleItem[]>('schedule', defaultSchedule);
-    setStorageItem('schedule', current.filter(s => s.id !== id));
+    await requireCloudWriteAuth(true);
 
     if (isFirebaseConfigured) {
       try {
         await deleteDoc(doc(firestoreDb, 'schedule', id));
-      } catch (e) {
-        console.warn("deleteScheduleItem notice:", e);
+      } catch (e: any) {
+        throw new Error(formatCloudErrorMessage(e, 'تعذر حذف موعد الجدول من قاعدة البيانات السحابية.'));
       }
     }
+    const current = getStorageItem<ScheduleItem[]>('schedule', defaultSchedule);
+    setStorageItem('schedule', current.filter(s => s.id !== id));
   },
 
   // --- Student Inquiries & Q&A (استفسارات وأسئلة الطلاب) ---
@@ -3069,60 +3064,67 @@ export const dbService = {
   },
 
   submitInquiry: async (inquiry: Omit<StudentInquiry, 'id' | 'createdAt' | 'status'>): Promise<StudentInquiry> => {
+    await requireCloudWriteAuth(false);
     const newId = 'inq_' + Date.now();
+    const effectiveStudentId = (isFirebaseConfigured && firebaseAuth?.currentUser?.uid)
+      ? firebaseAuth.currentUser.uid
+      : inquiry.studentId;
     const item: StudentInquiry = {
       id: newId,
       ...inquiry,
+      studentId: effectiveStudentId,
       status: 'pending',
       createdAt: new Date().toISOString()
     };
-    const current = getStorageItem<StudentInquiry[]>('inquiries', defaultInquiries);
-    const updated = [item, ...current.filter(i => i.id !== newId)];
-    setStorageItem('inquiries', updated);
 
     if (isFirebaseConfigured) {
       try {
         await setDoc(doc(firestoreDb, 'inquiries', newId), sanitizeForFirestore(item));
-      } catch (e) {
-        console.warn("submitInquiry sync notice:", e);
+      } catch (e: any) {
+        throw new Error(formatCloudErrorMessage(e, 'تعذر إرسال الاستفسار إلى قاعدة البيانات السحابية.'));
       }
     }
+    const current = getStorageItem<StudentInquiry[]>('inquiries', defaultInquiries);
+    const updated = [item, ...current.filter(i => i.id !== newId)];
+    setStorageItem('inquiries', updated);
     return item;
   },
 
   replyToInquiry: async (id: string, reply: string, adminName: string = 'Eng/Mohamed abdal tawab'): Promise<void> => {
     checkAdminWrite('reply_inquiry', { id, reply });
+    await requireCloudWriteAuth(true);
     const patch: Partial<StudentInquiry> = {
       reply,
       repliedBy: adminName,
       repliedAt: new Date().toISOString(),
       status: 'answered'
     };
-    const current = getStorageItem<StudentInquiry[]>('inquiries', defaultInquiries);
-    const updated = current.map(i => i.id === id ? { ...i, ...patch } : i);
-    setStorageItem('inquiries', updated);
 
     if (isFirebaseConfigured) {
       try {
         await setDoc(doc(firestoreDb, 'inquiries', id), sanitizeForFirestore(patch), { merge: true });
-      } catch (e) {
-        console.warn("replyToInquiry sync notice:", e);
+      } catch (e: any) {
+        throw new Error(formatCloudErrorMessage(e, 'تعذر إرسال الرد على الاستفسار في قاعدة البيانات السحابية.'));
       }
     }
+    const current = getStorageItem<StudentInquiry[]>('inquiries', defaultInquiries);
+    const updated = current.map(i => i.id === id ? { ...i, ...patch } : i);
+    setStorageItem('inquiries', updated);
   },
 
   deleteInquiry: async (id: string): Promise<void> => {
     checkAdminWrite('delete_inquiry', { id });
-    const current = getStorageItem<StudentInquiry[]>('inquiries', defaultInquiries);
-    setStorageItem('inquiries', current.filter(i => i.id !== id));
+    await requireCloudWriteAuth(true);
 
     if (isFirebaseConfigured) {
       try {
         await deleteDoc(doc(firestoreDb, 'inquiries', id));
-      } catch (e) {
-        console.warn("deleteInquiry notice:", e);
+      } catch (e: any) {
+        throw new Error(formatCloudErrorMessage(e, 'تعذر حذف الاستفسار من قاعدة البيانات السحابية.'));
       }
     }
+    const current = getStorageItem<StudentInquiry[]>('inquiries', defaultInquiries);
+    setStorageItem('inquiries', current.filter(i => i.id !== id));
   },
 
   // --- Activity Logs (سجل العمليات والتدقيق الإداري) ---
@@ -3444,24 +3446,31 @@ export const dbService = {
   },
 
   addStudent: async (student: Omit<Student, 'id' | 'enrollmentDate'>): Promise<Student> => {
+    checkAdminWrite('add_student', { student });
+    await requireCloudWriteAuth(true);
     const targetEmail = student.email ? student.email.trim().toLowerCase() : '';
+    const resolvedStatus = student.status || 'active';
+    const resolvedApproved = resolvedStatus === 'active';
+
     if (targetEmail && isFirebaseConfigured) {
       try {
         const qUsers = query(collection(firestoreDb, 'users'), where('email', '==', targetEmail));
         const uSnap = await getDocs(qUsers);
         if (!uSnap.empty) {
           const existingId = uSnap.docs[0].id;
-          await dbService.updateStudent(existingId, student);
-          return { id: existingId, uid: existingId, ...uSnap.docs[0].data(), ...student } as Student;
+          await dbService.updateStudent(existingId, { ...student, status: resolvedStatus, isApproved: resolvedApproved } as any);
+          return { id: existingId, uid: existingId, ...uSnap.docs[0].data(), ...student, status: resolvedStatus, isApproved: resolvedApproved } as Student;
         }
         const qStuds = query(collection(firestoreDb, 'students'), where('email', '==', targetEmail));
         const sSnap = await getDocs(qStuds);
         if (!sSnap.empty) {
           const existingId = sSnap.docs[0].id;
-          await dbService.updateStudent(existingId, student);
-          return { id: existingId, uid: existingId, ...sSnap.docs[0].data(), ...student } as Student;
+          await dbService.updateStudent(existingId, { ...student, status: resolvedStatus, isApproved: resolvedApproved } as any);
+          return { id: existingId, uid: existingId, ...sSnap.docs[0].data(), ...student, status: resolvedStatus, isApproved: resolvedApproved } as Student;
         }
-      } catch (e) {}
+      } catch (e) {
+        console.warn("Existing student lookup notice:", e);
+      }
     }
 
     const newId = 'stud_' + Date.now();
@@ -3470,33 +3479,36 @@ export const dbService = {
       id: newId,
       uid: newId,
       ...student,
+      email: targetEmail || student.email,
+      status: resolvedStatus,
+      isApproved: resolvedApproved,
       enrollmentDate: nowIso.split('T')[0],
       createdAt: nowIso
     };
     if (isFirebaseConfigured) {
       try {
-        await setDoc(doc(firestoreDb, 'students', newId), newStudent);
-        if (!student.status || student.status === 'pending') {
-          await setDoc(doc(firestoreDb, 'registrations', newId), newStudent).catch(() => {});
-          await setDoc(doc(firestoreDb, 'studentRequests', newId), newStudent).catch(() => {});
+        await setDoc(doc(firestoreDb, 'students', newId), sanitizeForFirestore(newStudent));
+        if (resolvedStatus === 'pending') {
+          await setDoc(doc(firestoreDb, 'registrations', newId), sanitizeForFirestore(newStudent)).catch(() => {});
+          await setDoc(doc(firestoreDb, 'studentRequests', newId), sanitizeForFirestore(newStudent)).catch(() => {});
         }
-        const userDocData = {
+        const userDocData = sanitizeForFirestore({
           uid: newId,
           id: newId,
           name: student.name,
-          email: student.email.trim().toLowerCase(),
+          email: targetEmail || student.email,
           phone: student.phone || '',
           role: 'student',
-          status: student.status || 'active',
+          status: resolvedStatus,
+          isApproved: resolvedApproved,
           department: student.department || 'general',
           grade: student.grade || 'year1',
           createdAt: nowIso,
           purchasedCourseIds: student.purchasedCourseIds || []
-        };
+        });
         await setDoc(doc(firestoreDb, 'users', newId), userDocData, { merge: true });
-        return newStudent;
-      } catch (err) {
-        console.error("Firebase student add failed:", err);
+      } catch (err: any) {
+        throw new Error(formatCloudErrorMessage(err, 'تعذر إضافة الطالب في قاعدة البيانات السحابية.'));
       }
     }
     const current = getStorageItem<Student[]>('students', defaultStudents);
@@ -3506,6 +3518,8 @@ export const dbService = {
   },
 
   updateStudent: async (id: string, student: Partial<Student>): Promise<void> => {
+    checkAdminWrite('update_student', { id, student });
+    await requireCloudWriteAuth(true);
     const normalizedStudent: Partial<Student> = { ...student };
     if (normalizedStudent.status === 'active') {
       normalizedStudent.isApproved = true;
@@ -3518,13 +3532,13 @@ export const dbService = {
     }
     if (isFirebaseConfigured) {
       try {
-        await setDoc(doc(firestoreDb, 'students', id), normalizedStudent as any, { merge: true }).catch(() => {});
+        await setDoc(doc(firestoreDb, 'students', id), sanitizeForFirestore(normalizedStudent) as any, { merge: true });
         if (normalizedStudent.status === 'active' || normalizedStudent.status === 'rejected' || normalizedStudent.isApproved) {
           await deleteDoc(doc(firestoreDb, 'registrations', id)).catch(() => {});
           await deleteDoc(doc(firestoreDb, 'studentRequests', id)).catch(() => {});
         } else {
-          await updateDoc(doc(firestoreDb, 'registrations', id), normalizedStudent as any).catch(() => {});
-          await updateDoc(doc(firestoreDb, 'studentRequests', id), normalizedStudent as any).catch(() => {});
+          await updateDoc(doc(firestoreDb, 'registrations', id), sanitizeForFirestore(normalizedStudent) as any).catch(() => {});
+          await updateDoc(doc(firestoreDb, 'studentRequests', id), sanitizeForFirestore(normalizedStudent) as any).catch(() => {});
         }
         const userUpdates: Partial<UserAuth> = {};
         if (normalizedStudent.name !== undefined) userUpdates.name = normalizedStudent.name;
@@ -3536,19 +3550,20 @@ export const dbService = {
         if (normalizedStudent.department !== undefined) userUpdates.department = normalizedStudent.department;
         if (normalizedStudent.purchasedCourseIds !== undefined) userUpdates.purchasedCourseIds = normalizedStudent.purchasedCourseIds;
         if (Object.keys(userUpdates).length > 0) {
-          await setDoc(doc(firestoreDb, 'users', id), userUpdates as any, { merge: true }).catch(() => {});
+          await setDoc(doc(firestoreDb, 'users', id), sanitizeForFirestore(userUpdates) as any, { merge: true });
         }
-        return;
-      } catch (err) {
-        console.error("Firebase student update failed:", err);
+      } catch (err: any) {
+        throw new Error(formatCloudErrorMessage(err, 'تعذر تحديث بيانات الطالب في قاعدة البيانات السحابية.'));
       }
     }
     const current = getStorageItem<Student[]>('students', defaultStudents);
-    const updated = current.map(item => item.id === id ? { ...item, ...student } : item);
+    const updated = current.map(item => item.id === id ? { ...item, ...normalizedStudent } : item);
     setStorageItem('students', updated);
   },
 
   deleteStudent: async (id: string, email?: string): Promise<void> => {
+    checkAdminWrite('delete_student', { id, email });
+    await requireCloudWriteAuth(true);
     let targetEmail = email ? email.trim().toLowerCase() : '';
     if (!targetEmail && isFirebaseConfigured) {
       try {
@@ -3568,57 +3583,62 @@ export const dbService = {
 
     if (isFirebaseConfigured) {
       try {
-        await deleteDoc(doc(firestoreDb, 'students', id)).catch(() => {});
-        await deleteDoc(doc(firestoreDb, 'users', id)).catch(() => {});
+        await deleteDoc(doc(firestoreDb, 'students', id));
+        try {
+          const uSnap = await getDoc(doc(firestoreDb, 'users', id));
+          const uData = uSnap.exists() ? uSnap.data() : null;
+          if (!uData || (uData.role !== 'admin' && uData.role !== 'teacher' && !isAdminEmail(uData.email || ''))) {
+            await deleteDoc(doc(firestoreDb, 'users', id));
+          }
+        } catch (userDelErr: any) {
+          const code = String(userDelErr?.code || '');
+          if (code === 'permission-denied' || code === 'unauthenticated') throw userDelErr;
+        }
         await deleteDoc(doc(firestoreDb, 'registrations', id)).catch(() => {});
         await deleteDoc(doc(firestoreDb, 'studentRequests', id)).catch(() => {});
 
         if (targetEmail) {
           const cols = ['students', 'users', 'registrations', 'studentRequests'];
           for (const colName of cols) {
-            try {
-              const qCol = query(collection(firestoreDb, colName), where('email', '==', targetEmail));
-              const snap = await getDocs(qCol);
-              for (const d of snap.docs) {
-                if (colName === 'users') {
-                  const uData = d.data();
-                  if (uData.role === 'admin' || uData.role === 'teacher' || isAdminEmail(uData.email || '')) continue;
-                }
-                await deleteDoc(d.ref).catch(() => {});
+            const qCol = query(collection(firestoreDb, colName), where('email', '==', targetEmail));
+            const snap = await getDocs(qCol);
+            for (const d of snap.docs) {
+              if (colName === 'users') {
+                const uData = d.data();
+                if (uData.role === 'admin' || uData.role === 'teacher' || isAdminEmail(uData.email || '')) continue;
               }
-            } catch (e) {}
+              await deleteDoc(d.ref);
+            }
           }
         }
 
         const orderCols = ['orders', 'courseRequests'];
         for (const colName of orderCols) {
-          try {
-            const qById = query(collection(firestoreDb, colName), where('studentId', '==', id));
-            const snapId = await getDocs(qById);
-            for (const d of snapId.docs) {
+          const qById = query(collection(firestoreDb, colName), where('studentId', '==', id));
+          const snapId = await getDocs(qById);
+          for (const d of snapId.docs) {
+            const oData = d.data();
+            if (oData.studentId && oData.courseId) {
+              await deleteDoc(doc(firestoreDb, 'courseAccess', `${oData.studentId}_${oData.courseId}`)).catch(() => {});
+            }
+            await deleteDoc(d.ref);
+          }
+          if (targetEmail) {
+            const qByEmail = query(collection(firestoreDb, colName), where('studentEmail', '==', targetEmail));
+            const snapEmail = await getDocs(qByEmail);
+            for (const d of snapEmail.docs) {
               const oData = d.data();
               if (oData.studentId && oData.courseId) {
                 await deleteDoc(doc(firestoreDb, 'courseAccess', `${oData.studentId}_${oData.courseId}`)).catch(() => {});
               }
-              await deleteDoc(d.ref).catch(() => {});
+              await deleteDoc(d.ref);
             }
-            if (targetEmail) {
-              const qByEmail = query(collection(firestoreDb, colName), where('studentEmail', '==', targetEmail));
-              const snapEmail = await getDocs(qByEmail);
-              for (const d of snapEmail.docs) {
-                const oData = d.data();
-                if (oData.studentId && oData.courseId) {
-                  await deleteDoc(doc(firestoreDb, 'courseAccess', `${oData.studentId}_${oData.courseId}`)).catch(() => {});
-                }
-                await deleteDoc(d.ref).catch(() => {});
-              }
-            }
-          } catch (e) {}
+          }
         }
 
         try { await dbService.deleteStudentChat(id); } catch (e) {}
-      } catch (err) {
-        console.error("Firebase student delete failed:", err);
+      } catch (err: any) {
+        throw new Error(formatCloudErrorMessage(err, 'تعذر حذف الطالب من قاعدة البيانات السحابية.'));
       }
     }
 
@@ -3636,27 +3656,25 @@ export const dbService = {
   },
 
   clearAllStudentsAndOrders: async (): Promise<void> => {
+    checkAdminWrite('clear_all_students', {});
+    await requireCloudWriteAuth(true);
     if (isFirebaseConfigured) {
       try {
-        const collectionsToWipe = ['students', 'registrations', 'studentRequests', 'orders', 'courseRequests', 'courseAccess', 'lessonAccess', 'certificates', 'assignment_tasks'];
+        const collectionsToWipe = ['students', 'registrations', 'studentRequests', 'orders', 'courseRequests', 'courseAccess', 'lessonAccess', 'certificates'];
         for (const colName of collectionsToWipe) {
-          try {
-            const snap = await getDocs(collection(firestoreDb, colName));
-            for (const d of snap.docs) {
-              await deleteDoc(d.ref).catch(() => {});
-            }
-          } catch (e) {}
+          const snap = await getDocs(collection(firestoreDb, colName));
+          for (const d of snap.docs) {
+            await deleteDoc(d.ref);
+          }
         }
 
-        try {
-          const usersSnap = await getDocs(collection(firestoreDb, 'users'));
-          for (const d of usersSnap.docs) {
-            const uData = d.data();
-            if (uData.role !== 'admin' && uData.role !== 'teacher' && !isAdminEmail(uData.email || '')) {
-              await deleteDoc(d.ref).catch(() => {});
-            }
+        const usersSnap = await getDocs(collection(firestoreDb, 'users'));
+        for (const d of usersSnap.docs) {
+          const uData = d.data();
+          if (uData.role !== 'admin' && uData.role !== 'teacher' && !isAdminEmail(uData.email || '')) {
+            await deleteDoc(d.ref);
           }
-        } catch (e) {}
+        }
 
         try {
           const chatsSnap = await getDocs(collection(firestoreDb, 'chats'));
@@ -3664,8 +3682,8 @@ export const dbService = {
             await dbService.deleteStudentChat(d.id).catch(() => {});
           }
         } catch (e) {}
-      } catch (err) {
-        console.error("Firebase clear all students failed:", err);
+      } catch (err: any) {
+        throw new Error(formatCloudErrorMessage(err, 'تعذر تصفير حسابات الطلاب في قاعدة البيانات السحابية.'));
       }
     }
     setStorageItem('students', []);
@@ -3676,23 +3694,20 @@ export const dbService = {
     setStorageItem('courseAccess', []);
     setStorageItem('lessonAccess', []);
     setStorageItem('certificates', []);
-    setStorageItem('assignment_tasks', []);
     setStorageItem('chats', {});
     const users = getStorageItem<UserAuth[]>('users', defaultUsers);
     const updatedUsers = users.filter(u => u.role === 'admin' || u.role === 'teacher' || isAdminEmail(u.email || ''));
     setStorageItem('users', updatedUsers);
-    try { await dbService.forceLogoutAllUsers(); } catch (e) {}
+    await dbService.forceLogoutAllUsers();
   },
 
   forceLogoutAllUsers: async (): Promise<void> => {
+    checkAdminWrite('force_logout_all', {});
+    await requireCloudWriteAuth(true);
     const nowTimestamp = Date.now();
-    try {
-      const currentSettings = await dbService.getSettings();
-      const updatedSettings = { ...currentSettings, forceLogoutVersion: nowTimestamp };
-      await dbService.updateSettings(updatedSettings);
-    } catch (err) {
-      console.error("Failed to update settings forceLogoutVersion:", err);
-    }
+    const currentSettings = await dbService.getSettings();
+    const updatedSettings = { ...currentSettings, forceLogoutVersion: nowTimestamp };
+    await dbService.updateSettings(updatedSettings);
 
     if (isFirebaseConfigured) {
       try {
@@ -3700,11 +3715,11 @@ export const dbService = {
         for (const d of snap.docs) {
           const uData = d.data() as UserAuth;
           if (uData.role !== 'admin' && !isAdminEmail(uData.email || '')) {
-            await updateDoc(d.ref, { forceLogoutVersion: nowTimestamp }).catch(() => {});
+            await updateDoc(d.ref, { forceLogoutVersion: nowTimestamp });
           }
         }
-      } catch (err) {
-        console.error("Firebase force logout all failed:", err);
+      } catch (err: any) {
+        throw new Error(formatCloudErrorMessage(err, 'تعذر تحديث جلسات تسجيل الخروج الجماعي في السحابة.'));
       }
     }
 
@@ -3737,6 +3752,8 @@ export const dbService = {
   },
 
   addNews: async (newsItem: Omit<NewsItem, 'id' | 'date'>): Promise<NewsItem> => {
+    checkAdminWrite('add_news', { newsItem });
+    await requireCloudWriteAuth(true);
     const newId = 'news_' + Date.now();
     const newNews: NewsItem = {
       id: newId,
@@ -3745,10 +3762,9 @@ export const dbService = {
     };
     if (isFirebaseConfigured) {
       try {
-        await setDoc(doc(firestoreDb, 'news', newId), { ...newsItem, date: newNews.date });
-        return newNews;
-      } catch (err) {
-        console.error("Firebase news add failed:", err);
+        await setDoc(doc(firestoreDb, 'news', newId), sanitizeForFirestore({ ...newsItem, date: newNews.date }));
+      } catch (err: any) {
+        throw new Error(formatCloudErrorMessage(err, 'تعذر إضافة الخبر في قاعدة البيانات السحابية.'));
       }
     }
     const current = getStorageItem<NewsItem[]>('news', defaultNews);
@@ -3758,12 +3774,13 @@ export const dbService = {
   },
 
   updateNews: async (id: string, newsItem: Partial<NewsItem>): Promise<void> => {
+    checkAdminWrite('update_news', { id, newsItem });
+    await requireCloudWriteAuth(true);
     if (isFirebaseConfigured) {
       try {
-        await updateDoc(doc(firestoreDb, 'news', id), newsItem as any);
-        return;
-      } catch (err) {
-        console.error("Firebase news update failed:", err);
+        await setDoc(doc(firestoreDb, 'news', id), sanitizeForFirestore(newsItem) as any, { merge: true });
+      } catch (err: any) {
+        throw new Error(formatCloudErrorMessage(err, 'تعذر تحديث الخبر في قاعدة البيانات السحابية.'));
       }
     }
     const current = getStorageItem<NewsItem[]>('news', defaultNews);
@@ -3772,11 +3789,13 @@ export const dbService = {
   },
 
   deleteNews: async (id: string): Promise<void> => {
+    checkAdminWrite('delete_news', { id });
+    await requireCloudWriteAuth(true);
     if (isFirebaseConfigured) {
       try {
         await deleteDoc(doc(firestoreDb, 'news', id));
-      } catch (err) {
-        console.error("Firebase news delete failed:", err);
+      } catch (err: any) {
+        throw new Error(formatCloudErrorMessage(err, 'تعذر حذف الخبر من قاعدة البيانات السحابية.'));
       }
     }
     const current = getStorageItem<NewsItem[]>('news', defaultNews);
@@ -3806,6 +3825,8 @@ export const dbService = {
   },
 
   addArticle: async (article: Omit<Article, 'id' | 'date'>): Promise<Article> => {
+    checkAdminWrite('add_article', { article });
+    await requireCloudWriteAuth(true);
     const newId = 'art_' + Date.now();
     const newArticle: Article = {
       id: newId,
@@ -3814,10 +3835,9 @@ export const dbService = {
     };
     if (isFirebaseConfigured) {
       try {
-        await setDoc(doc(firestoreDb, 'articles', newId), { ...article, date: newArticle.date });
-        return newArticle;
-      } catch (err) {
-        console.error("Firebase article add failed:", err);
+        await setDoc(doc(firestoreDb, 'articles', newId), sanitizeForFirestore({ ...article, date: newArticle.date }));
+      } catch (err: any) {
+        throw new Error(formatCloudErrorMessage(err, 'تعذر نشر المقال في قاعدة البيانات السحابية.'));
       }
     }
     const current = getStorageItem<Article[]>('articles', defaultArticles);
@@ -3827,12 +3847,13 @@ export const dbService = {
   },
 
   updateArticle: async (id: string, article: Partial<Article>): Promise<void> => {
+    checkAdminWrite('update_article', { id, article });
+    await requireCloudWriteAuth(true);
     if (isFirebaseConfigured) {
       try {
-        await updateDoc(doc(firestoreDb, 'articles', id), article as any);
-        return;
-      } catch (err) {
-        console.error("Firebase article update failed:", err);
+        await setDoc(doc(firestoreDb, 'articles', id), sanitizeForFirestore(article) as any, { merge: true });
+      } catch (err: any) {
+        throw new Error(formatCloudErrorMessage(err, 'تعذر تحديث المقال في قاعدة البيانات السحابية.'));
       }
     }
     const current = getStorageItem<Article[]>('articles', defaultArticles);
@@ -3841,11 +3862,13 @@ export const dbService = {
   },
 
   deleteArticle: async (id: string): Promise<void> => {
+    checkAdminWrite('delete_article', { id });
+    await requireCloudWriteAuth(true);
     if (isFirebaseConfigured) {
       try {
         await deleteDoc(doc(firestoreDb, 'articles', id));
-      } catch (err) {
-        console.error("Firebase article delete failed:", err);
+      } catch (err: any) {
+        throw new Error(formatCloudErrorMessage(err, 'تعذر حذف المقال من قاعدة البيانات السحابية.'));
       }
     }
     const current = getStorageItem<Article[]>('articles', defaultArticles);
@@ -3875,6 +3898,7 @@ export const dbService = {
   },
 
   addReview: async (review: Omit<UserReview, 'id' | 'date'>): Promise<UserReview> => {
+    await requireCloudWriteAuth(false);
     const newId = 'rev_' + Date.now();
     const newReview: UserReview = {
       id: newId,
@@ -3883,10 +3907,9 @@ export const dbService = {
     };
     if (isFirebaseConfigured) {
       try {
-        await setDoc(doc(firestoreDb, 'reviews', newId), { ...review, date: newReview.date });
-        return newReview;
-      } catch (err) {
-        console.error("Firebase review add failed:", err);
+        await setDoc(doc(firestoreDb, 'reviews', newId), sanitizeForFirestore({ ...review, date: newReview.date }));
+      } catch (err: any) {
+        throw new Error(formatCloudErrorMessage(err, 'تعذر إرسال التقييم إلى قاعدة البيانات السحابية.'));
       }
     }
     const current = getStorageItem<UserReview[]>('reviews', defaultReviews);
@@ -3896,12 +3919,13 @@ export const dbService = {
   },
 
   updateReview: async (id: string, review: Partial<UserReview>): Promise<void> => {
+    checkAdminWrite('update_review', { id, review });
+    await requireCloudWriteAuth(true);
     if (isFirebaseConfigured) {
       try {
-        await updateDoc(doc(firestoreDb, 'reviews', id), review as any);
-        return;
-      } catch (err) {
-        console.error("Firebase review update failed:", err);
+        await setDoc(doc(firestoreDb, 'reviews', id), sanitizeForFirestore(review) as any, { merge: true });
+      } catch (err: any) {
+        throw new Error(formatCloudErrorMessage(err, 'تعذر تحديث التقييم في قاعدة البيانات السحابية.'));
       }
     }
     const current = getStorageItem<UserReview[]>('reviews', defaultReviews);
@@ -3910,11 +3934,13 @@ export const dbService = {
   },
 
   deleteReview: async (id: string): Promise<void> => {
+    checkAdminWrite('delete_review', { id });
+    await requireCloudWriteAuth(true);
     if (isFirebaseConfigured) {
       try {
         await deleteDoc(doc(firestoreDb, 'reviews', id));
-      } catch (err) {
-        console.error("Firebase review delete failed:", err);
+      } catch (err: any) {
+        throw new Error(formatCloudErrorMessage(err, 'تعذر حذف التقييم من قاعدة البيانات السحابية.'));
       }
     }
     const current = getStorageItem<UserReview[]>('reviews', defaultReviews);
@@ -4003,14 +4029,13 @@ export const dbService = {
   },
 
   updateMessage: async (id: string, message: Partial<Message>): Promise<void> => {
+    checkAdminWrite('update_message', { id, message });
+    await requireCloudWriteAuth(true);
     if (isFirebaseConfigured) {
       try {
-        await updateDoc(doc(firestoreDb, 'messages', id), message as any);
-        return;
+        await setDoc(doc(firestoreDb, 'messages', id), sanitizeForFirestore(message) as any, { merge: true });
       } catch (err: any) {
-        console.error("Firebase message update failed:", err);
-        handleFirestoreError(err, OperationType.WRITE, 'messages/' + id);
-        return;
+        throw new Error(formatCloudErrorMessage(err, 'تعذر تحديث حالة الرسالة في قاعدة البيانات السحابية.'));
       }
     }
     const current = getStorageItem<Message[]>('messages', defaultMessages);
@@ -4019,14 +4044,13 @@ export const dbService = {
   },
 
   deleteMessage: async (id: string): Promise<void> => {
+    checkAdminWrite('delete_message', { id });
+    await requireCloudWriteAuth(true);
     if (isFirebaseConfigured) {
       try {
         await deleteDoc(doc(firestoreDb, 'messages', id));
-        return;
       } catch (err: any) {
-        console.error("Firebase message delete failed:", err);
-        handleFirestoreError(err, OperationType.DELETE, 'messages/' + id);
-        return;
+        throw new Error(formatCloudErrorMessage(err, 'تعذر حذف الرسالة من قاعدة البيانات السحابية.'));
       }
     }
     const current = getStorageItem<Message[]>('messages', defaultMessages);
@@ -4090,15 +4114,17 @@ export const dbService = {
   },
 
   updateAdmin: async (id: string, admin: Partial<Admin>): Promise<void> => {
+    checkAdminWrite('update_admin', { id, admin });
+    await requireCloudWriteAuth(true);
     const cleanId = id.trim().toLowerCase();
     if (isFirebaseConfigured) {
       try {
-        await setDoc(doc(firestoreDb, 'admins', id), admin as any, { merge: true });
+        await setDoc(doc(firestoreDb, 'admins', id), sanitizeForFirestore(admin) as any, { merge: true });
         if (cleanId !== id) {
-          await setDoc(doc(firestoreDb, 'admins', cleanId), admin as any, { merge: true }).catch(() => {});
+          await setDoc(doc(firestoreDb, 'admins', cleanId), sanitizeForFirestore(admin) as any, { merge: true }).catch(() => {});
         }
-      } catch (err) {
-        console.error("Firebase admin update failed:", err);
+      } catch (err: any) {
+        throw new Error(formatCloudErrorMessage(err, 'تعذر تحديث بيانات المسؤول في قاعدة البيانات السحابية.'));
       }
     }
     const current = getStorageItem<Admin[]>('admins', defaultAdmins);
@@ -4146,14 +4172,15 @@ export const dbService = {
   },
 
   addTeacher: async (teacher: Omit<Teacher, 'id'>): Promise<Teacher> => {
+    checkAdminWrite('add_teacher', { teacher });
+    await requireCloudWriteAuth(true);
     const newId = 'teach_' + Date.now();
     const newTeacher: Teacher = { id: newId, ...teacher };
     if (isFirebaseConfigured) {
       try {
-        await setDoc(doc(firestoreDb, 'teachers', newId), teacher);
-        return newTeacher;
-      } catch (err) {
-        console.error("Firebase teacher add failed:", err);
+        await setDoc(doc(firestoreDb, 'teachers', newId), sanitizeForFirestore(teacher));
+      } catch (err: any) {
+        throw new Error(formatCloudErrorMessage(err, 'تعذر إضافة المشرف الأكاديمي في قاعدة البيانات السحابية.'));
       }
     }
     const current = getStorageItem<Teacher[]>('teachers', defaultTeachers);
@@ -4163,12 +4190,13 @@ export const dbService = {
   },
 
   updateTeacher: async (id: string, teacher: Partial<Teacher>): Promise<void> => {
+    checkAdminWrite('update_teacher', { id, teacher });
+    await requireCloudWriteAuth(true);
     if (isFirebaseConfigured) {
       try {
-        await updateDoc(doc(firestoreDb, 'teachers', id), teacher as any);
-        return;
-      } catch (err) {
-        console.error("Firebase teacher update failed:", err);
+        await setDoc(doc(firestoreDb, 'teachers', id), sanitizeForFirestore(teacher) as any, { merge: true });
+      } catch (err: any) {
+        throw new Error(formatCloudErrorMessage(err, 'تعذر تحديث بيانات المشرف في قاعدة البيانات السحابية.'));
       }
     }
     const current = getStorageItem<Teacher[]>('teachers', defaultTeachers);
@@ -4177,11 +4205,13 @@ export const dbService = {
   },
 
   deleteTeacher: async (id: string): Promise<void> => {
+    checkAdminWrite('delete_teacher', { id });
+    await requireCloudWriteAuth(true);
     if (isFirebaseConfigured) {
       try {
         await deleteDoc(doc(firestoreDb, 'teachers', id));
-      } catch (err) {
-        console.error("Firebase teacher delete failed:", err);
+      } catch (err: any) {
+        throw new Error(formatCloudErrorMessage(err, 'تعذر حذف المشرف من قاعدة البيانات السحابية.'));
       }
     }
     const current = getStorageItem<Teacher[]>('teachers', defaultTeachers);
@@ -4209,14 +4239,15 @@ export const dbService = {
   },
 
   addCoupon: async (coupon: Omit<Coupon, 'id'>): Promise<Coupon> => {
+    checkAdminWrite('add_coupon', { coupon });
+    await requireCloudWriteAuth(true);
     const newId = 'coup_' + Date.now();
     const newCoupon: Coupon = { id: newId, ...coupon };
     if (isFirebaseConfigured) {
       try {
-        await setDoc(doc(firestoreDb, 'coupons', newId), coupon);
-        return newCoupon;
-      } catch (err) {
-        console.error("Firebase coupon add failed:", err);
+        await setDoc(doc(firestoreDb, 'coupons', newId), sanitizeForFirestore(coupon));
+      } catch (err: any) {
+        throw new Error(formatCloudErrorMessage(err, 'تعذر إضافة الكوبون في قاعدة البيانات السحابية.'));
       }
     }
     const current = getStorageItem<Coupon[]>('coupons', defaultCoupons);
@@ -4226,12 +4257,13 @@ export const dbService = {
   },
 
   updateCoupon: async (id: string, coupon: Partial<Coupon>): Promise<void> => {
+    checkAdminWrite('update_coupon', { id, coupon });
+    await requireCloudWriteAuth(true);
     if (isFirebaseConfigured) {
       try {
-        await updateDoc(doc(firestoreDb, 'coupons', id), coupon as any);
-        return;
-      } catch (err) {
-        console.error("Firebase coupon update failed:", err);
+        await setDoc(doc(firestoreDb, 'coupons', id), sanitizeForFirestore(coupon) as any, { merge: true });
+      } catch (err: any) {
+        throw new Error(formatCloudErrorMessage(err, 'تعذر تحديث الكوبون في قاعدة البيانات السحابية.'));
       }
     }
     const current = getStorageItem<Coupon[]>('coupons', defaultCoupons);
@@ -4240,11 +4272,13 @@ export const dbService = {
   },
 
   deleteCoupon: async (id: string): Promise<void> => {
+    checkAdminWrite('delete_coupon', { id });
+    await requireCloudWriteAuth(true);
     if (isFirebaseConfigured) {
       try {
         await deleteDoc(doc(firestoreDb, 'coupons', id));
-      } catch (err) {
-        console.error("Firebase coupon delete failed:", err);
+      } catch (err: any) {
+        throw new Error(formatCloudErrorMessage(err, 'تعذر حذف الكوبون من قاعدة البيانات السحابية.'));
       }
     }
     const current = getStorageItem<Coupon[]>('coupons', defaultCoupons);
@@ -4464,34 +4498,34 @@ export const dbService = {
   },
 
   updateOrder: async (id: string, order: Partial<Order>): Promise<void> => {
+    checkAdminWrite('update_order', { id, order });
+    await requireCloudWriteAuth(true);
     if (isFirebaseConfigured) {
       try {
-        await setDoc(doc(firestoreDb, 'orders', id), order as any, { merge: true }).catch(() => {});
-        await setDoc(doc(firestoreDb, 'courseRequests', id), order as any, { merge: true }).catch(() => {});
+        const cleanOrder = sanitizeForFirestore(order);
+        await setDoc(doc(firestoreDb, 'orders', id), cleanOrder as any, { merge: true });
+        await setDoc(doc(firestoreDb, 'courseRequests', id), cleanOrder as any, { merge: true }).catch(() => {});
         if (order.status === 'completed' || order.status === 'approved' || order.status === 'rejected') {
-          try {
-            const snap = await getDoc(doc(firestoreDb, 'orders', id));
-            let data: Order | null = snap.exists() ? (snap.data() as Order) : null;
-            if (!data) {
-              const reqSnap = await getDoc(doc(firestoreDb, 'courseRequests', id));
-              if (reqSnap.exists()) data = reqSnap.data() as Order;
-            }
-            if (data && data.studentId && data.courseId) {
-              const accessId = `${data.studentId}_${data.courseId}`;
-              const targetStatus = order.status === 'rejected' ? 'rejected' : 'approved';
-              await setDoc(doc(firestoreDb, 'courseAccess', accessId), {
-                id: accessId,
-                studentId: data.studentId,
-                courseId: data.courseId,
-                status: targetStatus,
-                updatedAt: new Date().toISOString()
-              }, { merge: true });
-            }
-          } catch (e) {}
+          const snap = await getDoc(doc(firestoreDb, 'orders', id));
+          let data: Order | null = snap.exists() ? (snap.data() as Order) : null;
+          if (!data) {
+            const reqSnap = await getDoc(doc(firestoreDb, 'courseRequests', id));
+            if (reqSnap.exists()) data = reqSnap.data() as Order;
+          }
+          if (data && data.studentId && data.courseId) {
+            const accessId = `${data.studentId}_${data.courseId}`;
+            const targetStatus = order.status === 'rejected' ? 'rejected' : 'approved';
+            await setDoc(doc(firestoreDb, 'courseAccess', accessId), {
+              id: accessId,
+              studentId: data.studentId,
+              courseId: data.courseId,
+              status: targetStatus,
+              updatedAt: new Date().toISOString()
+            }, { merge: true });
+          }
         }
-        return;
-      } catch (err) {
-        console.error("Firebase order update failed:", err);
+      } catch (err: any) {
+        throw new Error(formatCloudErrorMessage(err, 'تعذر تحديث حالة الاشتراك في قاعدة البيانات السحابية.'));
       }
     }
     const current = getStorageItem<Order[]>('orders', defaultOrders);
@@ -4500,6 +4534,8 @@ export const dbService = {
   },
 
   deleteOrder: async (id: string): Promise<void> => {
+    checkAdminWrite('delete_order', { id });
+    await requireCloudWriteAuth(true);
     if (isFirebaseConfigured) {
       try {
         let orderData: any = null;
@@ -4516,10 +4552,10 @@ export const dbService = {
           await deleteDoc(doc(firestoreDb, 'courseAccess', `${orderData.studentId}_${orderData.courseId}`)).catch(() => {});
         }
 
-        await deleteDoc(doc(firestoreDb, 'orders', id)).catch(() => {});
+        await deleteDoc(doc(firestoreDb, 'orders', id));
         await deleteDoc(doc(firestoreDb, 'courseRequests', id)).catch(() => {});
-      } catch (err) {
-        console.error("Firebase order delete failed:", err);
+      } catch (err: any) {
+        throw new Error(formatCloudErrorMessage(err, 'تعذر حذف الاشتراك من قاعدة البيانات السحابية.'));
       }
     }
     const current = getStorageItem<Order[]>('orders', defaultOrders);
@@ -4531,6 +4567,8 @@ export const dbService = {
 
   // --- Lesson Access (Granular Control via onSnapshot) ---
   toggleLessonItemAccess: async (studentId: string, courseId: string, itemId: string, unlocked: boolean): Promise<void> => {
+    checkAdminWrite('toggle_lesson_access', { studentId, courseId, itemId, unlocked });
+    await requireCloudWriteAuth(true);
     const docId = `${studentId}_${courseId}`;
     if (isFirebaseConfigured) {
       try {
@@ -4541,16 +4579,15 @@ export const dbService = {
           unlockedItems = snap.data().unlockedItems || {};
         }
         unlockedItems[itemId] = unlocked;
-        await setDoc(ref, {
+        await setDoc(ref, sanitizeForFirestore({
           id: docId,
           studentId,
           courseId,
           unlockedItems,
           updatedAt: new Date().toISOString()
-        }, { merge: true });
-        return;
-      } catch (err) {
-        console.error("Error toggling lesson item access in Firestore:", err);
+        }), { merge: true });
+      } catch (err: any) {
+        throw new Error(formatCloudErrorMessage(err, 'تعذر تحديث صلاحية فتح العنصر في قاعدة البيانات السحابية.'));
       }
     }
     const current = getStorageItem<LessonAccess[]>('lessonAccess', []);
@@ -4665,6 +4702,8 @@ export const dbService = {
   },
 
   addQuiz: async (quiz: Omit<Quiz, 'id'>): Promise<Quiz> => {
+    checkAdminWrite('add_quiz', { quiz });
+    await requireCloudWriteAuth(true);
     const newId = 'quiz_' + Date.now();
     const newQuiz: Quiz = {
       id: newId,
@@ -4676,9 +4715,9 @@ export const dbService = {
     };
     if (isFirebaseConfigured) {
       try {
-        await setDoc(doc(firestoreDb, 'quizzes', newId), newQuiz);
-      } catch (err) {
-        console.error("Firebase quiz add failed:", err);
+        await setDoc(doc(firestoreDb, 'quizzes', newId), sanitizeForFirestore(newQuiz));
+      } catch (err: any) {
+        throw new Error(formatCloudErrorMessage(err, 'تعذر حفظ الاختبار التدريبي في قاعدة البيانات السحابية.'));
       }
     }
     const current = getStorageItem<Quiz[]>('quizzes', defaultQuizzes);
@@ -4688,11 +4727,13 @@ export const dbService = {
   },
 
   updateQuiz: async (id: string, quiz: Partial<Quiz>): Promise<void> => {
+    checkAdminWrite('update_quiz', { id, quiz });
+    await requireCloudWriteAuth(true);
     if (isFirebaseConfigured) {
       try {
-        await setDoc(doc(firestoreDb, 'quizzes', id), quiz as any, { merge: true });
-      } catch (err) {
-        console.error("Firebase quiz update failed:", err);
+        await setDoc(doc(firestoreDb, 'quizzes', id), sanitizeForFirestore(quiz) as any, { merge: true });
+      } catch (err: any) {
+        throw new Error(formatCloudErrorMessage(err, 'تعذر تحديث الاختبار التدريبي في قاعدة البيانات السحابية.'));
       }
     }
     const current = getStorageItem<Quiz[]>('quizzes', defaultQuizzes);
@@ -4701,11 +4742,13 @@ export const dbService = {
   },
 
   deleteQuiz: async (id: string): Promise<void> => {
+    checkAdminWrite('delete_quiz', { id });
+    await requireCloudWriteAuth(true);
     if (isFirebaseConfigured) {
       try {
         await deleteDoc(doc(firestoreDb, 'quizzes', id));
-      } catch (err) {
-        console.error("Firebase quiz delete failed:", err);
+      } catch (err: any) {
+        throw new Error(formatCloudErrorMessage(err, 'تعذر حذف الاختبار التدريبي من قاعدة البيانات السحابية.'));
       }
     }
     const current = getStorageItem<Quiz[]>('quizzes', defaultQuizzes);
@@ -4828,6 +4871,8 @@ export const dbService = {
   },
 
   addAssignmentTask: async (task: Omit<Assignment, 'id'>): Promise<Assignment> => {
+    checkAdminWrite('add_assignment_task', { task });
+    await requireCloudWriteAuth(true);
     const newId = 'task_' + Date.now();
     const newTask: Assignment = {
       id: newId,
@@ -4839,9 +4884,9 @@ export const dbService = {
     };
     if (isFirebaseConfigured) {
       try {
-        await setDoc(doc(firestoreDb, 'assignment_tasks', newId), newTask);
-      } catch (err) {
-        console.error("Firebase assignment task add failed:", err);
+        await setDoc(doc(firestoreDb, 'assignment_tasks', newId), sanitizeForFirestore(newTask));
+      } catch (err: any) {
+        throw new Error(formatCloudErrorMessage(err, 'تعذر حفظ تكليف الواجب في قاعدة البيانات السحابية.'));
       }
     }
     const current = getStorageItem<Assignment[]>('assignment_tasks', []);
@@ -4851,11 +4896,13 @@ export const dbService = {
   },
 
   updateAssignmentTask: async (id: string, task: Partial<Assignment>): Promise<void> => {
+    checkAdminWrite('update_assignment_task', { id, task });
+    await requireCloudWriteAuth(true);
     if (isFirebaseConfigured) {
       try {
-        await setDoc(doc(firestoreDb, 'assignment_tasks', id), task as any, { merge: true });
-      } catch (err) {
-        console.error("Firebase assignment task update failed:", err);
+        await setDoc(doc(firestoreDb, 'assignment_tasks', id), sanitizeForFirestore(task) as any, { merge: true });
+      } catch (err: any) {
+        throw new Error(formatCloudErrorMessage(err, 'تعذر تحديث تكليف الواجب في قاعدة البيانات السحابية.'));
       }
     }
     const current = getStorageItem<Assignment[]>('assignment_tasks', []);
@@ -4864,11 +4911,13 @@ export const dbService = {
   },
 
   deleteAssignmentTask: async (id: string): Promise<void> => {
+    checkAdminWrite('delete_assignment_task', { id });
+    await requireCloudWriteAuth(true);
     if (isFirebaseConfigured) {
       try {
         await deleteDoc(doc(firestoreDb, 'assignment_tasks', id));
-      } catch (err) {
-        console.error("Firebase assignment task delete failed:", err);
+      } catch (err: any) {
+        throw new Error(formatCloudErrorMessage(err, 'تعذر حذف تكليف الواجب من قاعدة البيانات السحابية.'));
       }
     }
     const current = getStorageItem<Assignment[]>('assignment_tasks', []);
@@ -4936,37 +4985,33 @@ export const dbService = {
   },
 
   submitAssignment: async (sub: Omit<AssignmentSubmission, 'id'>): Promise<AssignmentSubmission> => {
+    await requireCloudWriteAuth(false);
     const newId = 'assign_' + Date.now();
-    const newSub: AssignmentSubmission = { id: newId, ...sub };
+    const effectiveStudentId = (isFirebaseConfigured && firebaseAuth?.currentUser?.uid)
+      ? firebaseAuth.currentUser.uid
+      : sub.studentId;
+    const newSub: AssignmentSubmission = { id: newId, ...sub, studentId: effectiveStudentId };
     if (isFirebaseConfigured) {
       try {
-        const setDocPromise = setDoc(doc(firestoreDb, 'assignments', newId), newSub);
-        const timeoutPromise = new Promise((_, reject) =>
-          setTimeout(() => reject(new Error("Firestore submit timeout")), 4000)
-        );
-        await Promise.race([setDocPromise, timeoutPromise]);
-        return newSub;
-      } catch (err) {
-        console.error("Firebase assignment submit failed or timed out, using local storage fallback:", err);
+        await setDoc(doc(firestoreDb, 'assignments', newId), sanitizeForFirestore(newSub));
+      } catch (err: any) {
+        throw new Error(formatCloudErrorMessage(err, 'تعذر رفع تسليم الواجب إلى قاعدة البيانات السحابية.'));
       }
     }
-    try {
-      const current = getStorageItem<AssignmentSubmission[]>('assignments', []);
-      current.push(newSub);
-      setStorageItem('assignments', current);
-    } catch (locErr) {
-      console.warn("LocalStorage save error:", locErr);
-    }
+    const current = getStorageItem<AssignmentSubmission[]>('assignments', []);
+    current.push(newSub);
+    setStorageItem('assignments', current);
     return newSub;
   },
 
   updateAssignment: async (id: string, sub: Partial<AssignmentSubmission>): Promise<void> => {
+    checkAdminWrite('update_assignment_submission', { id, sub });
+    await requireCloudWriteAuth(true);
     if (isFirebaseConfigured) {
       try {
-        await updateDoc(doc(firestoreDb, 'assignments', id), sub as any);
-        return;
-      } catch (err) {
-        console.error("Firebase assignment update failed:", err);
+        await setDoc(doc(firestoreDb, 'assignments', id), sanitizeForFirestore(sub) as any, { merge: true });
+      } catch (err: any) {
+        throw new Error(formatCloudErrorMessage(err, 'تعذر حفظ تصحيح ودرجة الواجب في قاعدة البيانات السحابية.'));
       }
     }
     const current = getStorageItem<AssignmentSubmission[]>('assignments', []);
@@ -4975,11 +5020,13 @@ export const dbService = {
   },
 
   deleteAssignmentSubmission: async (id: string): Promise<void> => {
+    checkAdminWrite('delete_assignment_submission', { id });
+    await requireCloudWriteAuth(true);
     if (isFirebaseConfigured) {
       try {
         await deleteDoc(doc(firestoreDb, 'assignments', id));
-      } catch (err) {
-        console.error("Firebase assignment submission delete failed:", err);
+      } catch (err: any) {
+        throw new Error(formatCloudErrorMessage(err, 'تعذر حذف تسليم الواجب من قاعدة البيانات السحابية.'));
       }
     }
     const current = getStorageItem<AssignmentSubmission[]>('assignments', []);
@@ -5013,14 +5060,17 @@ export const dbService = {
   },
 
   addCertificate: async (cert: Omit<Certificate, 'id'>): Promise<Certificate> => {
+    await requireCloudWriteAuth(false);
     const newId = 'cert_' + Date.now();
-    const newCert: Certificate = { id: newId, ...cert };
+    const effectiveStudentId = (isFirebaseConfigured && firebaseAuth?.currentUser?.uid && !isAdminEmail(firebaseAuth.currentUser.email || ''))
+      ? firebaseAuth.currentUser.uid
+      : cert.studentId;
+    const newCert: Certificate = { id: newId, ...cert, studentId: effectiveStudentId };
     if (isFirebaseConfigured) {
       try {
-        await setDoc(doc(firestoreDb, 'certificates', newId), cert);
-        return newCert;
-      } catch (err) {
-        console.error("Firebase certificate add failed:", err);
+        await setDoc(doc(firestoreDb, 'certificates', newId), sanitizeForFirestore({ ...cert, studentId: effectiveStudentId }));
+      } catch (err: any) {
+        throw new Error(formatCloudErrorMessage(err, 'تعذر إصدار الشهادة في قاعدة البيانات السحابية.'));
       }
     }
     const current = getStorageItem<Certificate[]>('certificates', []);
@@ -5219,14 +5269,17 @@ export const dbService = {
   },
 
   addComment: async (comment: Omit<LessonComment, 'id'>): Promise<LessonComment> => {
+    await requireCloudWriteAuth(false);
     const newId = 'comment_' + Date.now();
-    const newComment: LessonComment = { id: newId, ...comment };
+    const effectiveStudentId = (isFirebaseConfigured && firebaseAuth?.currentUser?.uid && !isAdminEmail(firebaseAuth.currentUser.email || ''))
+      ? firebaseAuth.currentUser.uid
+      : comment.studentId;
+    const newComment: LessonComment = { id: newId, ...comment, studentId: effectiveStudentId };
     if (isFirebaseConfigured) {
       try {
-        await setDoc(doc(firestoreDb, 'comments', newId), comment);
-        return newComment;
-      } catch (err) {
-        console.error("Firebase comment add failed:", err);
+        await setDoc(doc(firestoreDb, 'comments', newId), sanitizeForFirestore({ ...comment, studentId: effectiveStudentId }));
+      } catch (err: any) {
+        throw new Error(formatCloudErrorMessage(err, 'تعذر نشر التعليق في قاعدة البيانات السحابية.'));
       }
     }
     const current = getStorageItem<LessonComment[]>('comments', []);
@@ -5236,12 +5289,12 @@ export const dbService = {
   },
 
   deleteComment: async (id: string): Promise<void> => {
+    await requireCloudWriteAuth(false);
     if (isFirebaseConfigured) {
       try {
         await deleteDoc(doc(firestoreDb, 'comments', id));
-        return;
-      } catch (err) {
-        console.error("Firebase comment delete failed:", err);
+      } catch (err: any) {
+        throw new Error(formatCloudErrorMessage(err, 'تعذر حذف التعليق من قاعدة البيانات السحابية.'));
       }
     }
     const current = getStorageItem<LessonComment[]>('comments', []);
@@ -5281,12 +5334,13 @@ export const dbService = {
   },
 
   updateComment: async (id: string, updates: Partial<LessonComment>): Promise<void> => {
+    checkAdminWrite('update_comment', { id, updates });
+    await requireCloudWriteAuth(true);
     if (isFirebaseConfigured) {
       try {
-        await updateDoc(doc(firestoreDb, 'comments', id), updates);
-        return;
-      } catch (err) {
-        console.error("Firebase comment update failed:", err);
+        await setDoc(doc(firestoreDb, 'comments', id), sanitizeForFirestore(updates) as any, { merge: true });
+      } catch (err: any) {
+        throw new Error(formatCloudErrorMessage(err, 'تعذر تحديث الرد على التعليق في قاعدة البيانات السحابية.'));
       }
     }
     const current = getStorageItem<LessonComment[]>('comments', []);
@@ -5386,6 +5440,7 @@ export const dbService = {
   },
 
   addNotification: async (notif: Omit<Notification, 'id'>): Promise<Notification> => {
+    await requireCloudWriteAuth(false);
     const newId = 'notif_' + Date.now() + '_' + Math.random().toString(36).substring(2, 6);
     const newNotif: Notification = { id: newId, ...notif };
     if ((newNotif.userId || '').trim().toLowerCase() === 'global') {
@@ -5393,10 +5448,9 @@ export const dbService = {
     }
     if (isFirebaseConfigured) {
       try {
-        await setDoc(doc(firestoreDb, 'notifications', newId), newNotif);
-        return newNotif;
-      } catch (err) {
-        console.error("Firebase notification add failed:", err);
+        await setDoc(doc(firestoreDb, 'notifications', newId), sanitizeForFirestore(newNotif));
+      } catch (err: any) {
+        throw new Error(formatCloudErrorMessage(err, 'تعذر إرسال الإشعار إلى قاعدة البيانات السحابية.'));
       }
     }
     const current = getStorageItem<Notification[]>('notifications', []);
@@ -5501,11 +5555,12 @@ export const dbService = {
   },
 
   deleteNotification: async (id: string): Promise<void> => {
+    await requireCloudWriteAuth(false);
     if (isFirebaseConfigured) {
       try {
         await deleteDoc(doc(firestoreDb, 'notifications', id));
-      } catch (err) {
-        console.error("Firebase deleteNotification failed:", err);
+      } catch (err: any) {
+        throw new Error(formatCloudErrorMessage(err, 'تعذر حذف الإشعار من قاعدة البيانات السحابية.'));
       }
     }
     const current = getStorageItem<Notification[]>('notifications', []);
@@ -6837,15 +6892,17 @@ export const authService = {
 
   updateUserProfile: async (id: string, data: Partial<UserAuth>): Promise<void> => {
     if (isFirebaseConfigured) {
+      await waitForFirebaseAuth();
       try {
-        await setDoc(doc(firestoreDb, 'users', id), data as any, { merge: true }).catch(() => {});
-        await setDoc(doc(firestoreDb, 'students', id), data as any, { merge: true }).catch(() => {});
-      } catch (err) {
-        console.error("Firebase user profile update failed:", err);
+        const cleanData = sanitizeForFirestore(data) as any;
+        await setDoc(doc(firestoreDb, 'users', id), cleanData, { merge: true });
+        await setDoc(doc(firestoreDb, 'students', id), cleanData, { merge: true }).catch(() => {});
+      } catch (err: any) {
+        throw new Error(formatCloudErrorMessage(err, 'تعذر تحديث بيانات المستخدم في قاعدة البيانات السحابية.'));
       }
     }
     
-    // Fallback sync
+    // Sync local storage cache
     const users = getStorageItem<UserAuth[]>('users', defaultUsers);
     const updatedUsers = users.map(u => u.id === id ? { ...u, ...data } : u);
     setStorageItem('users', updatedUsers);
@@ -6858,6 +6915,8 @@ export const authService = {
   },
 
   deleteUser: async (id: string, email?: string): Promise<void> => {
+    checkAdminWrite('delete_user', { id, email });
+    await requireCloudWriteAuth(true);
     if (isFirebaseConfigured) {
       try {
         await deleteDoc(doc(firestoreDb, 'users', id));
@@ -6866,11 +6925,13 @@ export const authService = {
           const q = query(collection(firestoreDb, 'users'), where('email', '==', cleanEmail));
           const snap = await getDocs(q);
           for (const d of snap.docs) {
+            const uData = d.data();
+            if (uData.role === 'admin' || isAdminEmail(uData.email || '')) continue;
             await deleteDoc(doc(firestoreDb, 'users', d.id));
           }
         }
-      } catch (err) {
-        console.error("Firebase user delete error:", err);
+      } catch (err: any) {
+        throw new Error(formatCloudErrorMessage(err, 'تعذر حذف حساب المستخدم من قاعدة البيانات السحابية.'));
       }
     }
     const users = getStorageItem<UserAuth[]>('users', defaultUsers);

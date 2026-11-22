@@ -7,6 +7,7 @@ import { verifyCourseAccess } from '../utils/authAccess';
 import { authService } from '../firebase';
 import { getCourseDisplayTitle, getGradeName } from '../utils/gradeMatching';
 import { getCourseFallbackImage } from '../utils/platformAssets';
+import { ResolvedImage } from './ResolvedMedia';
 
 interface CourseCardProps {
   course: Course;
@@ -42,8 +43,9 @@ export const CourseCard: React.FC<CourseCardProps> = ({ course, category, onSele
     >
       {/* Thumbnail */}
       <div className="relative aspect-[16/10] w-full overflow-hidden bg-slate-900">
-        <img
+        <ResolvedImage
           src={coverSrc}
+          fallbackSrc={fallbackImg}
           alt={t(course.titleAr, course.titleEn)}
           className="h-full w-full object-cover transition-transform duration-500 group-hover:scale-105"
         />

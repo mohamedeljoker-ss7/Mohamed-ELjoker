@@ -9,10 +9,12 @@ export interface CloudMediaMeta {
   fileSize: number;
   totalChunks: number;
   uploadedBy?: string;
+  isPublic?: boolean;
   createdAt: number;
 }
 
 export interface ChunkUploadOptions {
+  isPublic?: boolean;
   shouldCancel?: () => boolean;
   onStats?: (stats: {
     percent: number;
@@ -59,6 +61,7 @@ export async function saveFileToFirestoreChunks(
     fileSize: totalSize,
     totalChunks,
     uploadedBy: firebaseAuth?.currentUser?.uid || undefined,
+    isPublic: Boolean(options?.isPublic),
     createdAt: Date.now()
   };
 

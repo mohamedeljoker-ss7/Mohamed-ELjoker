@@ -22,9 +22,10 @@ import {
   Clock, Sparkles, MessageSquare, Bell, LogOut, Check, X, ShieldAlert, FileText, ChevronLeft,
   Calendar, Star, SendHorizontal, Paperclip, Loader2, HelpCircle, BellRing, CheckCheck, Trash2, ExternalLink,
   Play, Eye, Layers, ShieldCheck, GraduationCap, Search, FileCheck, Phone, CheckSquare, ListChecks, History, Compass,
-  Bookmark, RotateCcw, Menu
+  Bookmark, RotateCcw, Menu, ClipboardList
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
+import { ResolvedImage } from './ResolvedMedia';
 
 interface StudentDashboardProps {
   onLogout: () => void;
@@ -1294,6 +1295,10 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({ onLogout, on
 
   const handleDeleteNotification = async (id: string, e?: React.MouseEvent) => {
     if (e) e.stopPropagation();
+    const target = notifications.find(n => n.id === id);
+    if (target && (target.userId || '').trim().toLowerCase() === 'global') {
+      return;
+    }
     try {
       await dbService.deleteNotification(id);
       setNotifications(prev => prev.filter(n => n.id !== id));
@@ -1687,6 +1692,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({ onLogout, on
                 { id: 'sections' as StudentSubTab, label: t('السكاشن والمعامل', 'Sections'), count: sections.length || undefined },
                 { id: 'exams' as StudentSubTab, label: t('الامتحانات', 'Exams'), count: exams.length || undefined },
                 { id: 'sheets' as StudentSubTab, label: t('الشيتات', 'Sheets'), count: sheets.length || undefined },
+                { id: 'assignments' as StudentSubTab, label: t('التكليفات والواجبات', 'Assignments'), count: assignmentTasks.filter(a => a.published !== false).length || undefined },
                 { id: 'question-bank' as StudentSubTab, label: t('بنك الأسئلة', 'Q-Bank'), count: questionBank.length || undefined },
                 { id: 'schedule' as StudentSubTab, label: t('الجدول الدراسي', 'Schedule'), count: undefined },
                 { id: 'favorites' as StudentSubTab, label: t('المفضلة', 'Saved'), count: currentUser?.favorites?.length || undefined },
@@ -1801,6 +1807,21 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({ onLogout, on
                 {sheets.length > 0 && (
                   <span className={`ml-auto rtl:mr-auto text-[10px] font-mono tabular-nums font-bold ${activeTab === 'sheets' ? 'text-white dark:text-slate-950' : 'text-brand-cyan'}`}>
                     {sheets.length}
+                  </span>
+                )}
+              </button>
+
+              <button
+                onClick={() => setActiveTab('assignments')}
+                className={`w-full rounded-xl px-4 py-3 text-xs font-bold flex items-center gap-3 transition-all cursor-pointer ${
+                  activeTab === 'assignments' ? 'bg-brand-cyan text-white dark:text-slate-950 shadow-lg shadow-cyan-950/30' : 'text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-900'
+                }`}
+              >
+                <ClipboardList className="h-4.5 w-4.5 shrink-0" />
+                <span>{t('التكليفات والواجبات البحثية', 'Assignments & Coursework')}</span>
+                {assignmentTasks.filter(a => a.published !== false).length > 0 && (
+                  <span className={`ml-auto rtl:mr-auto text-[10px] font-mono tabular-nums font-bold ${activeTab === 'assignments' ? 'text-white dark:text-slate-950' : 'text-brand-cyan'}`}>
+                    {assignmentTasks.filter(a => a.published !== false).length}
                   </span>
                 )}
               </button>
@@ -2073,10 +2094,10 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({ onLogout, on
                             {scheduleItems.slice(0, 3).map(item => (
                               <div key={item.id} className="rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900/60 p-3 flex items-center justify-between gap-2 text-xs">
                                 <div>
-                                  <p className="font-bold text-slate-900 dark:text-white">{item.subject}</p>
-                                  <p className="text-[11px] text-slate-500">{item.dayOfWeek} • {item.startTime} - {item.endTime} {item.location ? `• ${item.location}` : ''}</p>
+                                  <p className="font-bold text-slate-900 dark:text-white">{(item as any).subject || item.courseTitle || item.title}</p>
+                                  <p className="text-[11px] text-slate-500">{language === 'ar' ? (item.dayOfWeekAr || item.dayOfWeek) : item.dayOfWeek} • {item.startTime} - {item.endTime} {item.location ? `• ${item.location}` : ''}</p>
                                 </div>
-                                <span className="text-[10px] font-mono font-bold text-brand-cyan uppercase">{item.type}</span>
+                                <span className="text-[10px] font-mono font-bold text-brand-cyan uppercase">{item.itemType || (item as any).type || 'lecture'}</span>
                               </div>
                             ))}
                           </div>
@@ -2347,8 +2368,9 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({ onLogout, on
                             >
                               <div>
                                 <div className="aspect-video w-full rounded-xl overflow-hidden bg-slate-100 dark:bg-slate-900 relative">
-                                  <img 
+                                  <ResolvedImage 
                                     src={course.bannerUrl || course.thumbnailUrl || getCourseFallbackImage(course.titleAr || course.id)} 
+                                    fallbackSrc={getCourseFallbackImage(course.titleAr || course.id)}
                                     alt={course.titleAr} 
                                     className="w-full h-full object-cover group-hover:scale-105 transition-all duration-500"
                                   />
@@ -3321,7 +3343,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({ onLogout, on
                                       </button>
                                       {(assign.fileUrl.startsWith('data:image/') || /\.(jpg|jpeg|png|gif|webp)(\?.*)?$/i.test(assign.fileUrl)) && (
                                         <div className="max-w-xs rounded-xl overflow-hidden border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 p-1">
-                                          <img src={assign.fileUrl} alt="Attached Solution" className="w-full max-h-48 object-contain rounded-lg" />
+                                          <ResolvedImage src={assign.fileUrl} alt="Attached Solution" className="w-full max-h-48 object-contain rounded-lg" />
                                         </div>
                                       )}
                                     </div>
@@ -3717,14 +3739,16 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({ onLogout, on
                                         </span>
                                       )}
 
-                                      <button
-                                        type="button"
-                                        onClick={(e) => handleDeleteNotification(notif.id, e)}
-                                        className="text-slate-500 hover:text-red-500 dark:hover:text-red-400 p-1.5 rounded-lg hover:bg-red-500/10 transition-colors cursor-pointer"
-                                        title={t('حذف الإشعار', 'Delete Notification')}
-                                      >
-                                        <Trash2 className="h-3.5 w-3.5" />
-                                      </button>
+                                      {(notif.userId || '').trim().toLowerCase() !== 'global' && (
+                                        <button
+                                          type="button"
+                                          onClick={(e) => handleDeleteNotification(notif.id, e)}
+                                          className="text-slate-500 hover:text-red-500 dark:hover:text-red-400 p-1.5 rounded-lg hover:bg-red-500/10 transition-colors cursor-pointer"
+                                          title={t('حذف الإشعار', 'Delete Notification')}
+                                        >
+                                          <Trash2 className="h-3.5 w-3.5" />
+                                        </button>
+                                      )}
                                     </div>
                                   </div>
                                 </div>

@@ -20,6 +20,7 @@ import {
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { HERO_IT_UNIVERSITY_IMG, ENG_MOHAMED_AVATAR_IMG } from './utils/platformAssets';
+import { ResolvedImage } from './components/ResolvedMedia';
 
 function AcademyApp() {
   const { language, t, direction } = useLanguage();
@@ -1726,8 +1727,9 @@ function AcademyApp() {
                       
                       {/* Video Player placeholder */}
                       <div className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-slate-950 overflow-hidden aspect-video relative shadow-xl">
-                        <img 
+                        <ResolvedImage 
                           src={selectedCourse.bannerUrl || selectedCourse.thumbnailUrl || HERO_IT_UNIVERSITY_IMG} 
+                          fallbackSrc={HERO_IT_UNIVERSITY_IMG}
                           alt="Banner" 
                           className="w-full h-full object-cover opacity-60"
                         />

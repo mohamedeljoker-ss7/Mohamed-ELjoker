@@ -122,13 +122,14 @@ service cloud.firestore {
       allow write: if isAdmin();
     }
 
-    // Cloud Media Chunks (owner/admin safe create & cleanup)
+    // Cloud Media Chunks (owner/admin safe create & cleanup + public showcase media reads)
     match /cloud_media/{fileId} {
-      allow read: if isApprovedStudent();
+      allow read: if isApprovedStudent() || resource.data.isPublic == true;
       allow create: if isApprovedStudent() && (!('uploadedBy' in request.resource.data) || request.resource.data.uploadedBy == request.auth.uid);
       allow update, delete: if isAdmin() || (isApprovedStudent() && resource.data.uploadedBy == request.auth.uid);
       match /chunks/{chunkId} {
-        allow read: if isApprovedStudent();
+        allow read: if isApprovedStudent() ||
+          get(/databases/$(database)/documents/cloud_media/$(fileId)).data.isPublic == true;
         allow create: if isApprovedStudent();
         allow update, delete: if isAdmin() || (
           isApprovedStudent() &&
@@ -211,11 +212,16 @@ service cloud.firestore {
         resource.data.userId == 'global' || 
         resource.data.userId == request.auth.uid
       ));
+      allow create: if isAdmin() || (
+        isApprovedStudent() &&
+        request.resource.data.userId == request.auth.uid &&
+        request.resource.data.isRead == false
+      );
       allow update: if isAdmin() || (isSignedIn() && (
         resource.data.userId == 'global' || 
         resource.data.userId == request.auth.uid
       ));
-      allow create, delete: if isAdmin();
+      allow delete: if isAdmin() || (isSignedIn() && resource.data.userId == request.auth.uid);
     }
 
     // Public Contact Form Messages
@@ -268,7 +274,8 @@ service cloud.firestore {
     // Certificates
     match /certificates/{certId} {
       allow read: if isAdmin() || (isSignedIn() && resource.data.studentId == request.auth.uid);
-      allow write: if isAdmin();
+      allow create: if isAdmin() || (isApprovedStudent() && request.resource.data.studentId == request.auth.uid);
+      allow update, delete: if isAdmin();
     }
 
     // Live Chats

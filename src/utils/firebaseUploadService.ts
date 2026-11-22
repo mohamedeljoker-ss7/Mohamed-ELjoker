@@ -399,11 +399,15 @@ export async function uploadFileToFirebaseStorage(options: UploadOptions): Promi
   }
 
   try {
+    const isPublicMedia = ['images/thumbnails', 'images/banners', 'courses', 'categories', 'news', 'articles', 'teachers', 'settings'].some(
+      (f) => (folder || '').includes(f)
+    );
     const firestoreUrl = await saveFileToFirestoreChunks(
       uploadTargetFile,
       uniqueId,
       undefined,
       {
+        isPublic: isPublicMedia,
         shouldCancel: () => isCanceledByUser,
         onStats: ({ percent, bytesTransferred, totalBytes, bytesPerSec, remainingSeconds }) => {
           if (onProgress && !isCanceledByUser) {

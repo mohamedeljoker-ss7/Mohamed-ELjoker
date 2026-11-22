@@ -8,8 +8,7 @@ import {
 import { triggerFileDownload } from '../../utils/videoStorage';
 import { ResolvedImage } from '../ResolvedMedia';
 import { useLanguage } from '../LanguageContext';
-import { FilePreviewModal, PreviewFileType, PreviewMediaItem } from '../FilePreviewModal';
-import { Upload, Trash2, FileText, Image as ImageIcon, Code2, Archive, FileSpreadsheet, Loader2, X, Download, Eye } from 'lucide-react';
+import { Upload, Trash2, FileText, Image as ImageIcon, Code2, Archive, FileSpreadsheet, Loader2, X, Download } from 'lucide-react';
 
 interface MultiFileUploadListProps {
   label: string;
@@ -20,20 +19,8 @@ interface MultiFileUploadListProps {
   courseId?: string;
   helperText?: string;
   allowCodeAndArchives?: boolean;
-  onPreview?: (url: string, meta?: { title?: string; fileType?: PreviewFileType; fileName?: string }) => void;
   onUploadingChange?: (busy: boolean) => void;
   onErrorChange?: (err: string | null) => void;
-}
-
-export function mapAttachmentToPreviewType(type?: AttachmentFile['fileType']): PreviewFileType {
-  if (type === 'docx' || type === 'doc') return 'word';
-  if (type === 'pptx' || type === 'ppt') return 'ppt';
-  if (type === 'zip') return 'zip';
-  if (type === 'video') return 'video';
-  if (type === 'image') return 'image';
-  if (type === 'pdf') return 'pdf';
-  if (type === 'code') return 'code';
-  return 'other';
 }
 
 export function detectAttachmentType(fileName: string): AttachmentFile['fileType'] {
@@ -58,7 +45,6 @@ export const MultiFileUploadList: React.FC<MultiFileUploadListProps> = ({
   folder = 'lms_attachments',
   courseId,
   helperText,
-  onPreview,
   onUploadingChange,
   onErrorChange
 }) => {
@@ -68,7 +54,6 @@ export const MultiFileUploadList: React.FC<MultiFileUploadListProps> = ({
   const [uploadingName, setUploadingName] = useState<string | null>(null);
   const [progress, setProgress] = useState<UploadProgressInfo | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
-  const [internalPreview, setInternalPreview] = useState<PreviewMediaItem | null>(null);
 
   useEffect(() => {
     onUploadingChange?.(Boolean(uploadingName));
@@ -219,22 +204,7 @@ export const MultiFileUploadList: React.FC<MultiFileUploadListProps> = ({
                   <p className="text-[10px] font-mono text-slate-500 dark:text-slate-400 uppercase">{f.fileType}</p>
                 </div>
               </div>
-              <div className="flex items-center gap-1.5 shrink-0">
-                <button
-                  type="button"
-                  onClick={() => {
-                    const pType = mapAttachmentToPreviewType(f.fileType);
-                    if (onPreview) {
-                      onPreview(f.url, { title: f.name, fileType: pType, fileName: f.name });
-                    } else {
-                      setInternalPreview({ url: f.url, title: f.name, fileType: pType, fileName: f.name });
-                    }
-                  }}
-                  className="p-2 text-brand-cyan hover:bg-brand-cyan/10 rounded-lg transition-colors cursor-pointer"
-                  title={t('معاينة الملف', 'Preview file')}
-                >
-                  <Eye className="h-3.5 w-3.5" />
-                </button>
+              <div className="flex items-center gap-2 shrink-0">
                 <button
                   type="button"
                   onClick={() => triggerFileDownload(f.url, f.name)}
@@ -256,11 +226,6 @@ export const MultiFileUploadList: React.FC<MultiFileUploadListProps> = ({
           ))}
         </div>
       )}
-
-      <FilePreviewModal
-        item={internalPreview}
-        onClose={() => setInternalPreview(null)}
-      />
     </div>
   );
 };

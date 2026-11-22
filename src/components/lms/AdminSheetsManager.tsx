@@ -3,9 +3,8 @@ import { AttachmentFile, Course, SheetAnswerKeyDoc, SheetItem, SheetSubmission }
 import { dbService } from '../../firebase';
 import { useLanguage } from '../LanguageContext';
 import { FileUploadField } from '../FileUploadField';
-import { MultiFileUploadList, mapAttachmentToPreviewType } from './MultiFileUploadList';
+import { MultiFileUploadList } from './MultiFileUploadList';
 import { ResolvedImage } from '../ResolvedMedia';
-import { PreviewFileType } from '../FilePreviewModal';
 import { emitAppToast, triggerFileDownload } from '../../utils/videoStorage';
 import {
   ACADEMIC_GRADES,
@@ -34,7 +33,7 @@ interface AdminSheetsManagerProps {
     targetTitle: string,
     details?: string
   ) => void;
-  onPreviewMedia?: (url: string, title?: string, fileType?: PreviewFileType, fileName?: string) => void;
+  onPreviewMedia?: (url: string) => void;
 }
 
 export const AdminSheetsManager: React.FC<AdminSheetsManagerProps> = ({
@@ -901,7 +900,7 @@ export const AdminSheetsManager: React.FC<AdminSheetsManagerProps> = ({
                   accept=".pdf,application/pdf"
                   fileType="pdf"
                   folder="lms_sheets"
-                  onPreview={onPreviewMedia ? ((url, meta) => onPreviewMedia(url, form.title || meta?.title || t('ملف الشيت PDF', 'Sheet PDF'), meta?.fileType || 'pdf')) : undefined}
+                  onPreview={(url) => onPreviewMedia?.(url)}
                   onUploadingChange={busy => setFieldUploading('pdf', busy)}
                 />
                 <FileUploadField
@@ -911,7 +910,6 @@ export const AdminSheetsManager: React.FC<AdminSheetsManagerProps> = ({
                   accept=".doc,.docx,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
                   fileType="word"
                   folder="lms_sheets"
-                  onPreview={onPreviewMedia ? ((url, meta) => onPreviewMedia(url, form.title || meta?.title || t('ملف الشيت Word', 'Sheet Word'), meta?.fileType || 'word')) : undefined}
                   onUploadingChange={busy => setFieldUploading('word', busy)}
                 />
               </div>
@@ -923,7 +921,6 @@ export const AdminSheetsManager: React.FC<AdminSheetsManagerProps> = ({
                   onChange={(files) => setForm({ ...form, images: files })}
                   accept="image/*"
                   folder="lms_sheets_images"
-                  onPreview={onPreviewMedia ? ((url, meta) => onPreviewMedia(url, meta?.title || form.title, meta?.fileType || 'image', meta?.fileName)) : undefined}
                   onUploadingChange={busy => setFieldUploading('images', busy)}
                 />
                 <MultiFileUploadList
@@ -931,7 +928,6 @@ export const AdminSheetsManager: React.FC<AdminSheetsManagerProps> = ({
                   files={form.attachments}
                   onChange={(files) => setForm({ ...form, attachments: files })}
                   folder="lms_sheets_attachments"
-                  onPreview={onPreviewMedia ? ((url, meta) => onPreviewMedia(url, meta?.title || form.title, meta?.fileType, meta?.fileName)) : undefined}
                   onUploadingChange={busy => setFieldUploading('attachments', busy)}
                 />
               </div>
@@ -1011,7 +1007,7 @@ export const AdminSheetsManager: React.FC<AdminSheetsManagerProps> = ({
                   accept=".pdf,image/*,.doc,.docx"
                   fileType="pdf"
                   folder="lms_sheets_answers"
-                  onPreview={onPreviewMedia ? ((url, meta) => onPreviewMedia(url, `${form.title || t('نموذج الإجابة', 'Model Answer')}`, meta?.fileType)) : undefined}
+                  onPreview={(url) => onPreviewMedia?.(url)}
                   onUploadingChange={busy => setFieldUploading('modelAnswer', busy)}
                 />
 
@@ -1115,72 +1111,35 @@ export const AdminSheetsManager: React.FC<AdminSheetsManagerProps> = ({
 
             <div className="flex flex-wrap gap-2">
               {(mergedPreviewItem.pdfUrl || mergedPreviewItem.fileUrl) && (
-                <>
-                  {onPreviewMedia && (
-                    <button
-                      type="button"
-                      onClick={() => onPreviewMedia((mergedPreviewItem.pdfUrl || mergedPreviewItem.fileUrl)!, `${mergedPreviewItem.title} (PDF)`, 'pdf')}
-                      className="px-3.5 py-2 min-h-[40px] bg-brand-cyan/15 border border-brand-cyan/30 rounded-xl text-xs font-bold text-brand-cyan flex items-center gap-1.5 cursor-pointer"
-                    >
-                      <Eye className="h-4 w-4" />
-                      <span>{t('معاينة PDF', 'Preview PDF')}</span>
-                    </button>
-                  )}
-                  <button
-                    type="button"
-                    onClick={() => triggerFileDownload((mergedPreviewItem.pdfUrl || mergedPreviewItem.fileUrl)!, `${mergedPreviewItem.title}.pdf`)}
-                    className="px-3.5 py-2 min-h-[40px] bg-slate-100 dark:bg-slate-800 rounded-xl text-xs font-bold text-slate-800 dark:text-slate-200 flex items-center gap-1.5 cursor-pointer"
-                  >
-                    <Download className="h-4 w-4 text-rose-500" />
-                    <span>{t('تحميل ملف الشيت PDF', 'Download Sheet PDF')}</span>
-                  </button>
-                </>
+                <button
+                  type="button"
+                  onClick={() => triggerFileDownload((mergedPreviewItem.pdfUrl || mergedPreviewItem.fileUrl)!, `${mergedPreviewItem.title}.pdf`)}
+                  className="px-3.5 py-2 min-h-[40px] bg-slate-100 dark:bg-slate-800 rounded-xl text-xs font-bold text-slate-800 dark:text-slate-200 flex items-center gap-1.5 cursor-pointer"
+                >
+                  <Download className="h-4 w-4 text-rose-500" />
+                  <span>{t('تحميل ملف الشيت PDF', 'Download Sheet PDF')}</span>
+                </button>
               )}
               {mergedPreviewItem.wordUrl && (
-                <>
-                  {onPreviewMedia && (
-                    <button
-                      type="button"
-                      onClick={() => onPreviewMedia(mergedPreviewItem.wordUrl!, `${mergedPreviewItem.title} (Word)`, 'word')}
-                      className="px-3.5 py-2 min-h-[40px] bg-blue-500/15 border border-blue-500/30 rounded-xl text-xs font-bold text-blue-600 dark:text-blue-400 flex items-center gap-1.5 cursor-pointer"
-                    >
-                      <Eye className="h-4 w-4" />
-                      <span>{t('معاينة Word', 'Preview Word')}</span>
-                    </button>
-                  )}
-                  <button
-                    type="button"
-                    onClick={() => triggerFileDownload(mergedPreviewItem.wordUrl!, `${mergedPreviewItem.title}.docx`)}
-                    className="px-3.5 py-2 min-h-[40px] bg-slate-100 dark:bg-slate-800 rounded-xl text-xs font-bold text-slate-800 dark:text-slate-200 flex items-center gap-1.5 cursor-pointer"
-                  >
-                    <Download className="h-4 w-4 text-blue-500" />
-                    <span>{t('تحميل ملف Word', 'Download Word')}</span>
-                  </button>
-                </>
+                <button
+                  type="button"
+                  onClick={() => triggerFileDownload(mergedPreviewItem.wordUrl!, `${mergedPreviewItem.title}.docx`)}
+                  className="px-3.5 py-2 min-h-[40px] bg-slate-100 dark:bg-slate-800 rounded-xl text-xs font-bold text-slate-800 dark:text-slate-200 flex items-center gap-1.5 cursor-pointer"
+                >
+                  <Download className="h-4 w-4 text-blue-500" />
+                  <span>{t('تحميل ملف Word', 'Download Word')}</span>
+                </button>
               )}
               {(mergedPreviewItem.attachments || []).map(att => (
-                <div key={att.id} className="inline-flex items-center rounded-xl bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 overflow-hidden">
-                  {onPreviewMedia && (
-                    <button
-                      type="button"
-                      onClick={() => onPreviewMedia(att.url, att.name, mapAttachmentToPreviewType(att.fileType), att.name)}
-                      className="px-3 py-2 min-h-[40px] text-xs font-bold text-brand-cyan hover:bg-brand-cyan/10 flex items-center gap-1.5 cursor-pointer"
-                      title={t('معاينة المرفق', 'Preview attachment')}
-                    >
-                      <Eye className="h-4 w-4" />
-                      <span>{att.name}</span>
-                    </button>
-                  )}
-                  <button
-                    type="button"
-                    onClick={() => triggerFileDownload(att.url, att.name)}
-                    className="px-2.5 py-2 min-h-[40px] text-xs font-bold text-slate-700 dark:text-slate-300 hover:text-brand-cyan flex items-center gap-1.5 cursor-pointer border-r border-slate-200 dark:border-slate-700"
-                    title={t('تنزيل المرفق', 'Download attachment')}
-                  >
-                    <Download className="h-4 w-4 text-brand-cyan" />
-                    {!onPreviewMedia && <span>{att.name}</span>}
-                  </button>
-                </div>
+                <button
+                  key={att.id}
+                  type="button"
+                  onClick={() => triggerFileDownload(att.url, att.name)}
+                  className="px-3.5 py-2 min-h-[40px] bg-slate-100 dark:bg-slate-800 rounded-xl text-xs font-bold text-slate-800 dark:text-slate-200 flex items-center gap-1.5 cursor-pointer"
+                >
+                  <Download className="h-4 w-4 text-brand-cyan" />
+                  <span>{att.name}</span>
+                </button>
               ))}
             </div>
 
@@ -1205,26 +1164,14 @@ export const AdminSheetsManager: React.FC<AdminSheetsManagerProps> = ({
                 <div className="space-y-2 text-xs text-slate-700 dark:text-slate-300">
                   {mergedPreviewItem.modelAnswerText && <p className="whitespace-pre-wrap">{mergedPreviewItem.modelAnswerText}</p>}
                   {mergedPreviewItem.modelAnswerUrl && (
-                    <div className="flex flex-wrap items-center gap-2">
-                      {onPreviewMedia && (
-                        <button
-                          type="button"
-                          onClick={() => onPreviewMedia(mergedPreviewItem.modelAnswerUrl!, `${mergedPreviewItem.title} - ${t('نموذج الإجابة', 'Model Answer')}`, 'pdf')}
-                          className="px-3 py-1.5 bg-emerald-500/15 border border-emerald-500/30 text-emerald-700 dark:text-emerald-300 rounded-lg font-bold inline-flex items-center gap-1.5 cursor-pointer"
-                        >
-                          <Eye className="h-3.5 w-3.5" />
-                          <span>{t('معاينة الإجابة النموذجية', 'Preview Model Answer')}</span>
-                        </button>
-                      )}
-                      <button
-                        type="button"
-                        onClick={() => triggerFileDownload(mergedPreviewItem.modelAnswerUrl!, `${mergedPreviewItem.title}_answer.pdf`)}
-                        className="px-3 py-1.5 bg-emerald-600 text-white rounded-lg font-bold inline-flex items-center gap-1.5 cursor-pointer"
-                      >
-                        <Download className="h-3.5 w-3.5" />
-                        <span>{t('تحميل ملف الإجابة النموذجية', 'Download Model Answer')}</span>
-                      </button>
-                    </div>
+                    <button
+                      type="button"
+                      onClick={() => triggerFileDownload(mergedPreviewItem.modelAnswerUrl!, `${mergedPreviewItem.title}_answer.pdf`)}
+                      className="px-3 py-1.5 bg-emerald-600 text-white rounded-lg font-bold inline-flex items-center gap-1.5 cursor-pointer"
+                    >
+                      <Download className="h-3.5 w-3.5" />
+                      <span>{t('تحميل ملف الإجابة النموذجية', 'Download Model Answer')}</span>
+                    </button>
                   )}
                 </div>
               ) : (
@@ -1235,24 +1182,13 @@ export const AdminSheetsManager: React.FC<AdminSheetsManagerProps> = ({
                       <span className="font-bold text-brand-cyan block mb-1">{t('معاينة المدير للنموذج المخفي:', 'Admin preview of hidden answer key:')}</span>
                       {mergedPreviewItem.modelAnswerText && <p className="whitespace-pre-wrap">{mergedPreviewItem.modelAnswerText}</p>}
                       {mergedPreviewItem.modelAnswerUrl && (
-                        <div className="mt-1.5 flex flex-wrap items-center gap-2">
-                          {onPreviewMedia && (
-                            <button
-                              type="button"
-                              onClick={() => onPreviewMedia(mergedPreviewItem.modelAnswerUrl!, `${mergedPreviewItem.title} - ${t('نموذج الإجابة', 'Model Answer')}`, 'pdf')}
-                              className="px-2.5 py-1 bg-brand-cyan/15 text-brand-cyan rounded-lg font-bold inline-flex items-center gap-1 cursor-pointer"
-                            >
-                              <Eye className="h-3 w-3" /> {t('معاينة النموذج', 'Preview Key')}
-                            </button>
-                          )}
-                          <button
-                            type="button"
-                            onClick={() => triggerFileDownload(mergedPreviewItem.modelAnswerUrl!, `${mergedPreviewItem.title}_answer.pdf`)}
-                            className="px-2.5 py-1 bg-slate-200 dark:bg-slate-800 rounded-lg font-bold inline-flex items-center gap-1 cursor-pointer"
-                          >
-                            <Download className="h-3 w-3" /> {t('تنزيل نموذج الإجابة', 'Download Key')}
-                          </button>
-                        </div>
+                        <button
+                          type="button"
+                          onClick={() => triggerFileDownload(mergedPreviewItem.modelAnswerUrl!, `${mergedPreviewItem.title}_answer.pdf`)}
+                          className="mt-1.5 px-2.5 py-1 bg-slate-200 dark:bg-slate-800 rounded-lg font-bold inline-flex items-center gap-1 cursor-pointer"
+                        >
+                          <Download className="h-3 w-3" /> {t('تنزيل نموذج الإجابة', 'Download Key')}
+                        </button>
                       )}
                     </div>
                   )}
@@ -1345,7 +1281,7 @@ export const AdminSheetsManager: React.FC<AdminSheetsManagerProps> = ({
                         {onPreviewMedia && (
                           <button
                             type="button"
-                            onClick={() => onPreviewMedia(sub.fileUrl!, sub.fileName || sub.studentName, undefined, sub.fileName)}
+                            onClick={() => onPreviewMedia(sub.fileUrl!)}
                             className="px-3 py-1.5 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg text-xs font-bold text-slate-700 dark:text-slate-300 flex items-center gap-1 cursor-pointer"
                           >
                             <Eye className="h-3.5 w-3.5" />

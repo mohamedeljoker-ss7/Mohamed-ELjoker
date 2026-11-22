@@ -137,28 +137,7 @@ export async function deleteVideoFromIndexedDB(key: string): Promise<void> {
 
 export const getFileFromIndexedDB = getVideoFromIndexedDB;
 
-import { getFileFromFirestoreChunks, getFirestoreMediaMeta } from './firestoreMediaStorage';
-
-function inferExtensionFromMime(mime?: string): string {
-  if (!mime) return '';
-  const m = mime.toLowerCase();
-  if (m.includes('pdf')) return '.pdf';
-  if (m.includes('wordprocessingml')) return '.docx';
-  if (m.includes('msword')) return '.doc';
-  if (m.includes('presentationml')) return '.pptx';
-  if (m.includes('powerpoint')) return '.ppt';
-  if (m.includes('png')) return '.png';
-  if (m.includes('jpeg') || m.includes('jpg')) return '.jpg';
-  if (m.includes('webp')) return '.webp';
-  if (m.includes('gif')) return '.gif';
-  if (m.includes('svg')) return '.svg';
-  if (m.includes('zip')) return '.zip';
-  if (m.includes('mp4')) return '.mp4';
-  if (m.includes('webm')) return '.webm';
-  if (m.includes('json')) return '.json';
-  if (m.includes('text/plain')) return '.txt';
-  return '';
-}
+import { getFileFromFirestoreChunks } from './firestoreMediaStorage';
 
 /**
  * Downloads or opens any file (PDF, worksheet, attachment, video) across Firestore chunks, IndexedDB, Blob, Data URLs, or Firebase Storage.
@@ -170,29 +149,17 @@ export async function triggerFileDownload(url: string | undefined | null, fileNa
   }
 
   const clean = url.trim();
-  const hasExt = Boolean(fileName && /\.[a-z0-9]{1,6}$/i.test(fileName.trim()));
-  let safeName = (fileName && fileName.trim()) || clean.split('/').pop()?.split('?')[0] || 'lesson_document.pdf';
+  const safeName = fileName || clean.split('/').pop()?.split('?')[0] || 'lesson_document.pdf';
 
   // 1. Firestore Cloud Multi-Chunk stored file
   if (clean.startsWith('firestore://')) {
     const key = clean.replace('firestore://', '');
     try {
-      const [blob, meta] = await Promise.all([
-        getFileFromFirestoreChunks(key),
-        getFirestoreMediaMeta(key).catch(() => null)
-      ]);
+      const blob = await getFileFromFirestoreChunks(key);
       if (blob) {
-        if ((!fileName || !hasExt) && meta?.fileName) {
-          safeName = meta.fileName;
-        } else if (!/\.[a-z0-9]{1,6}$/i.test(safeName)) {
-          safeName += inferExtensionFromMime(meta?.fileType || blob.type) || '.bin';
-        }
-        const mimeType =
-          (meta?.fileType && meta.fileType !== 'application/octet-stream')
-            ? meta.fileType
-            : (blob.type && blob.type.trim() !== '')
-            ? blob.type
-            : (safeName.toLowerCase().endsWith('.pdf') ? 'application/pdf' : 'application/octet-stream');
+        const mimeType = (blob.type && blob.type.trim() !== '')
+          ? blob.type
+          : (safeName.toLowerCase().endsWith('.pdf') ? 'application/pdf' : 'application/octet-stream');
         const safeBlob = new Blob([blob], { type: mimeType });
         const objectUrl = URL.createObjectURL(safeBlob);
         const a = document.createElement('a');

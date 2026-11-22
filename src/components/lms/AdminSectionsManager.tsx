@@ -4,9 +4,8 @@ import { dbService } from '../../firebase';
 import { useLanguage } from '../LanguageContext';
 import { FileUploadField } from '../FileUploadField';
 import { VideoHostingUploader } from '../VideoHostingUploader';
-import { MultiFileUploadList, mapAttachmentToPreviewType } from './MultiFileUploadList';
+import { MultiFileUploadList } from './MultiFileUploadList';
 import { ResolvedImage } from '../ResolvedMedia';
-import { PreviewFileType } from '../FilePreviewModal';
 import { emitAppToast, triggerFileDownload } from '../../utils/videoStorage';
 import {
   ACADEMIC_GRADES,
@@ -34,7 +33,7 @@ interface AdminSectionsManagerProps {
     targetTitle: string,
     details?: string
   ) => void;
-  onPreviewMedia?: (url: string, title?: string, fileType?: PreviewFileType, fileName?: string) => void;
+  onPreviewMedia?: (url: string) => void;
 }
 
 export const AdminSectionsManager: React.FC<AdminSectionsManagerProps> = ({
@@ -647,7 +646,7 @@ export const AdminSectionsManager: React.FC<AdminSectionsManagerProps> = ({
                 value={form.youtubeUrl}
                 onChange={url => setForm({ ...form, youtubeUrl: url })}
                 courseId={resolveCourseMeta(form.subject, form.courseId).courseId}
-                onPreviewUrl={onPreviewMedia ? (url => onPreviewMedia(url, form.title || t('فيديو السكشن العملي', 'Lab Video'), 'video')) : undefined}
+                onPreviewUrl={onPreviewMedia}
                 onUploadingChange={busy => setFieldUploading('video', busy)}
               />
 
@@ -659,7 +658,7 @@ export const AdminSectionsManager: React.FC<AdminSectionsManagerProps> = ({
                   accept=".pdf,.doc,.docx,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
                   fileType="pdf"
                   folder="sections_docs"
-                  onPreview={onPreviewMedia ? ((url, meta) => onPreviewMedia(url, form.title || meta?.title || t('دليل المعمل', 'Lab Guide'), meta?.fileType || 'pdf')) : undefined}
+                  onPreview={onPreviewMedia ? (url => onPreviewMedia(url)) : undefined}
                   onUploadingChange={busy => setFieldUploading('pdf', busy)}
                 />
                 <FileUploadField
@@ -667,10 +666,9 @@ export const AdminSectionsManager: React.FC<AdminSectionsManagerProps> = ({
                   value={form.archiveUrl}
                   onChange={url => setForm({ ...form, archiveUrl: url })}
                   accept=".zip,.rar,.7z,application/zip"
-                  fileType="zip"
+                  fileType="other"
                   folder="sections_archives"
                   placeholder="https://.../lab-files.zip"
-                  onPreview={onPreviewMedia ? ((url, meta) => onPreviewMedia(url, form.title || meta?.title || t('ملف المشروع المضغوط', 'Project Archive'), meta?.fileType || 'zip')) : undefined}
                   onUploadingChange={busy => setFieldUploading('archive', busy)}
                 />
               </div>
@@ -681,7 +679,6 @@ export const AdminSectionsManager: React.FC<AdminSectionsManagerProps> = ({
                 onChange={files => setForm({ ...form, codeFiles: files })}
                 accept=".py,.js,.ts,.c,.cpp,.h,.html,.css,.sql,.json,.txt,.ipynb"
                 folder="sections_code"
-                onPreview={onPreviewMedia ? ((url, meta) => onPreviewMedia(url, meta?.title || form.title, meta?.fileType || 'code', meta?.fileName)) : undefined}
                 onUploadingChange={busy => setFieldUploading('codeFiles', busy)}
               />
 
@@ -691,7 +688,6 @@ export const AdminSectionsManager: React.FC<AdminSectionsManagerProps> = ({
                 onChange={files => setForm({ ...form, images: files })}
                 accept="image/*"
                 folder="sections_images"
-                onPreview={onPreviewMedia ? ((url, meta) => onPreviewMedia(url, meta?.title || form.title, meta?.fileType || 'image', meta?.fileName)) : undefined}
                 onUploadingChange={busy => setFieldUploading('images', busy)}
               />
 
@@ -874,7 +870,7 @@ export const AdminSectionsManager: React.FC<AdminSectionsManagerProps> = ({
                   type="button"
                   onClick={() => {
                     const vUrl = previewItem.youtubeUrl || previewItem.videoUrl!;
-                    if (onPreviewMedia) onPreviewMedia(vUrl, previewItem.title, 'video');
+                    if (onPreviewMedia) onPreviewMedia(vUrl);
                     else triggerFileDownload(vUrl, `${previewItem.title}.mp4`);
                   }}
                   className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-rose-600 text-white text-xs font-bold cursor-pointer"
@@ -883,68 +879,32 @@ export const AdminSectionsManager: React.FC<AdminSectionsManagerProps> = ({
                 </button>
               )}
               {(previewItem.pdfUrl || previewItem.fileUrl) && (
-                <>
-                  {onPreviewMedia && (
-                    <button
-                      type="button"
-                      onClick={() => onPreviewMedia((previewItem.pdfUrl || previewItem.fileUrl)!, previewItem.title, 'pdf')}
-                      className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-slate-100 dark:bg-slate-800 text-slate-800 dark:text-slate-200 text-xs font-bold cursor-pointer"
-                    >
-                      <Eye className="h-3.5 w-3.5 text-brand-cyan" /> {t('معاينة دليل المعمل', 'Preview Guide')}
-                    </button>
-                  )}
-                  <button
-                    type="button"
-                    onClick={() => triggerFileDownload((previewItem.pdfUrl || previewItem.fileUrl)!, `${previewItem.title}.pdf`)}
-                    className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-brand-cyan text-white dark:text-slate-950 text-xs font-bold cursor-pointer"
-                  >
-                    <Download className="h-3.5 w-3.5" /> {t('تحميل دليل المعمل', 'Download Guide')}
-                  </button>
-                </>
+                <button
+                  type="button"
+                  onClick={() => triggerFileDownload((previewItem.pdfUrl || previewItem.fileUrl)!, `${previewItem.title}.pdf`)}
+                  className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-brand-cyan text-white dark:text-slate-950 text-xs font-bold cursor-pointer"
+                >
+                  <Download className="h-3.5 w-3.5" /> {t('دليل المعمل', 'Lab Guide')}
+                </button>
               )}
               {previewItem.archiveUrl && (
-                <>
-                  {onPreviewMedia && (
-                    <button
-                      type="button"
-                      onClick={() => onPreviewMedia(previewItem.archiveUrl!, `${previewItem.title}.zip`, 'zip')}
-                      className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-amber-500/15 border border-amber-500/30 text-amber-700 dark:text-amber-300 text-xs font-bold cursor-pointer"
-                    >
-                      <Eye className="h-3.5 w-3.5" /> {t('معاينة الأرشيف ZIP', 'Preview ZIP')}
-                    </button>
-                  )}
-                  <button
-                    type="button"
-                    onClick={() => triggerFileDownload(previewItem.archiveUrl!, `${previewItem.title}.zip`)}
-                    className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-amber-600 text-white text-xs font-bold cursor-pointer"
-                  >
-                    <Archive className="h-3.5 w-3.5" /> ZIP
-                  </button>
-                </>
+                <button
+                  type="button"
+                  onClick={() => triggerFileDownload(previewItem.archiveUrl!, `${previewItem.title}.zip`)}
+                  className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-amber-600 text-white text-xs font-bold cursor-pointer"
+                >
+                  <Archive className="h-3.5 w-3.5" /> ZIP
+                </button>
               )}
               {(previewItem.codeFiles || []).map(cf => (
-                <div key={cf.id} className="inline-flex items-center rounded-xl bg-emerald-600 text-white overflow-hidden">
-                  {onPreviewMedia && (
-                    <button
-                      type="button"
-                      onClick={() => onPreviewMedia(cf.url, cf.name, mapAttachmentToPreviewType(cf.fileType) === 'other' ? 'code' : mapAttachmentToPreviewType(cf.fileType), cf.name)}
-                      className="inline-flex items-center gap-1.5 px-3 py-2 hover:bg-emerald-700 text-xs font-bold cursor-pointer"
-                      title={t('معاينة الكود', 'Preview Code')}
-                    >
-                      <Eye className="h-3.5 w-3.5" />
-                      <span>{cf.name}</span>
-                    </button>
-                  )}
-                  <button
-                    type="button"
-                    onClick={() => triggerFileDownload(cf.url, cf.name)}
-                    className="inline-flex items-center gap-1 px-2.5 py-2 hover:bg-emerald-700 text-xs font-bold cursor-pointer border-r border-emerald-500/50"
-                    title={t('تنزيل ملف الكود', 'Download code file')}
-                  >
-                    <Download className="h-3.5 w-3.5" />
-                    {!onPreviewMedia && <span>{cf.name}</span>}
-                  </button>
-                </div>
+                <button
+                  key={cf.id}
+                  type="button"
+                  onClick={() => triggerFileDownload(cf.url, cf.name)}
+                  className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-emerald-600 text-white text-xs font-bold cursor-pointer"
+                >
+                  <Code2 className="h-3.5 w-3.5" /> {cf.name}
+                </button>
               ))}
             </div>
             {(previewItem.imageUrls?.length || 0) > 0 && (

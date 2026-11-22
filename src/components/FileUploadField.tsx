@@ -4,7 +4,6 @@ import { isValidMediaOrWebUrl } from '../utils/gradeMatching';
 import { triggerFileDownload } from '../utils/videoStorage';
 import { ResolvedImage } from './ResolvedMedia';
 import { useLanguage } from './LanguageContext';
-import { FilePreviewModal, PreviewFileType, PreviewMediaItem } from './FilePreviewModal';
 
 interface FileUploadFieldProps {
   label: string;
@@ -14,8 +13,8 @@ interface FileUploadFieldProps {
   folder?: string;
   courseId?: string;
   placeholder?: string;
-  fileType?: 'pdf' | 'image' | 'word' | 'ppt' | 'code' | 'zip' | 'other';
-  onPreview?: (url: string, meta?: { title?: string; fileType?: PreviewFileType }) => void;
+  fileType?: 'pdf' | 'image' | 'word' | 'ppt' | 'code' | 'other';
+  onPreview?: (url: string) => void;
   onUploadingChange?: (busy: boolean) => void;
   onErrorChange?: (err: string | null) => void;
 }
@@ -37,7 +36,6 @@ export const FileUploadField: React.FC<FileUploadFieldProps> = ({
   const [isUploading, setIsUploading] = useState<boolean>(false);
   const [progressInfo, setProgressInfo] = useState<UploadProgressInfo | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
-  const [internalPreview, setInternalPreview] = useState<PreviewMediaItem | null>(null);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const cancelControlHolder = useRef<UploadControlHolder>({});
@@ -56,22 +54,7 @@ export const FileUploadField: React.FC<FileUploadFieldProps> = ({
   const isPdf = fileType === 'pdf' || accept.includes('pdf') || (value && /\.pdf(\?.*)?$/i.test(value));
   const isWord = fileType === 'word' || accept.includes('word') || accept.includes('doc') || (value && /\.(docx?|doc)(\?.*)?$/i.test(value));
   const isPpt = fileType === 'ppt' || accept.includes('ppt') || (value && /\.(pptx?|ppt)(\?.*)?$/i.test(value));
-  const isZip = fileType === 'zip' || (value && /\.(zip|rar|7z|tar|gz)(\?.*)?$/i.test(value));
-  const isCode = fileType === 'code' || (value && /\.(py|ipynb|json|sql|cpp|c|h|js|ts|tsx|html|css|txt)(\?.*)?$/i.test(value));
-
-  const detectedPreviewType: PreviewFileType = isPdf
-    ? 'pdf'
-    : isImage
-    ? 'image'
-    : isWord
-    ? 'word'
-    : isPpt
-    ? 'ppt'
-    : isZip
-    ? 'zip'
-    : isCode
-    ? 'code'
-    : 'other';
+  const isCode = fileType === 'code' || (value && /\.(py|ipynb|json|sql|cpp|c|h|js|ts|tsx|html|css|txt|zip|rar)(\?.*)?$/i.test(value));
 
   const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -255,19 +238,15 @@ export const FileUploadField: React.FC<FileUploadFieldProps> = ({
           </div>
 
           <div className="flex items-center gap-3 shrink-0">
-            <button
-              type="button"
-              onClick={() => {
-                if (onPreview) {
-                  onPreview(value, { title: label, fileType: detectedPreviewType });
-                } else {
-                  setInternalPreview({ url: value, title: label, fileType: detectedPreviewType });
-                }
-              }}
-              className="text-xs text-brand-cyan hover:underline cursor-pointer font-bold"
-            >
-              {t('معاينة', 'Preview')}
-            </button>
+            {onPreview && (
+              <button
+                type="button"
+                onClick={() => onPreview(value)}
+                className="text-xs text-brand-cyan hover:underline cursor-pointer font-bold"
+              >
+                {t('معاينة', 'Preview')}
+              </button>
+            )}
             <button
               type="button"
               onClick={() => triggerFileDownload(value, label || 'resource')}
@@ -299,11 +278,6 @@ export const FileUploadField: React.FC<FileUploadFieldProps> = ({
           </button>
         </div>
       )}
-
-      <FilePreviewModal
-        item={internalPreview}
-        onClose={() => setInternalPreview(null)}
-      />
     </div>
   );
 };

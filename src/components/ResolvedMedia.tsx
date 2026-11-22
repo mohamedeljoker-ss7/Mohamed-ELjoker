@@ -82,10 +82,9 @@ export function useResolvedMediaUrl(rawUrl?: string | null): { resolvedUrl: stri
 interface ResolvedImageProps extends React.ImgHTMLAttributes<HTMLImageElement> {
   src: string;
   fallback?: React.ReactNode;
-  fallbackSrc?: string;
 }
 
-export const ResolvedImage: React.FC<ResolvedImageProps> = ({ src, alt = '', className = '', fallback, fallbackSrc, ...rest }) => {
+export const ResolvedImage: React.FC<ResolvedImageProps> = ({ src, alt = '', className = '', fallback, ...rest }) => {
   const { resolvedUrl, loading } = useResolvedMediaUrl(src);
   const [broken, setBroken] = useState(false);
 
@@ -101,16 +100,6 @@ export const ResolvedImage: React.FC<ResolvedImageProps> = ({ src, alt = '', cla
 
   if (!resolvedUrl || broken) {
     if (fallback) return <>{fallback}</>;
-    if (fallbackSrc) {
-      return (
-        <img
-          src={fallbackSrc}
-          alt={alt}
-          className={className}
-          {...rest}
-        />
-      );
-    }
     return (
       <div className={`flex items-center justify-center bg-slate-100 dark:bg-slate-800 text-slate-400 text-[10px] font-bold ${className}`}>
         IMG

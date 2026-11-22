@@ -144,20 +144,6 @@ export async function saveFileToFirestoreChunks(
   return `firestore://${fileId}`;
 }
 
-export async function getFirestoreMediaMeta(fileId: string): Promise<CloudMediaMeta | null> {
-  if (!firestoreDb || !fileId) return null;
-  const cleanId = fileId.replace(/^firestore:\/\//, '').trim();
-  if (!cleanId) return null;
-  try {
-    const metaDoc = await getDoc(doc(firestoreDb, 'cloud_media', cleanId));
-    if (!metaDoc.exists()) return null;
-    return metaDoc.data() as CloudMediaMeta;
-  } catch (err) {
-    console.warn('[FirestoreMedia] Meta read warning for:', cleanId, err);
-    return null;
-  }
-}
-
 /**
  * Downloads and reassembles a chunked file from Firestore into a Blob.
  */

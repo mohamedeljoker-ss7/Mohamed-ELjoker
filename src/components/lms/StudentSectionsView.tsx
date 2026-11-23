@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { Course, SectionItem, UserAuth } from '../../types';
 import { useLanguage } from '../LanguageContext';
 import { ResolvedImage } from '../ResolvedMedia';
@@ -24,6 +24,7 @@ interface StudentSectionsViewProps {
   sections: SectionItem[];
   courses: Course[];
   currentUser: UserAuth | null;
+  initialSubject?: string;
   onToggleWatched: (itemId: string) => void;
   onOpenVideo: (url: string, title: string) => void;
   onOpenPdf: (url: string, title: string) => void;
@@ -33,6 +34,7 @@ export const StudentSectionsView: React.FC<StudentSectionsViewProps> = ({
   sections,
   courses,
   currentUser,
+  initialSubject,
   onToggleWatched,
   onOpenVideo,
   onOpenPdf
@@ -41,11 +43,18 @@ export const StudentSectionsView: React.FC<StudentSectionsViewProps> = ({
 
   const [searchQuery, setSearchQuery] = useState('');
   const [yearFilter, setYearFilter] = useState<string>(() => normalizeGradeCode(currentUser?.grade) || 'all');
-  const [semesterFilter, setSemesterFilter] = useState<string>(() => normalizeSemesterCode(currentUser?.semester) || 'all');
-  const [subjectFilter, setSubjectFilter] = useState<string>('all');
+  const [semesterFilter, setSemesterFilter] = useState<string>('all');
+  const [subjectFilter, setSubjectFilter] = useState<string>(initialSubject || 'all');
   const [sortBy, setSortBy] = useState<'number' | 'date'>('number');
   const [expandedExamplesId, setExpandedExamplesId] = useState<string | null>(null);
   const [gallerySection, setGallerySection] = useState<SectionItem | null>(null);
+
+  useEffect(() => {
+    if (initialSubject && initialSubject !== 'all') {
+      setSubjectFilter(initialSubject);
+      setYearFilter('all');
+    }
+  }, [initialSubject]);
 
   const watchedIds = currentUser?.watchedLessonIds || [];
 
@@ -136,9 +145,23 @@ export const StudentSectionsView: React.FC<StudentSectionsViewProps> = ({
 
       {/* Sections List */}
       {filteredSections.length === 0 ? (
-        <div className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950/40 p-10 text-center space-y-2">
+        <div className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950/40 p-10 text-center space-y-3">
           <Layers className="h-10 w-10 text-slate-400 mx-auto" />
           <p className="text-sm font-bold text-slate-900 dark:text-white">{t('لا توجد سكاشن عملية مطابقة حالياً', 'No matching practical sections found')}</p>
+          {(yearFilter !== 'all' || semesterFilter !== 'all' || subjectFilter !== 'all' || searchQuery) && (
+            <button
+              type="button"
+              onClick={() => {
+                setYearFilter('all');
+                setSemesterFilter('all');
+                setSubjectFilter('all');
+                setSearchQuery('');
+              }}
+              className="inline-flex items-center gap-1.5 rounded-xl bg-brand-cyan text-white dark:text-slate-950 hover:bg-brand-cyan-light px-4 py-2 text-xs font-extrabold cursor-pointer shadow-sm"
+            >
+              {t('عرض كل السكاشن بدون فلاتر', 'Show All Sections Without Filters')}
+            </button>
+          )}
         </div>
       ) : (
         <div className="space-y-4">

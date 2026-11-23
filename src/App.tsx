@@ -10,6 +10,7 @@ import { AdminPanel } from './components/AdminPanel';
 import { StudentDashboard } from './components/StudentDashboard';
 import { SubscriptionRequiredView } from './components/SubscriptionRequiredView';
 import { CustomVideoPlayer } from './components/CustomVideoPlayer';
+import { FilePreviewModal } from './components/FilePreviewModal';
 import { verifyCourseAccess, formatVideoEmbedUrl } from './utils/authAccess';
 import { triggerFileDownload, emitAppToast } from './utils/videoStorage';
 import { doesCourseMatchStudent, doesCourseMatchStudentGrade, doesSubjectMatch, ACADEMIC_GRADES, ACADEMIC_SEMESTERS, ACADEMIC_SUBJECTS, getGradeName, getCourseDisplayTitle, normalizeGradeCode, getGradeFromCourseOrCategory } from './utils/gradeMatching';
@@ -48,6 +49,8 @@ function AcademyApp() {
 
   // Loading States
   const [loading, setLoading] = useState<boolean>(true);
+  const [authResolved, setAuthResolved] = useState<boolean>(false);
+  const [previewFileModal, setPreviewFileModal] = useState<{ title: string; url: string } | null>(null);
   const [submittingContact, setSubmittingContact] = useState<boolean>(false);
   const [submittingEnroll, setSubmittingEnroll] = useState<boolean>(false);
 
@@ -160,6 +163,7 @@ function AcademyApp() {
       const currentAdmin = authService.getCurrentAdmin();
       if (currentAdmin) {
         setIsAdminLoggedIn(true);
+        setIsStudentLoggedIn(false);
       } else {
         setIsAdminLoggedIn(false);
         const currentUser = authService.getCurrentUser();
@@ -167,8 +171,10 @@ function AcademyApp() {
           setIsStudentLoggedIn(true);
         }
       }
+      setAuthResolved(true);
     } catch (err) {
       console.error("Error synchronizing academy data:", err);
+      setAuthResolved(true);
     } finally {
       setLoading(false);
     }
@@ -231,7 +237,7 @@ function AcademyApp() {
         setIsStudentLoggedIn(false);
         setIsAdminLoginOpen(false);
         setIsStudentAuthOpen(false);
-        handleNavigate('home');
+        handleNavigate('admin-panel');
       } else if (res.success && res.user) {
         setIsStudentLoggedIn(true);
         setIsAdminLoggedIn(false);
@@ -272,6 +278,7 @@ function AcademyApp() {
         setIsAdminLoggedIn(false);
         setIsStudentLoggedIn(false);
       }
+      setAuthResolved(true);
     });
 
     const handleUrlRouting = () => {
@@ -335,8 +342,9 @@ function AcademyApp() {
     }
   }, [courses, selectedCourseId]);
 
-  // Guard admin routes without blocking public platform views
+  // Guard admin routes without blocking public platform views (wait for auth persistence hydration first)
   useEffect(() => {
+    if (!authResolved) return;
     if (currentView === 'admin-panel' && !isAdminLoggedIn) {
       if (isStudentLoggedIn) {
         handleNavigate('student-panel');
@@ -345,7 +353,7 @@ function AcademyApp() {
         openAdminAuthModal();
       }
     }
-  }, [currentView, isAdminLoggedIn, isStudentLoggedIn]);
+  }, [authResolved, currentView, isAdminLoggedIn, isStudentLoggedIn]);
 
   useEffect(() => {
     fetchData();
@@ -484,6 +492,7 @@ function AcademyApp() {
   }, [selectedCourse?.id]);
 
   useEffect(() => {
+    if (!authResolved) return;
     if ((currentView === 'course-details' || currentView === 'player' || currentView === 'subscription-required') && selectedCourse) {
       const activeUser = authService.getCurrentUser();
       const access = verifyCourseAccess(activeUser, selectedCourse, orders);
@@ -498,7 +507,7 @@ function AcademyApp() {
         }
       }
     }
-  }, [currentView, selectedCourse, isStudentLoggedIn, orders]);
+  }, [authResolved, currentView, selectedCourse, isStudentLoggedIn, isAdminLoggedIn, orders]);
 
   const openExternalSafe = (url: string) => {
     if (!url) return;
@@ -731,7 +740,7 @@ function AcademyApp() {
             }
           }).catch(() => {});
         }
-        handleNavigate('home');
+        handleNavigate('admin-panel');
       } else {
         setAdminProviderDisabled(res.errorCode === 'auth/operation-not-allowed');
         setAdminUnauthorizedDomain(res.blockedDomain || '');
@@ -919,7 +928,7 @@ function AcademyApp() {
             }
           }).catch(() => {});
         }
-        handleNavigate('home');
+        handleNavigate('admin-panel');
       } else if (res.success && res.user) {
         setIsStudentLoggedIn(true);
         setIsAdminLoggedIn(false);
@@ -1028,7 +1037,7 @@ function AcademyApp() {
             setIsAdminLoggedIn(true);
             setIsStudentAuthOpen(false);
             setStudentAuthForm({ name: '', email: '', password: '', phone: '', grade: 'year1', semester: 'term1', department: 'IT' });
-            handleNavigate('home');
+            handleNavigate('admin-panel');
           } else {
             setIsStudentLoggedIn(true);
             setIsStudentAuthOpen(false);
@@ -1082,8 +1091,13 @@ function AcademyApp() {
   // Enrollment process
   const triggerEnroll = (course: Course, e?: React.MouseEvent) => {
     if (e) e.stopPropagation();
+    const activeUser = authService.getCurrentUser();
+    if (!activeUser) {
+      openStudentAuthModal('login');
+      return;
+    }
     setEnrollingCourse(course);
-    setEnrollForm({ name: '', email: '', phone: '' });
+    setEnrollForm({ name: activeUser.name || '', email: activeUser.email || '', phone: activeUser.phone || '' });
     setEnrollSuccess(false);
     setIsEnrollModalOpen(true);
   };
@@ -1789,7 +1803,17 @@ function AcademyApp() {
 
                       {/* Course Curriculum preview */}
                       <div className="rounded-2xl glass p-6 space-y-4">
-                        <h3 className="font-bold text-slate-900 dark:text-white text-sm">{t('محتوى المقرر والوحدات الدراسية', 'Course Syllabus & Units')}</h3>
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <h3 className="font-bold text-slate-900 dark:text-white text-sm">{t('محتوى المقرر والوحدات الدراسية', 'Course Syllabus & Units')}</h3>
+                          <button
+                            type="button"
+                            onClick={() => handleNavigate('student-panel')}
+                            className="inline-flex items-center gap-1.5 rounded-xl bg-brand-cyan/15 text-brand-cyan dark:text-brand-cyan-light border border-brand-cyan/30 hover:bg-brand-cyan/25 px-3 py-1.5 text-[11px] font-bold transition-all cursor-pointer"
+                          >
+                            <BookOpen className="h-3.5 w-3.5" />
+                            <span>{t('فتح جميع المحاضرات والملفات في لوحة الطالب', 'Open All Files in Student Hub')}</span>
+                          </button>
+                        </div>
                         
                         <div className="space-y-2 text-xs">
                           {selectedCourse.units && selectedCourse.units.length > 0 ? (
@@ -1800,22 +1824,63 @@ function AcademyApp() {
                                   <span className="text-brand-cyan font-bold font-mono text-[10px] shrink-0">{t(`الوحدة #${index + 1}`, `Unit #${index + 1}`)}</span>
                                 </div>
                                 {unit.description && <p className="text-[11px] text-slate-500 dark:text-slate-400">{unit.description}</p>}
-                                <div className="space-y-1 pt-1">
-                                  {unit.lessons?.map((lsn, lIdx) => (
-                                    <div key={lsn.id || lIdx} className="flex items-center justify-between gap-2 py-1.5 px-2.5 rounded-lg bg-white dark:bg-slate-950/60 border border-slate-200/70 dark:border-slate-800/60 text-[11px]">
-                                      <span className="text-slate-800 dark:text-slate-200 font-medium truncate">{lsn.title}</span>
-                                      <div className="flex items-center gap-1.5 shrink-0 font-mono text-[10px]">
-                                        {lsn.wordUrl && <span className="text-blue-600 dark:text-blue-400 font-bold">DOCX</span>}
-                                        {lsn.pdfUrl && <span className="text-red-600 dark:text-red-400 font-bold">PDF</span>}
-                                        <span className="text-slate-500 dark:text-slate-400 tabular-nums">{lsn.duration}</span>
+                                <div className="space-y-1.5 pt-1">
+                                  {unit.lessons?.map((lsn, lIdx) => {
+                                    const fileLink = lsn.pdfUrl || lsn.wordUrl || lsn.fileUrl || '';
+                                    return (
+                                      <div key={lsn.id || lIdx} className="flex flex-wrap items-center justify-between gap-2 py-2 px-3 rounded-lg bg-white dark:bg-slate-950/60 border border-slate-200/70 dark:border-slate-800/60 text-[11px]">
+                                        <span className="text-slate-800 dark:text-slate-200 font-semibold truncate max-w-full sm:max-w-[55%]">{lsn.title}</span>
+                                        <div className="flex flex-wrap items-center gap-1.5 shrink-0">
+                                          {lsn.videoUrl && (
+                                            <button
+                                              type="button"
+                                              onClick={() => setActiveVideoModalUrl(lsn.videoUrl!)}
+                                              className="inline-flex items-center gap-1 rounded-md bg-brand-cyan/15 text-brand-cyan hover:bg-brand-cyan/25 px-2 py-1 text-[10px] font-bold cursor-pointer"
+                                            >
+                                              <Play className="h-3 w-3" />
+                                              <span>{t('فيديو', 'Watch')}</span>
+                                            </button>
+                                          )}
+                                          {lsn.pdfUrl && (
+                                            <button
+                                              type="button"
+                                              onClick={() => setPreviewFileModal({ title: lsn.title, url: lsn.pdfUrl! })}
+                                              className="inline-flex items-center gap-1 rounded-md bg-red-500/10 text-red-600 dark:text-red-400 hover:bg-red-500/20 px-2 py-1 text-[10px] font-bold cursor-pointer"
+                                            >
+                                              <Eye className="h-3 w-3" />
+                                              <span>PDF</span>
+                                            </button>
+                                          )}
+                                          {lsn.wordUrl && (
+                                            <button
+                                              type="button"
+                                              onClick={() => triggerFileDownload(lsn.wordUrl!, `${lsn.title}.docx`)}
+                                              className="inline-flex items-center gap-1 rounded-md bg-blue-500/10 text-blue-600 dark:text-blue-400 hover:bg-blue-500/20 px-2 py-1 text-[10px] font-bold cursor-pointer"
+                                            >
+                                              <Download className="h-3 w-3" />
+                                              <span>DOCX</span>
+                                            </button>
+                                          )}
+                                          {!lsn.pdfUrl && !lsn.wordUrl && fileLink && (
+                                            <button
+                                              type="button"
+                                              onClick={() => triggerFileDownload(fileLink, lsn.title)}
+                                              className="inline-flex items-center gap-1 rounded-md bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 hover:bg-emerald-500/20 px-2 py-1 text-[10px] font-bold cursor-pointer"
+                                            >
+                                              <Download className="h-3 w-3" />
+                                              <span>{t('تحميل', 'Download')}</span>
+                                            </button>
+                                          )}
+                                          {lsn.duration && <span className="text-slate-500 dark:text-slate-400 tabular-nums font-mono text-[10px]">{lsn.duration}</span>}
+                                        </div>
                                       </div>
-                                    </div>
-                                  ))}
+                                    );
+                                  })}
                                 </div>
                               </div>
                             ))
                           ) : (
-                            <p className="text-xs text-slate-500 dark:text-slate-400">{t('المحاضرات والسكاشن العملية متاحة بالكامل للطلاب المعتمدين.', 'Lectures and practical sections available to approved students.')}</p>
+                            <p className="text-xs text-slate-500 dark:text-slate-400">{t('المحاضرات والسكاشن العملية متاحة بالكامل في بوابة الطالب السريعة.', 'Lectures and practical sections are all organized in your Student Hub.')}</p>
                           )}
                         </div>
                       </div>
@@ -1827,26 +1892,48 @@ function AcademyApp() {
                           
                           <div className="space-y-2">
                             {selectedCourse.pdfUrl && (
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  const activeUser = authService.getCurrentUser();
-                                  const access = verifyCourseAccess(activeUser, selectedCourse, orders);
-                                  if (!access.allowed) {
-                                    if (access.reason === 'not_logged_in') {
-                                      openStudentAuthModal('login');
-                                    } else {
-                                      setCurrentView('subscription-required');
+                              <div className="flex flex-wrap items-center gap-2">
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    const activeUser = authService.getCurrentUser();
+                                    const syllabusAccess = verifyCourseAccess(activeUser, selectedCourse, orders);
+                                    if (!syllabusAccess.allowed) {
+                                      if (syllabusAccess.reason === 'not_logged_in') {
+                                        openStudentAuthModal('login');
+                                      } else {
+                                        setCurrentView('subscription-required');
+                                      }
+                                      return;
                                     }
-                                    return;
-                                  }
-                                  triggerFileDownload(selectedCourse.pdfUrl, selectedCourse.titleAr || 'syllabus.pdf');
-                                }}
-                                className="w-full flex items-center justify-between p-3 rounded-xl bg-brand-cyan/10 border border-brand-cyan/25 text-xs text-brand-cyan dark:text-brand-cyan-light hover:bg-brand-cyan/15 transition-all cursor-pointer text-right ltr:text-left"
-                              >
-                                <span className="font-bold">{t('تحميل ملف المنهج الشامل PDF', 'Download Complete Syllabus PDF')}</span>
-                                <Download className="h-4 w-4 shrink-0" />
-                              </button>
+                                    setPreviewFileModal({ title: selectedCourse.titleAr || 'Syllabus PDF', url: selectedCourse.pdfUrl! });
+                                  }}
+                                  className="flex-1 flex items-center justify-between p-3 rounded-xl bg-brand-cyan/10 border border-brand-cyan/25 text-xs text-brand-cyan dark:text-brand-cyan-light hover:bg-brand-cyan/15 transition-all cursor-pointer text-right ltr:text-left"
+                                >
+                                  <span className="font-bold">{t('معاينة ملف المنهج الشامل PDF', 'Preview Syllabus PDF')}</span>
+                                  <Eye className="h-4 w-4 shrink-0" />
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    const activeUser = authService.getCurrentUser();
+                                    const syllabusAccess = verifyCourseAccess(activeUser, selectedCourse, orders);
+                                    if (!syllabusAccess.allowed) {
+                                      if (syllabusAccess.reason === 'not_logged_in') {
+                                        openStudentAuthModal('login');
+                                      } else {
+                                        setCurrentView('subscription-required');
+                                      }
+                                      return;
+                                    }
+                                    triggerFileDownload(selectedCourse.pdfUrl, selectedCourse.titleAr || 'syllabus.pdf');
+                                  }}
+                                  className="rounded-xl bg-brand-cyan text-white dark:text-slate-950 hover:bg-brand-cyan-light p-3 text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5"
+                                >
+                                  <Download className="h-4 w-4 shrink-0" />
+                                  <span>{t('تحميل', 'Download')}</span>
+                                </button>
+                              </div>
                             )}
 
                             {selectedCourse.attachments?.map((attachment, idx) => (
@@ -1855,9 +1942,9 @@ function AcademyApp() {
                                 type="button"
                                 onClick={() => {
                                   const activeUser = authService.getCurrentUser();
-                                  const access = verifyCourseAccess(activeUser, selectedCourse, orders);
-                                  if (!access.allowed) {
-                                    if (access.reason === 'not_logged_in') {
+                                  const attachmentAccess = verifyCourseAccess(activeUser, selectedCourse, orders);
+                                  if (!attachmentAccess.allowed) {
+                                    if (attachmentAccess.reason === 'not_logged_in') {
                                       openStudentAuthModal('login');
                                     } else {
                                       setCurrentView('subscription-required');
@@ -2259,7 +2346,12 @@ function AcademyApp() {
 
             {/* VIEW 11: STUDENT DASHBOARD PANELS */}
             {currentView === 'student-panel' && (
-              isStudentLoggedIn ? (
+              !authResolved ? (
+                <div className="flex flex-col items-center justify-center py-28 gap-3">
+                  <Loader className="h-9 w-9 animate-spin text-brand-cyan" />
+                  <p className="text-xs font-bold text-slate-500">{t('جاري استرجاع جلسة الطالب...', 'Restoring your student session...')}</p>
+                </div>
+              ) : isStudentLoggedIn ? (
                 <StudentDashboard onLogout={handleStudentLogout} onNavigateHome={() => handleNavigate('courses')} />
               ) : (
                 <motion.div
@@ -2300,7 +2392,12 @@ function AcademyApp() {
 
             {/* VIEW 10: ADMIN PANEL CONSOLE wrapper with secure login gate */}
             {currentView === 'admin-panel' && (
-              isAdminLoggedIn ? (
+              !authResolved ? (
+                <div className="flex flex-col items-center justify-center py-28 gap-3">
+                  <Loader className="h-9 w-9 animate-spin text-brand-cyan" />
+                  <p className="text-xs font-bold text-slate-500">{t('جاري استرجاع جلسة المدير...', 'Restoring your manager session...')}</p>
+                </div>
+              ) : isAdminLoggedIn ? (
                 <AdminPanel onLogout={handleAdminLogout} />
               ) : (
                 <motion.div
@@ -3289,6 +3386,14 @@ function AcademyApp() {
             <X className="h-4 w-4" />
           </button>
         </div>
+      )}
+
+      {/* Universal File Preview Modal */}
+      {previewFileModal && (
+        <FilePreviewModal
+          item={previewFileModal}
+          onClose={() => setPreviewFileModal(null)}
+        />
       )}
 
     </div>

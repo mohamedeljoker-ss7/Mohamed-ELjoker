@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { 
   Course, Category, Student, NewsItem, Article, UserReview, Message, Admin, WebsiteSettings,
   Teacher, Coupon, Order, Quiz, QuizQuestion, QuizSubmission, ChatMessage, ChatThread, Assignment, AssignmentSubmission,
@@ -140,6 +140,9 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
   const currentAdmin = authService.getCurrentAdmin();
   const [fbAuthUser, setFbAuthUser] = useState<any>(() => firebaseAuth?.currentUser || null);
   const [googleSyncing, setGoogleSyncing] = useState(false);
+  const [processingStudentId, setProcessingStudentId] = useState<string | null>(null);
+  const prevPendingKeyRef = useRef<string>('');
+  const pendingListenerInitRef = useRef<boolean>(false);
 
   useEffect(() => {
     if (!dbService.isRealFirebase() || !firebaseAuth) return;
@@ -587,17 +590,20 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
   };
 
   useEffect(() => {
-    if (!currentAdmin) {
-      onLogout();
-      return;
-    }
-
     let cancelled = false;
     let cleanups: Array<(() => void) | undefined> = [];
 
     (async () => {
       await waitForFirebaseAuth();
       if (cancelled) return;
+
+      const resolvedAdmin = authService.getCurrentAdmin();
+      const hasFbAdmin = Boolean(firebaseAuth?.currentUser && isAdminEmail(firebaseAuth.currentUser.email || ''));
+      if (!resolvedAdmin && !hasFbAdmin) {
+        onLogout();
+        return;
+      }
+
       loadData();
 
       const hasAdminFbAuth = !dbService.isRealFirebase() || await dbService.verifyAdminSession();
@@ -627,7 +633,28 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
         cleanups.push(
           dbService.listenToSubscriptions((realtimeOrders) => setOrders(realtimeOrders)),
           dbService.listenToMessages((realtimeMessages) => setMessages(realtimeMessages)),
-          dbService.listenToStudents((realtimeStudents) => setStudents(realtimeStudents)),
+          dbService.listenToStudents((realtimeStudents) => {
+            setStudents(realtimeStudents);
+            const pendingNow = realtimeStudents.filter(s => s.status === 'pending');
+            const signature = pendingNow.map(s => `${s.id}:${s.lastLoginAttemptAt || s.createdAt || ''}`).join('|');
+            if (!pendingListenerInitRef.current) {
+              pendingListenerInitRef.current = true;
+              prevPendingKeyRef.current = signature;
+            } else if (signature !== prevPendingKeyRef.current && pendingNow.length > 0) {
+              const prevParts = new Set(prevPendingKeyRef.current.split('|').filter(Boolean));
+              const newlyAttempted = pendingNow.find(s => !prevParts.has(`${s.id}:${s.lastLoginAttemptAt || s.createdAt || ''}`));
+              prevPendingKeyRef.current = signature;
+              if (newlyAttempted) {
+                triggerNotification(
+                  language === 'ar'
+                    ? `طلب دخول طالب جديد الآن: ${newlyAttempted.name} (${newlyAttempted.email})`
+                    : `New student login request: ${newlyAttempted.name} (${newlyAttempted.email})`
+                );
+              }
+            } else {
+              prevPendingKeyRef.current = signature;
+            }
+          }),
           dbService.listenToQuizzes((realtimeQuizzes) => setQuizzes(realtimeQuizzes)),
           dbService.listenToQuizSubmissions((realtimeQuizSubs) => setQuizSubmissions(realtimeQuizSubs)),
           dbService.listenToAssignmentTasks((realtimeTasks) => setAssignmentTasks(realtimeTasks)),
@@ -1323,50 +1350,59 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
     );
   };
 
+  const executeApproveStudent = async (stud: Student) => {
+    setProcessingStudentId(stud.id);
+    setActionLoading(true);
+    try {
+      await dbService.updateStudent(stud.id, { status: 'active', isApproved: true, email: stud.email } as any);
+      setStudents(prev => prev.map(s => s.id === stud.id ? { ...s, status: 'active', isApproved: true } : s));
+
+      logAdminAction('approve', 'student', stud.name, `Approved registration for ${stud.email}`);
+
+      try {
+        await dbService.addNotification({
+          userId: stud.uid || stud.id,
+          titleAr: `تم تفعيل وقبول حسابك الأكاديمي بنجاح`,
+          titleEn: `Your Academic Account Has Been Approved`,
+          bodyAr: `مرحباً بك في منصة Eng/Mohamed abdal tawab - الجامعة التكنولوجية قسم IT. تم اعتماد حسابك بنجاح وأصبح بإمكانك الاطلاع على المحاضرات والسكاشن والامتحانات مجاناً بالكامل.`,
+          bodyEn: `Welcome to Eng/Mohamed abdal tawab IT University Platform! Your account is now active with free access to lectures, sections, and exams.`,
+          isRead: false,
+          createdAt: new Date().toISOString(),
+          type: 'course_activated'
+        });
+      } catch (notifErr) {
+        console.warn("Could not dispatch welcome notification:", notifErr);
+      }
+
+      triggerNotification(t(`تم قبول وتفعيل حساب الطالب (${stud.name}) فوراً!`, `Student (${stud.name}) approved and activated!`));
+    } catch (err: any) {
+      console.error(err);
+      triggerNotification(err?.message || t('خطأ أثناء تفعيل حساب الطالب', 'Error approving student account'), true);
+    } finally {
+      setActionLoading(false);
+      setProcessingStudentId(null);
+    }
+  };
+
+  const executeRejectStudent = async (stud: Student) => {
+    setProcessingStudentId(stud.id);
+    setActionLoading(true);
+    try {
+      await dbService.updateStudent(stud.id, { status: 'rejected', isApproved: false, email: stud.email } as any);
+      setStudents(prev => prev.map(s => s.id === stud.id ? { ...s, status: 'rejected', isApproved: false } : s));
+      logAdminAction('reject', 'student', stud.name, `Rejected registration for ${stud.email}`);
+      triggerNotification(t(`تم رفض طلب تسجيل الطالب (${stud.name})`, `Student (${stud.name}) rejected`));
+    } catch (err: any) {
+      console.error(err);
+      triggerNotification(err?.message || t('خطأ أثناء رفض الحساب', 'Error rejecting student account'), true);
+    } finally {
+      setActionLoading(false);
+      setProcessingStudentId(null);
+    }
+  };
+
   const handleAcceptStudent = (stud: Student) => {
-    requestConfirmation(
-      t('قبول وتفعيل الطالب', 'Approve Student'),
-      t(`هل أنت متأكد من قبول حساب الطالب (${stud.name}) وتفعيله للدخول للمنصة؟`, `Accept and activate student (${stud.name})?`),
-      async () => {
-        setActionLoading(true);
-        try {
-          await dbService.updateStudent(stud.id, { status: 'active', isApproved: true } as any);
-          setStudents(prev => prev.map(s => s.id === stud.id ? { ...s, status: 'active', isApproved: true } : s));
-          const cleanEmail = stud.email.trim().toLowerCase();
-          const allUsers = await authService.getAllUsers();
-          const matchingUser = allUsers.find(u => u.email.toLowerCase() === cleanEmail);
-          if (matchingUser) {
-            await authService.updateUser(matchingUser.id, { status: 'active', isApproved: true } as any);
-          }
-
-          logAdminAction('approve', 'student', stud.name, `Approved registration for ${stud.email}`);
-
-          try {
-            await dbService.addNotification({
-              userId: matchingUser ? matchingUser.id : stud.id,
-              titleAr: `تم تفعيل وقبول حسابك الأكاديمي بنجاح`,
-              titleEn: `Your Academic Account Has Been Approved`,
-              bodyAr: `مرحباً بك في منصة Eng/Mohamed abdal tawab - الجامعة التكنولوجية قسم IT. تم اعتماد حسابك بنجاح وأصبح بإمكانك الاطلاع على المحاضرات والسكاشن والامتحانات مجاناً بالكامل.`,
-              bodyEn: `Welcome to Eng/Mohamed abdal tawab IT University Platform! Your account is now active with free access to lectures, sections, and exams.`,
-              isRead: false,
-              createdAt: new Date().toISOString(),
-              type: 'course_activated'
-            });
-          } catch (notifErr) {
-            console.warn("Could not dispatch welcome notification:", notifErr);
-          }
-
-          triggerNotification(t('تم قبول حساب الطالب وتفعيله بنجاح وإرسال إشعار فوري له', 'Student account approved and notified successfully'));
-        } catch (err: any) {
-          console.error(err);
-          triggerNotification(err?.message || t('خطأ أثناء تفعيل حساب الطالب', 'Error approving student account'), true);
-        } finally {
-          setActionLoading(false);
-        }
-      },
-      t('تأكيد القبول', 'Confirm Approval'),
-      false
-    );
+    executeApproveStudent(stud);
   };
 
   const handleRejectStudent = (stud: Student) => {
@@ -1374,24 +1410,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
       t('رفض طلب التسجيل', 'Reject Registration'),
       t(`هل أنت متأكد من رفض طلب تسجيل الطالب (${stud.name})؟`, `Reject student registration (${stud.name})?`),
       async () => {
-        setActionLoading(true);
-        try {
-          await dbService.updateStudent(stud.id, { status: 'rejected', isApproved: false } as any);
-          setStudents(prev => prev.map(s => s.id === stud.id ? { ...s, status: 'rejected', isApproved: false } : s));
-          const cleanEmail = stud.email.trim().toLowerCase();
-          const allUsers = await authService.getAllUsers();
-          const matchingUser = allUsers.find(u => u.email.toLowerCase() === cleanEmail);
-          if (matchingUser) {
-            await authService.updateUser(matchingUser.id, { status: 'rejected', isApproved: false } as any);
-          }
-          logAdminAction('reject', 'student', stud.name, `Rejected registration for ${stud.email}`);
-          triggerNotification(t('تم رفض طلب تسجيل الطالب', 'Student registration rejected'));
-        } catch (err: any) {
-          console.error(err);
-          triggerNotification(err?.message || t('خطأ أثناء رفض الحساب', 'Error rejecting student account'), true);
-        } finally {
-          setActionLoading(false);
-        }
+        await executeRejectStudent(stud);
       }
     );
   };
@@ -2995,6 +3014,80 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
             <span>{errorMsg}</span>
           </div>
         )}
+
+        {/* Global Real-Time Pending Students Instant Approval Queue (Visible on ALL Admin Tabs) */}
+        {(() => {
+          const livePendingStudents = students.filter(s => s.status === 'pending');
+          if (livePendingStudents.length === 0) return null;
+          return (
+            <div className="mt-5 rounded-2xl border-2 border-brand-cyan/50 bg-gradient-to-l from-brand-cyan/10 via-white to-amber-500/5 dark:from-brand-cyan/15 dark:via-slate-900 dark:to-amber-500/10 p-4 sm:p-5 shadow-lg animate-fadeIn">
+              <div className="flex flex-wrap items-center justify-between gap-3 mb-3">
+                <div className="flex items-center gap-2.5">
+                  <span className="relative flex h-3 w-3">
+                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75" />
+                    <span className="relative inline-flex rounded-full h-3 w-3 bg-amber-500" />
+                  </span>
+                  <h3 className="font-black text-sm sm:text-base text-slate-900 dark:text-white">
+                    {t(
+                      `طلاب في انتظار السماح بالدخول الآن (${livePendingStudents.length})`,
+                      `Students Awaiting Login Approval Now (${livePendingStudents.length})`
+                    )}
+                  </h3>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setActiveTab('registrations')}
+                  className="text-xs font-bold text-brand-cyan hover:underline cursor-pointer"
+                >
+                  {t('عرض جدول الطلبات بالكامل ←', 'Open Full Approvals Table →')}
+                </button>
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                {livePendingStudents.slice(0, 6).map(pendingStud => {
+                  const isBusy = processingStudentId === pendingStud.id;
+                  return (
+                    <div
+                      key={pendingStud.id}
+                      className="flex flex-wrap sm:flex-nowrap items-center justify-between gap-3 rounded-xl border border-slate-200 dark:border-slate-700/80 bg-white/90 dark:bg-slate-950/80 px-3.5 py-2.5 shadow-xs"
+                    >
+                      <div className="min-w-0 flex-1">
+                        <div className="font-extrabold text-xs sm:text-sm text-slate-900 dark:text-white truncate">
+                          {pendingStud.name}
+                        </div>
+                        <div className="text-[11px] font-mono text-slate-500 dark:text-slate-400 truncate">
+                          {pendingStud.email}
+                        </div>
+                        <div className="text-[10px] font-semibold text-brand-cyan mt-0.5">
+                          {getGradeDisplay(pendingStud.grade, language)}
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-1.5 shrink-0">
+                        <button
+                          type="button"
+                          disabled={isBusy || actionLoading}
+                          onClick={() => executeApproveStudent(pendingStud)}
+                          className="inline-flex items-center gap-1 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 px-3 py-2 text-xs font-black transition-all cursor-pointer shadow-sm disabled:opacity-50"
+                        >
+                          <Check className="h-3.5 w-3.5" />
+                          <span>{isBusy ? t('جاري التفعيل...', 'Approving...') : t('سماح بالدخول', 'Approve')}</span>
+                        </button>
+                        <button
+                          type="button"
+                          disabled={isBusy || actionLoading}
+                          onClick={() => executeRejectStudent(pendingStud)}
+                          className="inline-flex items-center gap-1 rounded-xl bg-red-500/10 border border-red-500/30 text-red-600 dark:text-red-400 hover:bg-red-500 hover:text-white px-2.5 py-2 text-xs font-bold transition-all cursor-pointer disabled:opacity-50"
+                          title={t('رفض الطلب', 'Reject Request')}
+                        >
+                          <X className="h-3.5 w-3.5" />
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          );
+        })()}
 
         {/* Sidebar + Main Grid */}
         <div className="mt-6 sm:mt-8 grid grid-cols-1 gap-6 lg:gap-8 lg:grid-cols-4">
@@ -4895,19 +4988,23 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
                                     <div className="flex items-center justify-center gap-2 flex-wrap">
                                       {/* Accept Account */}
                                       <button
+                                        type="button"
+                                        disabled={actionLoading || processingStudentId === stud.id}
                                         onClick={() => handleAcceptStudent(stud)}
                                         title={t('قبول الحساب وتفعيل صلاحية عرض وتحميل ملفات المحاضرات والسكاشن', 'Accept Account')}
-                                        className="flex items-center gap-1.5 rounded-xl bg-emerald-500 text-slate-950 hover:bg-emerald-400 px-3 py-1.5 text-xs font-black transition-all cursor-pointer shadow-md"
+                                        className="flex items-center gap-1.5 rounded-xl bg-emerald-500 text-slate-950 hover:bg-emerald-400 px-3 py-1.5 text-xs font-black transition-all cursor-pointer shadow-md disabled:opacity-50"
                                       >
                                         <UserCheck className="h-4 w-4" />
-                                        <span>{t('قبول وتفعيل', 'Accept')}</span>
+                                        <span>{processingStudentId === stud.id ? t('جاري التفعيل...', 'Approving...') : t('قبول وتفعيل', 'Accept')}</span>
                                       </button>
 
                                       {/* Reject Account */}
                                       <button
+                                        type="button"
+                                        disabled={actionLoading || processingStudentId === stud.id}
                                         onClick={() => handleRejectStudent(stud)}
                                         title={t('رفض الحساب', 'Reject Account')}
-                                        className="flex items-center gap-1.5 rounded-xl bg-red-500/10 border border-red-500/30 text-red-600 dark:text-red-400 hover:bg-red-500 hover:text-white px-3 py-1.5 text-xs font-bold transition-all cursor-pointer"
+                                        className="flex items-center gap-1.5 rounded-xl bg-red-500/10 border border-red-500/30 text-red-600 dark:text-red-400 hover:bg-red-500 hover:text-white px-3 py-1.5 text-xs font-bold transition-all cursor-pointer disabled:opacity-50"
                                       >
                                         <UserX className="h-4 w-4" />
                                         <span>{t('رفض', 'Reject')}</span>
@@ -4915,9 +5012,11 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
 
                                       {/* View Data */}
                                       <button
+                                        type="button"
+                                        disabled={actionLoading}
                                         onClick={() => handleEditStudent(stud)}
                                         title={t('عرض البيانات والتعديل عليها', 'View Data')}
-                                        className="flex items-center gap-1 rounded-xl bg-slate-200 dark:bg-slate-800/80 border border-slate-300 dark:border-slate-700 px-3 py-1.5 text-xs font-bold text-blue-600 dark:text-blue-400 hover:bg-slate-200 dark:hover:bg-slate-700 transition-all cursor-pointer"
+                                        className="flex items-center gap-1 rounded-xl bg-slate-200 dark:bg-slate-800/80 border border-slate-300 dark:border-slate-700 px-3 py-1.5 text-xs font-bold text-blue-600 dark:text-blue-400 hover:bg-slate-200 dark:hover:bg-slate-700 transition-all cursor-pointer disabled:opacity-50"
                                       >
                                         <Eye className="h-3.5 w-3.5" />
                                         <span>{t('تعديل', 'Edit')}</span>
@@ -4925,9 +5024,11 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
 
                                       {/* Delete */}
                                       <button
+                                        type="button"
+                                        disabled={actionLoading}
                                         onClick={() => handleDeleteStudent(stud.id, stud.email)}
                                         title={t('حذف الطالب نهائياً', 'Delete Student')}
-                                        className="flex items-center gap-1 rounded-xl bg-red-500/10 border border-red-500/20 px-3 py-1.5 text-xs font-bold text-red-600 dark:text-red-400 hover:bg-red-500 hover:text-white transition-all cursor-pointer"
+                                        className="flex items-center gap-1 rounded-xl bg-red-500/10 border border-red-500/20 px-3 py-1.5 text-xs font-bold text-red-600 dark:text-red-400 hover:bg-red-500 hover:text-white transition-all cursor-pointer disabled:opacity-50"
                                       >
                                         <Trash2 className="h-3.5 w-3.5" />
                                         <span>{t('حذف', 'Delete')}</span>

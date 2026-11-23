@@ -1,6 +1,6 @@
 import { initializeApp, getApps, getApp, deleteApp } from 'firebase/app';
 import { initializeFirestore, getFirestore, collection, doc, getDocs, getDoc, getDocFromServer, setDoc, updateDoc, deleteDoc, addDoc, query, where, orderBy, onSnapshot, deleteField, increment, arrayUnion, writeBatch } from 'firebase/firestore';
-import { getAuth, signInWithEmailAndPassword, createUserWithEmailAndPassword, sendPasswordResetEmail, verifyPasswordResetCode, confirmPasswordReset, signOut, onAuthStateChanged, GoogleAuthProvider, signInWithPopup, signInWithRedirect, getRedirectResult, User } from 'firebase/auth';
+import { getAuth, setPersistence, browserLocalPersistence, indexedDBLocalPersistence, signInWithEmailAndPassword, createUserWithEmailAndPassword, sendPasswordResetEmail, verifyPasswordResetCode, confirmPasswordReset, signOut, onAuthStateChanged, GoogleAuthProvider, signInWithPopup, signInWithRedirect, getRedirectResult, User } from 'firebase/auth';
 import firebaseAppletConfig from '../firebase-applet-config.json';
 import { Course, Category, Student, NewsItem, Article, UserReview, Message, Admin, WebsiteSettings, Teacher, Coupon, Order, Quiz, QuizSubmission, UserAuth, Assignment, AssignmentSubmission, Certificate, ChatMessage, ChatThread, LessonComment, Notification, LessonAccess, CourseAccess, CourseRequest, LectureItem, SectionItem, ExamItem, SheetItem, SheetSubmission, QuestionBankItem, OnlineExamQuestion, ExamSubmission, ScheduleItem, StudentInquiry, ActivityLogItem, SheetAnswerKeyDoc, ExamPrivateKeyDoc, ExamPrivateKeyEntry } from './types';
 import { normalizeCourseLessons } from './utils/authAccess';
@@ -200,6 +200,7 @@ let isFirebaseConfigured = false;
 export let app: any = null;
 export let firestoreDb: any = null;
 export let firebaseAuth: any = null;
+let authPersistenceReady: Promise<void> = Promise.resolve();
 
 function isEnglishUi(): boolean {
   try {
@@ -553,6 +554,9 @@ if (firebaseConfig.apiKey && firebaseConfig.projectId) {
       }
     }
     firebaseAuth = getAuth(app);
+    authPersistenceReady = setPersistence(firebaseAuth, browserLocalPersistence)
+      .catch(() => setPersistence(firebaseAuth, indexedDBLocalPersistence))
+      .catch(() => {});
     isFirebaseConfigured = true;
     console.log("Firebase initialized successfully inside MOHAMED ELJOKER IT University Platform with database ID:", dbId || "(default)");
 
@@ -603,6 +607,7 @@ if (firebaseConfig.apiKey && firebaseConfig.projectId) {
 export const waitForFirebaseAuth = async (): Promise<void> => {
   if (isFirebaseConfigured && firebaseAuth) {
     try {
+      await authPersistenceReady;
       await firebaseAuth.authStateReady();
     } catch {}
   }
@@ -3331,20 +3336,33 @@ export const dbService = {
 
       const notify = () => {
         const list: Student[] = [];
-        const seenIds = new Set<string>();
-        const seenEmails = new Set<string>();
+        const byId = new Map<string, number>();
+        const byEmail = new Map<string, number>();
 
         const addToList = (item: any) => {
-          if (!item || !item.id || seenIds.has(item.id)) return;
+          if (!item || !item.id) return;
           const email = (item.email || '').trim().toLowerCase();
-          if (email && seenEmails.has(email)) return;
           if (isAdminEmail(email) || item.role === 'admin' || item.role === 'teacher') return;
+
+          const existingIdx = byId.has(item.id)
+            ? byId.get(item.id)!
+            : (email && byEmail.has(email) ? byEmail.get(email)! : -1);
+
+          if (existingIdx >= 0) {
+            const existing = list[existingIdx];
+            const incomingAttempt = item.lastLoginAttemptAt || '';
+            if (incomingAttempt && (!existing.lastLoginAttemptAt || new Date(incomingAttempt).getTime() > new Date(existing.lastLoginAttemptAt).getTime())) {
+              existing.lastLoginAttemptAt = incomingAttempt;
+            }
+            return;
+          }
 
           let normalizedStatus = (item.status || 'pending').trim().toLowerCase();
           if ((normalizedStatus === 'active' || !item.status) && !item.isApproved && (!item.purchasedCourseIds || item.purchasedCourseIds.length === 0) && (!item.subscription || !item.subscription.active)) {
             normalizedStatus = 'pending';
           }
 
+          const newIdx = list.length;
           list.push({
             id: item.id,
             uid: item.id,
@@ -3359,25 +3377,34 @@ export const dbService = {
             subscription: item.subscription || { active: false, expiresAt: '' },
             department: item.department || 'general',
             grade: item.grade || 'year1',
+            semester: item.semester || 'term1',
             createdAt: item.createdAt || item.enrollmentDate || new Date().toISOString(),
+            lastLoginAttemptAt: item.lastLoginAttemptAt || item.createdAt || item.enrollmentDate,
             isApproved: item.isApproved || false
           });
-          seenIds.add(item.id);
-          if (email) seenEmails.add(email);
+          byId.set(item.id, newIdx);
+          if (email) byEmail.set(email, newIdx);
         };
 
-        for (const r of regList) addToList(r);
-        for (const req of reqList) addToList(req);
-        for (const s of studentsList) addToList(s);
+        // Process authoritative collections first so approved statuses are never shadowed by stale mirror docs
         for (const u of usersList) {
           if (u.role !== 'admin' && u.role !== 'teacher' && !isAdminEmail(u.email || '')) {
             addToList(u);
           }
         }
+        for (const s of studentsList) addToList(s);
+        for (const r of regList) addToList(r);
+        for (const req of reqList) addToList(req);
 
         list.sort((a, b) => {
-          const timeA = new Date(a.createdAt || a.enrollmentDate || 0).getTime();
-          const timeB = new Date(b.createdAt || b.enrollmentDate || 0).getTime();
+          const timeA = Math.max(
+            new Date(a.lastLoginAttemptAt || 0).getTime(),
+            new Date(a.createdAt || a.enrollmentDate || 0).getTime()
+          );
+          const timeB = Math.max(
+            new Date(b.lastLoginAttemptAt || 0).getTime(),
+            new Date(b.createdAt || b.enrollmentDate || 0).getTime()
+          );
           return timeB - timeA;
         });
 
@@ -3536,9 +3563,21 @@ export const dbService = {
         if (normalizedStudent.status === 'active' || normalizedStudent.status === 'rejected' || normalizedStudent.isApproved) {
           await deleteDoc(doc(firestoreDb, 'registrations', id)).catch(() => {});
           await deleteDoc(doc(firestoreDb, 'studentRequests', id)).catch(() => {});
+          if (normalizedStudent.email) {
+            const cleanEmail = normalizedStudent.email.trim().toLowerCase();
+            for (const colName of ['registrations', 'studentRequests'] as const) {
+              try {
+                const q = query(collection(firestoreDb, colName), where('email', '==', cleanEmail));
+                const snap = await getDocs(q);
+                for (const d of snap.docs) {
+                  await deleteDoc(doc(firestoreDb, colName, d.id)).catch(() => {});
+                }
+              } catch {}
+            }
+          }
         } else {
-          await updateDoc(doc(firestoreDb, 'registrations', id), sanitizeForFirestore(normalizedStudent) as any).catch(() => {});
-          await updateDoc(doc(firestoreDb, 'studentRequests', id), sanitizeForFirestore(normalizedStudent) as any).catch(() => {});
+          await setDoc(doc(firestoreDb, 'registrations', id), sanitizeForFirestore(normalizedStudent) as any, { merge: true }).catch(() => {});
+          await setDoc(doc(firestoreDb, 'studentRequests', id), sanitizeForFirestore(normalizedStudent) as any, { merge: true }).catch(() => {});
         }
         const userUpdates: Partial<UserAuth> = {};
         if (normalizedStudent.name !== undefined) userUpdates.name = normalizedStudent.name;
@@ -6262,9 +6301,31 @@ export const authService = {
               return { success: false, accountStatus: 'suspended', error: 'تم إيقاف هذا الحساب من قبل إدارة المنصة الجامعية.' };
             }
             if (userData.status === 'pending' || (userData.role !== 'admin' && userData.isApproved === false && userData.status !== 'active')) {
+              const attemptNowIso = new Date().toISOString();
+              const pendingMirror = sanitizeForFirestore({
+                id: firebaseUid,
+                uid: firebaseUid,
+                name: userData.name || fbUser.displayName || 'طالب تكنولوجيا المعلومات',
+                email: normalizedEmail,
+                phone: userData.phone || '',
+                grade: userData.grade || 'year1',
+                semester: userData.semester || 'term1',
+                department: userData.department || 'IT',
+                status: 'pending',
+                isApproved: false,
+                createdAt: userData.createdAt || attemptNowIso,
+                enrollmentDate: (userData.createdAt || attemptNowIso).split('T')[0],
+                lastLoginAttemptAt: attemptNowIso
+              });
+              await Promise.all([
+                setDoc(userRef, { lastLoginAttemptAt: attemptNowIso }, { merge: true }).catch(() => {}),
+                setDoc(doc(firestoreDb, 'students', firebaseUid), pendingMirror as any, { merge: true }).catch(() => {}),
+                setDoc(doc(firestoreDb, 'registrations', firebaseUid), pendingMirror as any, { merge: true }).catch(() => {}),
+                setDoc(doc(firestoreDb, 'studentRequests', firebaseUid), pendingMirror as any, { merge: true }).catch(() => {})
+              ]);
               await signOut(firebaseAuth);
               recordLoginAttempt(normalizedEmail, false);
-              return { success: false, accountStatus: 'pending', error: 'حسابك قيد المراجعة حالياً (Pending) من قبل إدارة المنصة الجامعية. يرجى الانتظار حتى يتم قبول الحساب.' };
+              return { success: false, accountStatus: 'pending', error: 'حسابك قيد المراجعة حالياً (Pending) من قبل إدارة المنصة الجامعية. تم إرسال تنبيه فوري للمسؤول لتفعيل دخولك.' };
             }
             if (userData.status === 'rejected') {
               await signOut(firebaseAuth);
@@ -6288,13 +6349,15 @@ export const authService = {
             status: isAdm ? 'active' : 'pending',
             isApproved: isAdm,
             grade: 'year1',
+            semester: 'term1',
             department: 'IT',
             createdAt: nowIso,
+            lastLoginAttemptAt: nowIso,
             purchasedCourseIds: [],
             watchedLessonIds: [],
             quizGrades: {}
           };
-          await setDoc(userRef, finalUser, { merge: true }).catch(() => {});
+          await setDoc(userRef, sanitizeForFirestore(finalUser) as any, { merge: true }).catch(() => {});
           if (!isAdm) {
             const studentDoc: Student = {
               id: firebaseUid,
@@ -6310,11 +6373,17 @@ export const authService = {
               isApproved: false,
               department: 'IT',
               grade: 'year1',
-              createdAt: nowIso
+              semester: 'term1',
+              createdAt: nowIso,
+              lastLoginAttemptAt: nowIso
             };
-            await setDoc(doc(firestoreDb, 'students', firebaseUid), studentDoc, { merge: true }).catch(() => {});
+            await Promise.all([
+              setDoc(doc(firestoreDb, 'students', firebaseUid), sanitizeForFirestore(studentDoc) as any, { merge: true }).catch(() => {}),
+              setDoc(doc(firestoreDb, 'registrations', firebaseUid), sanitizeForFirestore(studentDoc) as any, { merge: true }).catch(() => {}),
+              setDoc(doc(firestoreDb, 'studentRequests', firebaseUid), sanitizeForFirestore(studentDoc) as any, { merge: true }).catch(() => {})
+            ]);
             await signOut(firebaseAuth);
-            return { success: false, accountStatus: 'pending', error: 'تم تسجيل حسابك وهو الآن في انتظار موافقة الإدارة (Pending).' };
+            return { success: false, accountStatus: 'pending', error: 'تم تسجيل حسابك وهو الآن في انتظار موافقة الإدارة (Pending). يظهر طلبك الآن فوراً لدى المسؤول.' };
           }
         }
 
@@ -6684,6 +6753,7 @@ export const authService = {
         grade: 'year1',
         semester: 'term1',
         createdAt: nowIso,
+        lastLoginAttemptAt: nowIso,
         status: isAdm ? 'active' : 'pending',
         isApproved: isAdm,
         purchasedCourseIds: [],
@@ -6691,14 +6761,20 @@ export const authService = {
         quizGrades: {}
       };
       if (isAdm) {
-        await setDoc(userRef, userData, { merge: true }).catch(() => {});
+        await setDoc(userRef, sanitizeForFirestore(userData) as any, { merge: true }).catch(() => {});
       } else {
+        const googleStudentPayload = sanitizeForFirestore({
+          ...userData,
+          enrollmentDate: nowIso.split('T')[0],
+          lastLoginAttemptAt: nowIso
+        });
         try {
-          await setDoc(userRef, userData, { merge: true });
-          await setDoc(doc(firestoreDb, 'students', uid), {
-            ...userData,
-            enrollmentDate: nowIso.split('T')[0]
-          }, { merge: true }).catch(() => {});
+          await setDoc(userRef, sanitizeForFirestore(userData) as any, { merge: true });
+          await Promise.all([
+            setDoc(doc(firestoreDb, 'students', uid), googleStudentPayload as any, { merge: true }).catch(() => {}),
+            setDoc(doc(firestoreDb, 'registrations', uid), googleStudentPayload as any, { merge: true }).catch(() => {}),
+            setDoc(doc(firestoreDb, 'studentRequests', uid), googleStudentPayload as any, { merge: true }).catch(() => {})
+          ]);
         } catch (writeErr) {
           console.warn("Firestore student creation warning during Google sign-in:", writeErr);
         }
@@ -6715,8 +6791,25 @@ export const authService = {
         return { success: false, accountStatus: 'rejected', error: 'تم رفض طلب تسجيل حسابك (Rejected) من قبل إدارة المنصة الجامعية.' };
       }
       if (userData.status !== 'active' || userData.isApproved !== true) {
+        const attemptNowIso = new Date().toISOString();
+        const pendingGoogleMirror = sanitizeForFirestore({
+          ...userData,
+          id: uid,
+          uid,
+          email: cleanEmail,
+          status: 'pending',
+          isApproved: false,
+          enrollmentDate: (userData.createdAt || attemptNowIso).split('T')[0],
+          lastLoginAttemptAt: attemptNowIso
+        });
+        await Promise.all([
+          setDoc(userRef, { lastLoginAttemptAt: attemptNowIso }, { merge: true }).catch(() => {}),
+          setDoc(doc(firestoreDb, 'students', uid), pendingGoogleMirror as any, { merge: true }).catch(() => {}),
+          setDoc(doc(firestoreDb, 'registrations', uid), pendingGoogleMirror as any, { merge: true }).catch(() => {}),
+          setDoc(doc(firestoreDb, 'studentRequests', uid), pendingGoogleMirror as any, { merge: true }).catch(() => {})
+        ]);
         await signOut(firebaseAuth).catch(() => {});
-        return { success: false, accountStatus: 'pending', error: 'تم تسجيل طلب حسابك وهو الآن في انتظار موافقة الإدارة (Pending).' };
+        return { success: false, accountStatus: 'pending', error: 'تم تسجيل طلب حسابك وهو الآن في انتظار موافقة الإدارة (Pending). يظهر طلبك الآن فوراً لدى المسؤول لتفعيل دخولك.' };
       }
     }
 
@@ -6998,23 +7091,34 @@ export const authService = {
             if (profileRes.exists && profileRes.data) {
               userData = { id: uid, uid, ...(profileRes.data as UserAuth) };
             } else if (!profileRes.unreachable) {
-              const isAdm = adminLevel !== null;
-              const role = isAdm ? 'admin' : 'student';
-              userData = {
-                id: uid,
-                uid,
-                name: fbUser.displayName || (isAdm ? (isSuperAdminEmail(cleanEmail) ? 'Eng/Mohamed abdal tawab' : cleanEmail.split('@')[0]) : 'طالب تكنولوجيا المعلومات'),
-                email: cleanEmail,
-                phone: '',
-                role,
-                adminLevel: isAdm && adminLevel ? adminLevel : undefined,
-                department: 'IT',
-                grade: 'year1',
-                createdAt: new Date().toISOString(),
-                status: isAdm ? 'active' : 'pending',
-                isApproved: isAdm
-              };
-              await setDoc(userRef, userData, { merge: true }).catch(() => {});
+              const studentProfileRes = !adminLevel
+                ? await fetchAuthenticatedFirestoreDocWithStatus('students', uid, fbUser)
+                : { exists: false };
+              if (studentProfileRes.exists && studentProfileRes.data) {
+                userData = { id: uid, uid, role: 'student', ...(studentProfileRes.data as UserAuth) };
+                await setDoc(userRef, sanitizeForFirestore(userData) as any, { merge: true }).catch(() => {});
+              } else {
+                const isAdm = adminLevel !== null;
+                const role = isAdm ? 'admin' : 'student';
+                const nowIso = new Date().toISOString();
+                userData = {
+                  id: uid,
+                  uid,
+                  name: fbUser.displayName || (isAdm ? (isSuperAdminEmail(cleanEmail) ? 'Eng/Mohamed abdal tawab' : cleanEmail.split('@')[0]) : 'طالب تكنولوجيا المعلومات'),
+                  email: cleanEmail,
+                  phone: '',
+                  role,
+                  adminLevel: isAdm && adminLevel ? adminLevel : undefined,
+                  department: 'IT',
+                  grade: 'year1',
+                  semester: 'term1',
+                  createdAt: nowIso,
+                  lastLoginAttemptAt: nowIso,
+                  status: isAdm ? 'active' : 'pending',
+                  isApproved: isAdm
+                };
+                await setDoc(userRef, sanitizeForFirestore(userData) as any, { merge: true }).catch(() => {});
+              }
             } else {
               const savedFallback = authService.getCurrentUser();
               if (savedFallback && (savedFallback.id === uid || savedFallback.email?.toLowerCase() === cleanEmail)) {

@@ -127,7 +127,9 @@ export const CourseCard: React.FC<CourseCardProps> = ({ course, category, onSele
               onClick={(e) => { e.stopPropagation(); onEnroll(course, e); }}
               className="rounded-xl bg-brand-cyan text-white dark:text-slate-950 hover:bg-brand-cyan-light px-4 py-2 text-xs font-extrabold transition-all cursor-pointer shadow-sm whitespace-nowrap"
             >
-              {t('دخول / تفعيل المقرر', 'Access Course')}
+              {access.reason === 'not_logged_in'
+                ? t('تسجيل الدخول للتصفح', 'Login to Access')
+                : t('طلب تفعيل المقرر', 'Request Access')}
             </button>
           )}
         </div>

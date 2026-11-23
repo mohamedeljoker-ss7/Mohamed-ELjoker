@@ -436,6 +436,7 @@ export interface Student {
   grade?: string;
   semester?: AcademicSemester | string;
   createdAt?: string;
+  lastLoginAttemptAt?: string;
   isApproved?: boolean;
 }
 
@@ -459,6 +460,7 @@ export interface UserAuth {
   grade?: string;
   semester?: AcademicSemester | string;
   createdAt?: string;
+  lastLoginAttemptAt?: string;
   lastLoginTimestamp?: number;
   forceLogoutVersion?: number;
   isApproved?: boolean;

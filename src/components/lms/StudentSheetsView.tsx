@@ -39,7 +39,7 @@ export const StudentSheetsView: React.FC<StudentSheetsViewProps> = ({
 
   const [searchQuery, setSearchQuery] = useState('');
   const [yearFilter, setYearFilter] = useState<string>(() => normalizeGradeCode(currentUser?.grade) || 'all');
-  const [semesterFilter, setSemesterFilter] = useState<string>(() => normalizeSemesterCode(currentUser?.semester) || 'all');
+  const [semesterFilter, setSemesterFilter] = useState<string>('all');
   const [subjectFilter, setSubjectFilter] = useState<string>('all');
   const [typeFilter, setTypeFilter] = useState<'all' | 'lecture_sheet' | 'section_sheet'>('all');
   const [sortBy, setSortBy] = useState<'number' | 'date'>('number');
@@ -269,11 +269,26 @@ export const StudentSheetsView: React.FC<StudentSheetsViewProps> = ({
 
       {/* Sheets Cards */}
       {filteredSheets.length === 0 ? (
-        <div className="text-center py-16 bg-white dark:bg-slate-900 border border-dashed border-slate-300 dark:border-slate-700 rounded-2xl">
-          <FileSpreadsheet className="h-10 w-10 text-slate-400 mx-auto mb-3" />
+        <div className="text-center py-16 bg-white dark:bg-slate-900 border border-dashed border-slate-300 dark:border-slate-700 rounded-2xl space-y-3">
+          <FileSpreadsheet className="h-10 w-10 text-slate-400 mx-auto" />
           <p className="font-bold text-slate-700 dark:text-slate-300 text-sm">
             {t('لا توجد شيتات متاحة لهذا الفلتر حاليًا.', 'No sheets available for this filter.')}
           </p>
+          {(yearFilter !== 'all' || semesterFilter !== 'all' || subjectFilter !== 'all' || typeFilter !== 'all' || searchQuery) && (
+            <button
+              type="button"
+              onClick={() => {
+                setYearFilter('all');
+                setSemesterFilter('all');
+                setSubjectFilter('all');
+                setTypeFilter('all');
+                setSearchQuery('');
+              }}
+              className="inline-flex items-center gap-1.5 rounded-xl bg-brand-cyan text-white dark:text-slate-950 hover:bg-brand-cyan-light px-4 py-2 text-xs font-extrabold cursor-pointer shadow-sm"
+            >
+              {t('عرض كل الشيتات بدون فلاتر', 'Show All Sheets Without Filters')}
+            </button>
+          )}
         </div>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">

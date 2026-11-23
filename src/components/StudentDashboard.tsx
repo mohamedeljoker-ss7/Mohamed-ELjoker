@@ -8,7 +8,7 @@ import { doc, getDoc, setDoc, onSnapshot } from 'firebase/firestore';
 import { useLanguage } from './LanguageContext';
 import { verifyCourseAccess, formatVideoEmbedUrl, normalizeCourseLessons } from '../utils/authAccess';
 import { triggerFileDownload } from '../utils/videoStorage';
-import { doesCourseMatchStudent, doesCourseMatchStudentGrade, ACADEMIC_GRADES, ACADEMIC_SEMESTERS, ACADEMIC_SUBJECTS, getGradeName, getSemesterName, getCourseDisplayTitle, normalizeGradeCode, normalizeSemesterCode } from '../utils/gradeMatching';
+import { doesCourseMatchStudent, doesCourseMatchStudentGrade, doesItemMatchYearAndSemester, doesSubjectMatch, isContentPublished, ACADEMIC_GRADES, ACADEMIC_SEMESTERS, ACADEMIC_SUBJECTS, getGradeName, getSemesterName, getCourseDisplayTitle, normalizeGradeCode, normalizeSemesterCode } from '../utils/gradeMatching';
 import { SubscriptionRequiredView } from './SubscriptionRequiredView';
 import { CustomVideoPlayer } from './CustomVideoPlayer';
 import { FilePreviewModal, PreviewMediaItem } from './FilePreviewModal';
@@ -131,6 +131,13 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({ onLogout, on
   const [inquiryTitle, setInquiryTitle] = useState<string>('');
   const [inquiryMessage, setInquiryMessage] = useState<string>('');
   const [submittingInquiry, setSubmittingInquiry] = useState(false);
+
+  // Unified Quick Materials Hub (Overview Easy Access) & LMS Pre-Filter
+  const [hubSearch, setHubSearch] = useState<string>('');
+  const [hubType, setHubType] = useState<'all' | 'lecture' | 'section' | 'sheet' | 'exam'>('all');
+  const [hubSubject, setHubSubject] = useState<string>('all');
+  const [hubShowAllGrades, setHubShowAllGrades] = useState<boolean>(false);
+  const [lmsSubjectPreFilter, setLmsSubjectPreFilter] = useState<string>('all');
 
   const isStudentSubscribedToCourse = useCallback((courseId?: string) => {
     if (!courseId || courseId === 'all' || courseId.trim() === '') return true;
@@ -270,37 +277,77 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({ onLogout, on
   const loadStudentData = async () => {
     try {
       setLoading(true);
-      const user = authService.getCurrentUser();
-      if (!user) {
+      await waitForFirebaseAuth();
+      let user = authService.getCurrentUser();
+      const fbUser = firebaseAuth?.currentUser;
+
+      if (!user && !fbUser) {
         onLogout();
         return;
       }
-      setCurrentUser(user);
-      setProfileForm({ name: user.name, phone: user.phone, bio: user.bio || '', grade: normalizeGradeCode(user.grade) || 'year1', semester: normalizeSemesterCode(user.semester) || 'term1' });
 
-      await waitForFirebaseAuth();
-      const hasFbUser = !dbService.isRealFirebase() || Boolean(firebaseAuth?.currentUser);
-      const effectiveUid = firebaseAuth?.currentUser?.uid || user.id;
+      if (!user && fbUser) {
+        user = {
+          id: fbUser.uid,
+          uid: fbUser.uid,
+          name: fbUser.displayName || 'طالب تكنولوجيا المعلومات',
+          email: (fbUser.email || '').toLowerCase(),
+          phone: fbUser.phoneNumber || '',
+          role: isAdminEmail(fbUser.email || '') ? 'admin' : 'student',
+          status: 'active',
+          isApproved: true,
+          grade: 'year1',
+          semester: 'term1',
+          department: 'IT',
+          purchasedCourseIds: [],
+          watchedLessonIds: [],
+          quizGrades: {}
+        };
+      }
+
+      const activeUserSnapshot = user!;
+      setCurrentUser(activeUserSnapshot);
+      setProfileForm({
+        name: activeUserSnapshot.name || '',
+        phone: activeUserSnapshot.phone || '',
+        bio: activeUserSnapshot.bio || '',
+        grade: normalizeGradeCode(activeUserSnapshot.grade) || 'year1',
+        semester: normalizeSemesterCode(activeUserSnapshot.semester) || 'term1'
+      });
+
+      const hasFbUser = !dbService.isRealFirebase() || Boolean(fbUser);
+      const effectiveUid = fbUser?.uid || activeUserSnapshot.id;
 
       // Refresh user from Firestore directly first so approval status & purchasedCourseIds are current
-      let latestUser = { ...user };
-      if (hasFbUser && (firebaseAuth?.currentUser?.uid || user.id || (user as any).uid)) {
+      let latestUser: UserAuth = { ...activeUserSnapshot };
+      if (hasFbUser && (fbUser?.uid || activeUserSnapshot.id || activeUserSnapshot.uid)) {
         try {
-          const targetDocId = firebaseAuth?.currentUser?.uid || user.id || (user as any).uid;
+          const targetDocId = fbUser?.uid || activeUserSnapshot.id || activeUserSnapshot.uid || effectiveUid;
           const uRef = doc(firestoreDb, 'users', targetDocId);
           const uSnap = await getDoc(uRef);
           if (uSnap.exists()) {
             const fbData = uSnap.data() as UserAuth;
-            latestUser = { ...latestUser, ...fbData };
+            latestUser = { ...latestUser, ...fbData, id: targetDocId, uid: targetDocId };
             localStorage.setItem('academy_active_user', JSON.stringify(latestUser));
+          } else {
+            const sSnap = await getDoc(doc(firestoreDb, 'students', targetDocId));
+            if (sSnap.exists()) {
+              const stData = sSnap.data() as any;
+              latestUser = { ...latestUser, ...stData, id: targetDocId, uid: targetDocId };
+              localStorage.setItem('academy_active_user', JSON.stringify(latestUser));
+            }
           }
         } catch (e) {
           console.warn("Notice refreshing user from Firestore:", e);
         }
       }
 
-      const isStaff = latestUser.role === 'admin' || latestUser.role === 'teacher' || isAdminEmail(firebaseAuth?.currentUser?.email || latestUser.email || '');
+      const isStaff = latestUser.role === 'admin' || latestUser.role === 'teacher' || isAdminEmail(fbUser?.email || latestUser.email || '');
       const isApprovedUser = isStaff || (latestUser.status === 'active' && latestUser.isApproved === true);
+      if (!isApprovedUser && dbService.isRealFirebase() && !fbUser) {
+        onLogout();
+        return;
+      }
       const scopedStudentOrderArg = isStaff ? undefined : effectiveUid;
 
       // Load all published courses, categories, and (when signed in) student-scoped/approved resources
@@ -2009,116 +2056,400 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({ onLogout, on
                       </div>
                     </div>
 
-                    {/* Bento Box Stats (4 Cards) */}
-                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-                      
-                      <div className="rounded-2xl glass p-5 border border-slate-200 dark:border-slate-800 bg-white/80 dark:bg-slate-950/40">
-                        <p className="text-slate-500 dark:text-slate-400 text-[11px] font-bold uppercase tracking-wider">{t('المواد الدراسية (IT)', 'IT Subjects')}</p>
-                        <h4 className="text-3xl font-black text-slate-900 dark:text-white mt-2 font-mono tabular-nums">{courses.length}</h4>
-                        <button 
-                          onClick={() => setActiveTab('my-courses')} 
-                          className="text-[11px] text-brand-cyan hover:underline mt-3 font-bold flex items-center gap-1 cursor-pointer"
-                        >
-                          {t('عرض المواد الدراسية', 'Browse subjects')}
-                          <ChevronRight className="h-3 w-3 rtl:rotate-180" />
-                        </button>
-                      </div>
+                    {/* Bento Quick Shortcut Strip (One-Click Jump + Unified Quick Materials Hub) */}
+                    <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
+                      <button
+                        type="button"
+                        onClick={() => { setLmsSubjectPreFilter('all'); setActiveTab('lectures'); }}
+                        className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white/85 dark:bg-slate-950/60 hover:border-brand-cyan/50 p-4 text-start transition-all cursor-pointer group"
+                      >
+                        <div className="flex items-center justify-between">
+                          <BookOpen className="h-5 w-5 text-brand-cyan" />
+                          <span className="text-lg font-black font-mono tabular-nums text-slate-900 dark:text-white">{lectures.filter(l => isContentPublished(l)).length}</span>
+                        </div>
+                        <p className="mt-2 text-xs font-extrabold text-slate-800 dark:text-white group-hover:text-brand-cyan">{t('المحاضرات', 'Lectures')}</p>
+                      </button>
 
-                      <div className="rounded-2xl glass p-5 border border-slate-200 dark:border-slate-800 bg-white/80 dark:bg-slate-950/40">
-                        <p className="text-slate-500 dark:text-slate-400 text-[11px] font-bold uppercase tracking-wider">{t('المواد المكتملة', 'Watched Materials')}</p>
-                        <h4 className="text-3xl font-black text-slate-900 dark:text-white mt-2 font-mono tabular-nums">{watchedCount}</h4>
-                        <button 
-                          onClick={() => setActiveTab('lectures')} 
-                          className="text-[11px] text-brand-cyan hover:underline mt-3 font-bold flex items-center gap-1 cursor-pointer"
-                        >
-                          {t('الانتقال للمحاضرات', 'Go to lectures')}
-                          <ChevronRight className="h-3 w-3 rtl:rotate-180" />
-                        </button>
-                      </div>
+                      <button
+                        type="button"
+                        onClick={() => { setLmsSubjectPreFilter('all'); setActiveTab('sections'); }}
+                        className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white/85 dark:bg-slate-950/60 hover:border-emerald-500/50 p-4 text-start transition-all cursor-pointer group"
+                      >
+                        <div className="flex items-center justify-between">
+                          <Layers className="h-5 w-5 text-emerald-500" />
+                          <span className="text-lg font-black font-mono tabular-nums text-slate-900 dark:text-white">{sections.filter(s => isContentPublished(s)).length}</span>
+                        </div>
+                        <p className="mt-2 text-xs font-extrabold text-slate-800 dark:text-white group-hover:text-emerald-500">{t('السكاشن العملية', 'Lab Sections')}</p>
+                      </button>
 
-                      <div className="rounded-2xl glass p-5 border border-slate-200 dark:border-slate-800 bg-white/80 dark:bg-slate-950/40">
-                        <p className="text-slate-500 dark:text-slate-400 text-[11px] font-bold uppercase tracking-wider">{t('متوسط الامتحانات', 'Exam Avg Score')}</p>
-                        <h4 className="text-3xl font-black text-slate-900 dark:text-white mt-2 font-mono tabular-nums">{avgExamPct}%</h4>
-                        <p className="text-[11px] text-slate-500 mt-3 font-mono tabular-nums">
-                          {examSubmissions.length} {t('اختبار مُسلّم', 'submissions')}
-                        </p>
-                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setActiveTab('sheets')}
+                        className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white/85 dark:bg-slate-950/60 hover:border-amber-500/50 p-4 text-start transition-all cursor-pointer group"
+                      >
+                        <div className="flex items-center justify-between">
+                          <FileCheck className="h-5 w-5 text-amber-500" />
+                          <span className="text-lg font-black font-mono tabular-nums text-slate-900 dark:text-white">{sheets.filter(s => isContentPublished(s)).length}</span>
+                        </div>
+                        <p className="mt-2 text-xs font-extrabold text-slate-800 dark:text-white group-hover:text-amber-500">{t('الشيتات والتمارين', 'Sheets')}</p>
+                      </button>
 
-                      <div className="rounded-2xl glass p-5 border border-slate-200 dark:border-slate-800 bg-white/80 dark:bg-slate-950/40">
-                        <p className="text-slate-500 dark:text-slate-400 text-[11px] font-bold uppercase tracking-wider">{t('المفضلة والمحفوظات', 'Bookmarks')}</p>
-                        <h4 className="text-3xl font-black text-slate-900 dark:text-white mt-2 font-mono tabular-nums">{favCount}</h4>
-                        <button 
-                          onClick={() => setActiveTab('favorites')} 
-                          className="text-[11px] text-brand-cyan hover:underline mt-3 font-bold flex items-center gap-1 cursor-pointer"
-                        >
-                          {t('فتح المحفوظات', 'View saved')}
-                          <ChevronRight className="h-3 w-3 rtl:rotate-180" />
-                        </button>
-                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setActiveTab('exams')}
+                        className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white/85 dark:bg-slate-950/60 hover:border-purple-500/50 p-4 text-start transition-all cursor-pointer group"
+                      >
+                        <div className="flex items-center justify-between">
+                          <GraduationCap className="h-5 w-5 text-purple-500" />
+                          <span className="text-lg font-black font-mono tabular-nums text-slate-900 dark:text-white">{exams.filter(e => isContentPublished(e)).length}</span>
+                        </div>
+                        <p className="mt-2 text-xs font-extrabold text-slate-800 dark:text-white group-hover:text-purple-500">{t('الامتحانات', 'Exams')}</p>
+                      </button>
 
+                      <button
+                        type="button"
+                        onClick={() => setActiveTab('my-courses')}
+                        className="col-span-2 sm:col-span-1 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white/85 dark:bg-slate-950/60 hover:border-brand-cyan/50 p-4 text-start transition-all cursor-pointer group"
+                      >
+                        <div className="flex items-center justify-between">
+                          <Award className="h-5 w-5 text-brand-cyan" />
+                          <span className="text-lg font-black font-mono tabular-nums text-slate-900 dark:text-white">{courses.length}</span>
+                        </div>
+                        <p className="mt-2 text-xs font-extrabold text-slate-800 dark:text-white group-hover:text-brand-cyan">{t('المقررات الدراسية', 'IT Subjects')}</p>
+                      </button>
                     </div>
 
-                    {/* Quick Preview Grid: Upcoming Timetable & Latest Lectures */}
-                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                      <div className="rounded-2xl glass bg-white/80 dark:bg-slate-950/40 border border-slate-200 dark:border-slate-800/80 p-5 space-y-3">
-                        <div className="flex items-center justify-between border-b border-slate-200 dark:border-slate-900 pb-2.5">
-                          <h4 className="font-bold text-slate-900 dark:text-white text-sm flex items-center gap-2">
-                            <Calendar className="h-4.5 w-4.5 text-brand-cyan" />
-                            {t('الجدول الدراسي الأسبوعي', 'Weekly Timetable Preview')}
-                          </h4>
-                          <button type="button" onClick={() => setActiveTab('schedule')} className="text-xs font-bold text-brand-cyan hover:underline cursor-pointer">
-                            {t('الجدول الكامل', 'Full schedule')}
-                          </button>
-                        </div>
-                        {scheduleItems.length > 0 ? (
-                          <div className="space-y-2">
-                            {scheduleItems.slice(0, 3).map(item => (
-                              <div key={item.id} className="rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900/60 p-3 flex items-center justify-between gap-2 text-xs">
-                                <div>
-                                  <p className="font-bold text-slate-900 dark:text-white">{(item as any).subject || item.courseTitle || item.title}</p>
-                                  <p className="text-[11px] text-slate-500">{language === 'ar' ? (item.dayOfWeekAr || item.dayOfWeek) : item.dayOfWeek} • {item.startTime} - {item.endTime} {item.location ? `• ${item.location}` : ''}</p>
-                                </div>
-                                <span className="text-[10px] font-mono font-bold text-brand-cyan uppercase">{item.itemType || (item as any).type || 'lecture'}</span>
-                              </div>
-                            ))}
-                          </div>
-                        ) : (
-                          <p className="text-xs text-slate-500 py-4 text-center">{t('لم يتم نشر مواعيد الجدول الأسبوعي بعد.', 'No timetable entries published yet.')}</p>
-                        )}
-                      </div>
+                    {/* UNIFIED QUICK STUDENT MATERIALS & FILES HUB (One-Screen Instant File Access) */}
+                    {(() => {
+                      const gradeCode = hubShowAllGrades ? 'all' : (normalizeGradeCode(currentUser?.grade) || 'all');
 
-                      <div className="rounded-2xl glass bg-white/80 dark:bg-slate-950/40 border border-slate-200 dark:border-slate-800/80 p-5 space-y-3">
-                        <div className="flex items-center justify-between border-b border-slate-200 dark:border-slate-900 pb-2.5">
-                          <h4 className="font-bold text-slate-900 dark:text-white text-sm flex items-center gap-2">
-                            <Video className="h-4.5 w-4.5 text-brand-cyan" />
-                            {t('أحدث المحاضرات المرفوعة', 'Latest Uploaded Lectures')}
-                          </h4>
-                          <button type="button" onClick={() => setActiveTab('lectures')} className="text-xs font-bold text-brand-cyan hover:underline cursor-pointer">
-                            {t('كل المحاضرات', 'All lectures')}
-                          </button>
-                        </div>
-                        {lectures.length > 0 ? (
-                          <div className="space-y-2">
-                            {lectures.slice(0, 3).map(lec => (
-                              <div key={lec.id} className="rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900/60 p-3 flex items-center justify-between gap-2 text-xs">
-                                <div className="min-w-0">
-                                  <p className="font-bold text-slate-900 dark:text-white truncate">{lec.title}</p>
-                                  <p className="text-[11px] text-slate-500">{lec.subject || lec.courseTitle || 'IT'} • #{lec.lectureNumber ?? lec.number ?? 1}</p>
-                                </div>
+                      type QuickHubEntry = {
+                        key: string;
+                        id: string;
+                        kind: 'lecture' | 'section' | 'sheet' | 'exam';
+                        title: string;
+                        subject: string;
+                        numberLabel: string;
+                        dateIso: string;
+                        videoUrl?: string;
+                        pdfUrl?: string;
+                        wordUrl?: string;
+                        downloadUrl?: string;
+                        rawItem: any;
+                      };
+
+                      const allPublishedEntries: QuickHubEntry[] = [
+                        ...lectures.filter(l => isContentPublished(l)).map((lec): QuickHubEntry => ({
+                          key: `lec_${lec.id}`,
+                          id: lec.id,
+                          kind: 'lecture',
+                          title: lec.title,
+                          subject: lec.subject || lec.courseTitle || 'IT',
+                          numberLabel: `#${lec.lectureNumber ?? lec.number ?? 1}`,
+                          dateIso: lec.lectureDate || lec.createdAt || '',
+                          videoUrl: lec.youtubeUrl || lec.videoUrl,
+                          pdfUrl: lec.pdfUrl,
+                          downloadUrl: lec.pdfUrl || lec.pptxUrl,
+                          rawItem: lec
+                        })),
+                        ...sections.filter(s => isContentPublished(s)).map((sec): QuickHubEntry => ({
+                          key: `sec_${sec.id}`,
+                          id: sec.id,
+                          kind: 'section',
+                          title: sec.title,
+                          subject: sec.subject || sec.courseTitle || 'IT',
+                          numberLabel: `#${sec.sectionNumber ?? sec.number ?? 1}`,
+                          dateIso: sec.sectionDate || sec.createdAt || '',
+                          videoUrl: sec.youtubeUrl || sec.videoUrl,
+                          pdfUrl: sec.pdfUrl || (sec.fileUrl && /\.pdf(\?.*)?$/i.test(sec.fileUrl) ? sec.fileUrl : undefined),
+                          downloadUrl: sec.fileUrl || sec.pdfUrl || sec.archiveUrl,
+                          rawItem: sec
+                        })),
+                        ...sheets.filter(sh => isContentPublished(sh)).map((sh): QuickHubEntry => ({
+                          key: `sh_${sh.id}`,
+                          id: sh.id,
+                          kind: 'sheet',
+                          title: sh.title,
+                          subject: sh.subject || sh.courseTitle || 'IT',
+                          numberLabel: `#${sh.referenceNumber ?? 1}`,
+                          dateIso: sh.publishDate || sh.createdAt || '',
+                          pdfUrl: sh.pdfUrl || (sh.fileUrl && /\.pdf(\?.*)?$/i.test(sh.fileUrl) ? sh.fileUrl : undefined),
+                          wordUrl: sh.wordUrl,
+                          downloadUrl: sh.wordUrl || sh.pdfUrl || sh.fileUrl,
+                          rawItem: sh
+                        })),
+                        ...exams.filter(ex => isContentPublished(ex)).map((ex): QuickHubEntry => ({
+                          key: `ex_${ex.id}`,
+                          id: ex.id,
+                          kind: 'exam',
+                          title: ex.title,
+                          subject: ex.subject || ex.courseTitle || 'IT',
+                          numberLabel: `#${ex.number || 1}`,
+                          dateIso: ex.examDate || ex.createdAt || '',
+                          pdfUrl: ex.questionsPdfUrl || ex.questionsFileUrl,
+                          downloadUrl: ex.questionsPdfUrl || ex.questionsFileUrl,
+                          rawItem: ex
+                        }))
+                      ];
+
+                      const matchesYearIfEnabled = (entry: QuickHubEntry) => {
+                        if (gradeCode === 'all') return true;
+                        return doesItemMatchYearAndSemester(entry.rawItem, gradeCode, 'all', courses);
+                      };
+
+                      const gradeScopedEntries = allPublishedEntries.filter(matchesYearIfEnabled);
+                      // Smart fallback: if student's specific year has 0 files yet, surface all available files immediately so nothing is hidden!
+                      const effectivePool = gradeScopedEntries.length > 0 || hubShowAllGrades ? gradeScopedEntries : allPublishedEntries;
+                      const autoExpandedToAll = !hubShowAllGrades && gradeScopedEntries.length === 0 && allPublishedEntries.length > 0;
+
+                      const q = hubSearch.trim().toLowerCase();
+                      const filteredHubItems = effectivePool
+                        .filter(entry => {
+                          if (hubType !== 'all' && entry.kind !== hubType) return false;
+                          if (hubSubject !== 'all' && !doesSubjectMatch(entry.rawItem, hubSubject, courses)) return false;
+                          if (q) {
+                            const hay = `${entry.title} ${entry.subject} ${entry.rawItem?.description || ''}`.toLowerCase();
+                            if (!hay.includes(q)) return false;
+                          }
+                          return true;
+                        })
+                        .sort((a, b) => new Date(b.dateIso || 0).getTime() - new Date(a.dateIso || 0).getTime());
+
+                      const subjectPillsMap = new Map<string, string>();
+                      ACADEMIC_SUBJECTS.forEach(s => subjectPillsMap.set(s.id.toLowerCase(), language === 'ar' ? s.nameAr : s.nameEn));
+                      courses.forEach(c => {
+                        const key = (c.subject || c.titleEn || c.titleAr || '').trim();
+                        if (key && !subjectPillsMap.has(key.toLowerCase())) {
+                          subjectPillsMap.set(key.toLowerCase(), language === 'ar' ? c.titleAr : c.titleEn);
+                        }
+                      });
+                      const hubSubjects = Array.from(subjectPillsMap.entries()).map(([id, label]) => ({ id, label }));
+
+                      return (
+                        <div className="rounded-2xl glass bg-white/90 dark:bg-slate-950/50 border border-slate-200 dark:border-slate-800 p-5 sm:p-6 space-y-4">
+                          <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 border-b border-slate-200 dark:border-slate-800 pb-4">
+                            <div>
+                              <h4 className="font-black text-slate-900 dark:text-white text-base sm:text-lg flex items-center gap-2">
+                                <Sparkles className="h-5 w-5 text-brand-cyan shrink-0" />
+                                <span>{t('كل المحاضرات والملفات في مكان واحد (فتح سريع)', 'All Lectures, Labs & Files in One Place')}</span>
+                              </h4>
+                              <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
+                                {t('ابحث وافتح أو حمّل أي ملف PDF أو Word أو فيديو شرح بضغطة واحدة بدون تنقل بين الأقسام.', 'Search, preview PDFs, watch videos, or download Word sheets in 1 click without hunting across tabs.')}
+                              </p>
+                            </div>
+                            <div className="flex items-center gap-2 shrink-0">
+                              {!autoExpandedToAll && (
                                 <button
                                   type="button"
-                                  onClick={() => setActiveTab('lectures')}
-                                  className="px-3 py-1.5 rounded-lg bg-brand-cyan/15 text-brand-cyan font-bold shrink-0 cursor-pointer"
+                                  onClick={() => setHubShowAllGrades(prev => !prev)}
+                                  className={`rounded-xl px-3 py-2 text-xs font-bold border transition-all cursor-pointer ${
+                                    hubShowAllGrades
+                                      ? 'bg-brand-cyan text-white dark:text-slate-950 border-brand-cyan'
+                                      : 'bg-slate-100 dark:bg-slate-900 text-slate-700 dark:text-slate-300 border-slate-200 dark:border-slate-800 hover:border-brand-cyan/40'
+                                  }`}
                                 >
-                                  {t('فتح', 'Open')}
+                                  {hubShowAllGrades ? t('عرض كل الفرق ✓', 'Showing All Years ✓') : t('عرض كل الفرق الدراسية', 'Show All Years')}
                                 </button>
-                              </div>
+                              )}
+                            </div>
+                          </div>
+
+                          {/* Search + Type Filter Bar */}
+                          <div className="flex flex-col lg:flex-row gap-3">
+                            <div className="relative flex-1">
+                              <Search className="h-4 w-4 text-slate-400 absolute top-1/2 -translate-y-1/2 left-3.5" />
+                              <input
+                                type="text"
+                                value={hubSearch}
+                                onChange={e => setHubSearch(e.target.value)}
+                                placeholder={t('ابحث باسم المحاضرة، السكشن، الشيت، أو اسم المادة...', 'Search by lecture, lab, sheet, exam, or subject...')}
+                                className="w-full rounded-xl bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 py-2.5 pl-10 pr-4 text-xs text-slate-900 dark:text-white outline-none focus:border-brand-cyan"
+                              />
+                            </div>
+                            <div className="flex flex-wrap items-center gap-1.5">
+                              {([
+                                { id: 'all', ar: 'الكل', en: 'All' },
+                                { id: 'lecture', ar: 'محاضرات', en: 'Lectures' },
+                                { id: 'section', ar: 'سكاشن', en: 'Sections' },
+                                { id: 'sheet', ar: 'شيتات', en: 'Sheets' },
+                                { id: 'exam', ar: 'امتحانات', en: 'Exams' }
+                              ] as const).map(tp => (
+                                <button
+                                  key={tp.id}
+                                  type="button"
+                                  onClick={() => setHubType(tp.id)}
+                                  className={`rounded-xl px-3 py-2 text-xs font-bold transition-all cursor-pointer ${
+                                    hubType === tp.id
+                                      ? 'bg-brand-cyan text-white dark:text-slate-950 shadow-xs'
+                                      : 'bg-slate-100 dark:bg-slate-900 text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white border border-slate-200 dark:border-slate-800'
+                                  }`}
+                                >
+                                  {t(tp.ar, tp.en)}
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+
+                          {/* Subject Pills */}
+                          <div className="flex items-center gap-1.5 overflow-x-auto pb-1 no-scrollbar">
+                            <button
+                              type="button"
+                              onClick={() => setHubSubject('all')}
+                              className={`rounded-xl px-3 py-1.5 text-[11px] font-bold whitespace-nowrap cursor-pointer transition-all ${
+                                hubSubject === 'all'
+                                  ? 'bg-slate-900 dark:bg-white text-white dark:text-slate-950'
+                                  : 'bg-slate-100 dark:bg-slate-900 text-slate-600 dark:text-slate-400 border border-slate-200 dark:border-slate-800'
+                              }`}
+                            >
+                              {t('كل المواد', 'All Subjects')}
+                            </button>
+                            {hubSubjects.map(sub => (
+                              <button
+                                key={sub.id}
+                                type="button"
+                                onClick={() => setHubSubject(sub.id)}
+                                className={`rounded-xl px-3 py-1.5 text-[11px] font-bold whitespace-nowrap cursor-pointer transition-all ${
+                                  hubSubject === sub.id
+                                    ? 'bg-slate-900 dark:bg-white text-white dark:text-slate-950'
+                                    : 'bg-slate-100 dark:bg-slate-900 text-slate-600 dark:text-slate-400 border border-slate-200 dark:border-slate-800'
+                                }`}
+                              >
+                                {sub.label}
+                              </button>
                             ))}
                           </div>
-                        ) : (
-                          <p className="text-xs text-slate-500 py-4 text-center">{t('لا توجد محاضرات مرفوعة حالياً.', 'No lectures uploaded yet.')}</p>
-                        )}
+
+                          {/* Unified File Cards Grid */}
+                          {filteredHubItems.length === 0 ? (
+                            <div className="rounded-xl border border-dashed border-slate-300 dark:border-slate-700 p-8 text-center space-y-2.5">
+                              <BookOpen className="h-8 w-8 text-slate-400 mx-auto" />
+                              <p className="text-xs font-bold text-slate-700 dark:text-slate-300">
+                                {t('لا توجد ملفات مطابقة لبحثك حالياً.', 'No matching files or materials found.')}
+                              </p>
+                              {(hubSearch || hubType !== 'all' || hubSubject !== 'all' || !hubShowAllGrades) && (
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setHubSearch('');
+                                    setHubType('all');
+                                    setHubSubject('all');
+                                    setHubShowAllGrades(true);
+                                  }}
+                                  className="inline-flex items-center gap-1.5 rounded-xl bg-brand-cyan text-white dark:text-slate-950 px-4 py-2 text-xs font-extrabold cursor-pointer"
+                                >
+                                  {t('عرض كل الملفات والمواد', 'Show All Files & Materials')}
+                                </button>
+                              )}
+                            </div>
+                          ) : (
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5">
+                              {filteredHubItems.slice(0, 24).map(item => {
+                                const badgeColors: Record<QuickHubEntry['kind'], string> = {
+                                  lecture: 'bg-cyan-500/15 text-brand-cyan border-cyan-500/30',
+                                  section: 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/30',
+                                  sheet: 'bg-amber-500/15 text-amber-600 dark:text-amber-300 border-amber-500/30',
+                                  exam: 'bg-purple-500/15 text-purple-600 dark:text-purple-300 border-purple-500/30'
+                                };
+                                const badgeLabel: Record<QuickHubEntry['kind'], string> = {
+                                  lecture: t('محاضرة', 'Lecture'),
+                                  section: t('سكشن عملي', 'Lab Section'),
+                                  sheet: t('شيت / تمرين', 'Sheet'),
+                                  exam: t('امتحان', 'Exam')
+                                };
+                                return (
+                                  <div
+                                    key={item.key}
+                                    className="rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-900/60 p-4 flex flex-col justify-between gap-3 hover:border-brand-cyan/50 transition-all"
+                                  >
+                                    <div className="space-y-1.5 min-w-0">
+                                      <div className="flex flex-wrap items-center gap-1.5 text-[10px]">
+                                        <span className={`rounded-md border px-2 py-0.5 font-extrabold ${badgeColors[item.kind]}`}>
+                                          {badgeLabel[item.kind]} {item.numberLabel}
+                                        </span>
+                                        <span className="font-bold text-slate-600 dark:text-slate-300 truncate">{item.subject}</span>
+                                      </div>
+                                      <h5 className="font-extrabold text-sm text-slate-900 dark:text-white line-clamp-1">{item.title}</h5>
+                                      {item.rawItem?.description && (
+                                        <p className="text-[11px] text-slate-500 dark:text-slate-400 line-clamp-1">{item.rawItem.description}</p>
+                                      )}
+                                    </div>
+
+                                    <div className="flex flex-wrap items-center gap-1.5 pt-2 border-t border-slate-200/80 dark:border-slate-800/80">
+                                      {item.videoUrl && (
+                                        <button
+                                          type="button"
+                                          onClick={() => setActiveVideoModal({ url: item.videoUrl!, title: item.title })}
+                                          className="inline-flex items-center gap-1 rounded-lg bg-brand-cyan text-white dark:text-slate-950 hover:bg-brand-cyan-light px-2.5 py-1.5 text-[11px] font-bold cursor-pointer"
+                                        >
+                                          <Play className="h-3 w-3 fill-current" />
+                                          <span>{t('تشغيل الفيديو', 'Watch')}</span>
+                                        </button>
+                                      )}
+                                      {item.pdfUrl && (
+                                        <button
+                                          type="button"
+                                          onClick={() => setActivePdfModal({ url: item.pdfUrl!, title: item.title })}
+                                          className="inline-flex items-center gap-1 rounded-lg bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-700 text-slate-800 dark:text-slate-200 hover:border-brand-cyan px-2.5 py-1.5 text-[11px] font-bold cursor-pointer"
+                                        >
+                                          <Eye className="h-3 w-3 text-brand-cyan" />
+                                          <span>{t('قراءة PDF', 'Preview')}</span>
+                                        </button>
+                                      )}
+                                      {item.downloadUrl && (
+                                        <button
+                                          type="button"
+                                          onClick={() => triggerFileDownload(item.downloadUrl!, item.title)}
+                                          className="inline-flex items-center gap-1 rounded-lg bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-700 text-slate-800 dark:text-slate-200 hover:border-brand-cyan px-2.5 py-1.5 text-[11px] font-bold cursor-pointer"
+                                        >
+                                          <Download className="h-3 w-3 text-emerald-500" />
+                                          <span>{item.wordUrl ? 'Word / PDF' : t('تحميل', 'Download')}</span>
+                                        </button>
+                                      )}
+                                      {(item.kind === 'exam' || item.kind === 'sheet') && (
+                                        <button
+                                          type="button"
+                                          onClick={() => setActiveTab(item.kind === 'exam' ? 'exams' : 'sheets')}
+                                          className="inline-flex items-center gap-1 rounded-lg bg-brand-cyan/15 text-brand-cyan hover:bg-brand-cyan/25 px-2.5 py-1.5 text-[11px] font-bold cursor-pointer"
+                                        >
+                                          <span>{item.kind === 'exam' ? t('فتح الامتحان', 'Open Exam') : t('تسليم الحل', 'Submit')}</span>
+                                        </button>
+                                      )}
+                                    </div>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })()}
+
+                    {/* Quick Preview Grid: Upcoming Timetable */}
+                    <div className="rounded-2xl glass bg-white/80 dark:bg-slate-950/40 border border-slate-200 dark:border-slate-800/80 p-5 space-y-3">
+                      <div className="flex items-center justify-between border-b border-slate-200 dark:border-slate-900 pb-2.5">
+                        <h4 className="font-bold text-slate-900 dark:text-white text-sm flex items-center gap-2">
+                          <Calendar className="h-4.5 w-4.5 text-brand-cyan" />
+                          {t('الجدول الدراسي الأسبوعي', 'Weekly Timetable Preview')}
+                        </h4>
+                        <button type="button" onClick={() => setActiveTab('schedule')} className="text-xs font-bold text-brand-cyan hover:underline cursor-pointer">
+                          {t('الجدول الكامل', 'Full schedule')}
+                        </button>
                       </div>
+                      {scheduleItems.length > 0 ? (
+                        <div className="grid grid-cols-1 md:grid-cols-3 gap-2.5">
+                          {scheduleItems.slice(0, 3).map(item => (
+                            <div key={item.id} className="rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900/60 p-3 flex items-center justify-between gap-2 text-xs">
+                              <div className="min-w-0">
+                                <p className="font-bold text-slate-900 dark:text-white truncate">{(item as any).subject || item.courseTitle || item.title}</p>
+                                <p className="text-[11px] text-slate-500 truncate">{language === 'ar' ? (item.dayOfWeekAr || item.dayOfWeek) : item.dayOfWeek} • {item.startTime} - {item.endTime} {item.location ? `• ${item.location}` : ''}</p>
+                              </div>
+                              <span className="text-[10px] font-mono font-bold text-brand-cyan uppercase shrink-0">{item.itemType || (item as any).type || 'lecture'}</span>
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <p className="text-xs text-slate-500 py-3 text-center">{t('لم يتم نشر مواعيد الجدول الأسبوعي بعد.', 'No timetable entries published yet.')}</p>
+                      )}
                     </div>
 
                     {/* Certificates Carousel/List */}
@@ -2246,6 +2577,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({ onLogout, on
                         lectures={lectures}
                         courses={courses}
                         currentUser={currentUser}
+                        initialSubject={lmsSubjectPreFilter}
                         onToggleWatched={handleToggleWatchedItem}
                         onToggleFavorite={handleToggleFavoriteItem}
                         onOpenVideo={(url, title) => setActiveVideoModal({ url, title })}
@@ -2280,6 +2612,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({ onLogout, on
                         sections={sections}
                         courses={courses}
                         currentUser={currentUser}
+                        initialSubject={lmsSubjectPreFilter}
                         onToggleWatched={handleToggleWatchedItem}
                         onOpenVideo={(url, title) => setActiveVideoModal({ url, title })}
                         onOpenPdf={(url, title) => setActivePdfModal({ url, title })}
@@ -2382,14 +2715,20 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({ onLogout, on
                               <div className="mt-5 grid grid-cols-2 gap-2">
                                 <button
                                   type="button"
-                                  onClick={() => setActiveTab('lectures')}
+                                  onClick={() => {
+                                    setLmsSubjectPreFilter((course.subject || course.titleEn || course.titleAr || 'all').toLowerCase());
+                                    setActiveTab('lectures');
+                                  }}
                                   className="rounded-xl py-2 font-bold text-xs bg-cyan-500/10 hover:bg-cyan-500/20 text-brand-cyan border border-cyan-500/30 transition-all cursor-pointer text-center"
                                 >
                                   {t('المحاضرات 📚', 'Lectures')}
                                 </button>
                                 <button
                                   type="button"
-                                  onClick={() => setActiveTab('sections')}
+                                  onClick={() => {
+                                    setLmsSubjectPreFilter((course.subject || course.titleEn || course.titleAr || 'all').toLowerCase());
+                                    setActiveTab('sections');
+                                  }}
                                   className="rounded-xl py-2 font-bold text-xs bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30 transition-all cursor-pointer text-center"
                                 >
                                   {t('السكاشن 🧪', 'Sections')}
